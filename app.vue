@@ -83,7 +83,7 @@
 </template>
 <script setup>
 useSeoMeta({
-  title: "منشئ الفواتير | محمد مجاهد",
+  title: "منشئ الفواتير",
 });
 const password = 789885;
 const newPass = ref();

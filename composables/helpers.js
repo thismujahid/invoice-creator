@@ -82,7 +82,7 @@ async function useDownloadPDF(elementId, fileName) {
       window.print();
       printer.innerHTML = '';
       useSeoMeta({
-        title:"منشئ الفواتير | محمد مجاهد"
+        title:"منشئ الفواتير"
       })
     } catch (error) {
       console.error("Error generating PDF:", error);
