@@ -1,9 +1,5 @@
 <template>
-  <div>
-    <div class="px-4 pt-4 d-flex ga-3">
-      <Products />
-      <Customers />
-    </div>
+  <div class="invoice-creator-view">
     <div class="app">
       <div class="form">
         <v-form>
@@ -22,6 +18,9 @@
                   invoiceData.phone = invoiceData.customer?.phone
                 "
               >
+              <template #prepend-inner>
+                <v-btn v-tooltip="'إضافة عميل جديد'"  flat><v-icon icon="mdi-plus" /></v-btn>
+              </template>
               </v-autocomplete>
             </v-col>
             <v-col cols="12" lg="3">
@@ -107,6 +106,9 @@
                 label="اسم المنتج"
                 placeholder="اسم المنتج"
               >
+              <template #prepend-inner>
+                <v-btn v-tooltip="'إضافة منتج جديد'"  flat><v-icon icon="mdi-plus" /></v-btn>
+              </template>
               </v-autocomplete>
             </v-col>
             <v-col cols="12" lg="2">
@@ -152,7 +154,7 @@
           <v-btn color="success" flat @click="addNewForm">إضافة منتج </v-btn>
         </v-form>
       </div>
-      <div id="invoice-data" :class="printing?'printing':''" class="invoice">
+      <div id="invoice-data" class="invoice">
         <div>
           <div>
             <strong> الاسم/ </strong>
@@ -198,6 +200,9 @@
   </div>
 </template>
 <script setup>
+definePageMeta({
+  title: "إنشاء فاتورة",
+});
 const { formatDate, formatTime12Hour, formatePrice, useDownloadPDF } =
   useHelpers();
 const products = useProductsStore();
@@ -226,7 +231,7 @@ const invoiceData = ref({
     },
   ],
   date: new Date(),
-  time: formatTime12Hour(new Date()),
+  time: new Date(),
 });
 const mappedProducts = computed(() => {
   return invoiceData.value.products.map((prod, index) => {
@@ -266,99 +271,101 @@ const calcTotalOfForm = (form) => {
 };
 async function startPrint() {
   printing.value = true;
-  setTimeout( async () => {
-    
-      await useDownloadPDF(
-          "invoice-data",
-          `فاتورة ${invoiceData.value.customer?.name||''} - ${formatDate(
-              invoiceData.value.date
-            )} ${formatTime12Hour(invoiceData.value.time)}`
-        );
-        printing.value = false;
-    }, 100);
+  setTimeout(async () => {
+    await useDownloadPDF(
+      "invoice-data",
+      `فاتورة ${invoiceData.value.customer?.name || ""} - ${formatDate(
+        invoiceData.value.date
+      )} ${formatTime12Hour(invoiceData.value.time)}`
+    );
+    printing.value = false;
+  }, 100);
 }
 </script>
 <style>
-body {
-  padding: 0;
-  margin: 0;
-  direction: rtl;
-}
-.app {
+.invoice-creator-view .app {
   padding: 30px;
   min-height: 90vh;
   gap: 1.875rem;
   display: flex;
 }
-.app .invoice {
-  border-radius: 10px;
-  border: 2px solid gray;
+.invoice-creator-view .app .invoice {
+  border-radius: 5px;
+  border: 1px solid gray;
   padding: 10px;
   width: 540px !important;
   position: sticky;
   top: 0;
 }
-.invoice.printing{
-    border: unset;
+.invoice-creator-view .app .invoice  * {
+  font-weight: 400;
+  color: rgba(0, 0, 0, 0.781);
 }
-.invoice.printing .v-btn{
-    display: none;
+#invoice-data .v-btn *{
+  color: #fff !important;
+
 }
-#invoice-data {
+.invoice-creator-view .invoice.printing {
+  border: unset;
+}
+.invoice-creator-view .invoice.printing .v-btn {
+  display: none;
+}
+.invoice-creator-view #invoice-data {
   width: 500px !important;
   max-width: 500px !important;
   width: 100% !important;
 }
-.v-data-table {
+.invoice-creator-view .v-data-table {
   border-radius: unset !important;
   margin-top: 5px !important;
 }
-.v-data-table thead tr th {
+.invoice-creator-view .v-data-table thead tr th {
   border-top: thin solid rgba(0, 0, 0, 0.12) !important;
 }
-.v-data-table thead tr th,
-.v-data-table tbody tr td {
+.invoice-creator-view .v-data-table thead tr th,
+.invoice-creator-view .v-data-table tbody tr td {
   border-bottom: thin solid rgba(0, 0, 0, 0.12) !important;
 }
-.v-data-table tbody tr:first-of-type td {
+.invoice-creator-view .v-data-table tbody tr:first-of-type td {
   border-top: unset !important;
 }
-.v-data-table thead tr th:first-of-type,
-.v-data-table tbody tr td:first-of-type {
+.invoice-creator-view .v-data-table thead tr th:first-of-type,
+.invoice-creator-view .v-data-table tbody tr td:first-of-type {
   border-right: thin solid rgba(0, 0, 0, 0.12) !important;
 }
-.v-data-table thead tr th:last-of-type,
-.v-data-table tbody tr td:last-of-type {
+.invoice-creator-view .v-data-table thead tr th:last-of-type,
+.invoice-creator-view .v-data-table tbody tr td:last-of-type {
   border-left: thin solid rgba(0, 0, 0, 0.12) !important;
 }
-.v-data-table thead tr th:nth-child(1),
-.v-data-table tbody tr td:nth-child(1) {
+.invoice-creator-view .v-data-table thead tr th:nth-child(1),
+.invoice-creator-view .v-data-table tbody tr td:nth-child(1) {
   border-left: thin solid rgba(0, 0, 0, 0.12) !important;
 }
-.v-data-table thead tr th:nth-child(2),
-.v-data-table tbody tr td:nth-child(2) {
+.invoice-creator-view .v-data-table thead tr th:nth-child(2),
+.invoice-creator-view .v-data-table tbody tr td:nth-child(2) {
   border-left: thin solid rgba(0, 0, 0, 0.12) !important;
 }
-.v-data-table thead tr th:nth-child(3),
-.v-data-table tbody tr td:nth-child(3) {
+.invoice-creator-view .v-data-table thead tr th:nth-child(3),
+.invoice-creator-view .v-data-table tbody tr td:nth-child(3) {
   border-left: thin solid rgba(0, 0, 0, 0.12) !important;
 }
-.v-data-table thead tr th:nth-child(4),
-.v-data-table tbody tr td:nth-child(4) {
+.invoice-creator-view .v-data-table thead tr th:nth-child(4),
+.invoice-creator-view .v-data-table tbody tr td:nth-child(4) {
   border-left: thin solid rgba(0, 0, 0, 0.12) !important;
 }
-.v-data-table thead tr th:nth-child(5),
-.v-data-table tbody tr td:nth-child(5) {
+.invoice-creator-view .v-data-table thead tr th:nth-child(5),
+.invoice-creator-view .v-data-table tbody tr td:nth-child(5) {
   border-left: thin solid rgba(0, 0, 0, 0.12) !important;
 }
-.v-data-table__td {
+.invoice-creator-view .v-data-table__td {
   padding: 0 5px !important;
   height: 30px !important;
 }
-.v-data-table__td div {
+.invoice-creator-view .v-data-table__td div {
   padding: 0 !important;
 }
-.invoice .footer {
+.invoice-creator-view .invoice .footer {
   border-bottom: thin solid rgba(0, 0, 0, 0.12);
   border-right: thin solid rgba(0, 0, 0, 0.12);
   border-left: thin solid rgba(0, 0, 0, 0.12);
@@ -367,13 +374,10 @@ body {
   align-items: center;
   justify-content: space-between;
 }
-.app .form {
-  border-radius: 10px;
-  border: 2px solid gray;
+.invoice-creator-view .app .form {
+  border-radius: 5px;
+  border: 1px solid gray;
   padding: 30px;
   width: calc(100% - 530px);
-}
-.justify-between {
-  justify-content: space-between;
 }
 </style>
