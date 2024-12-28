@@ -1,6 +1,16 @@
 <template>
   <v-app>
-    <v-locale-provider rtl>
+    <v-locale-provider rtl v-if="!initFirebase">
+      <v-snackbar
+        @update:model-value="(v) => (!v ? (authStore.snackBarText = '') : false)"
+        location="top end"
+        color="primary"
+        z-index="999999"
+        :model-value="authStore.snackBarText ? true : false"
+        :timeout="5000"
+      >
+        {{ authStore.snackBarText }}
+      </v-snackbar>
       <div id="printableArea" class="printable-area invoice-creator-view"></div>
       <v-dialog
         persistent
@@ -11,7 +21,9 @@
         <div class="bg-white rounded-lg pb-4 pt-4 px-4 text-center">
           <h4>أدخل كلمة المرور</h4>
           <v-otp-input
+          type="password"
             autofocus
+            :loading="loading"
             dir="ltr"
             @finish="login"
             @update:model-value="error = ''"
@@ -39,6 +51,38 @@
           <v-toolbar-title>
             منشئ الفواتير | {{ currentPageTitle }}</v-toolbar-title
           >
+          <div v-if="authStore.userInfo" class="px-2 d-flex align-center ga-3">
+            <v-dialog persistent max-width="300px">
+              <template #activator="{ props }">
+                <v-btn flat color="error" v-bind="props" variant="tonal">
+                  <v-icon icon="mdi-logout" />
+                  إغلاق التطبيق
+                </v-btn>
+              </template>
+              <template #default="{ isActive }">
+                <div class="bg-white py-4 px-4 rounded">
+                  <h4>هل أنت متأكد</h4>
+                  <p class="mb-4">أنت علي وشك تسجيل الخروج وإغلاق التطبيق</p>
+                  <v-btn
+                    @click="logout"
+                    :loading="loading"
+                    block
+                    color="error"
+                    flat
+                    >تأكيد الإغلاق</v-btn
+                  >
+                  <v-btn
+                    block
+                    @click="isActive.value = false"
+                    color="black"
+                    variant="plain"
+                    flat
+                    >إلغاء</v-btn
+                  >
+                </div>
+              </template>
+            </v-dialog>
+          </div>
         </v-app-bar>
         <v-navigation-drawer app permanent fixed>
           <v-list>
@@ -79,26 +123,74 @@
         </v-main>
       </div>
     </v-locale-provider>
+    <div
+      class="d-flex align-center justify-center ga-3 w-100"
+      style="height: 100vh"
+      v-else-if="initFirebase"
+    >
+      جاري التحميل...
+      <v-progress-circular indeterminate size="20" width="2" />
+    </div>
   </v-app>
 </template>
 <script setup>
 useSeoMeta({
   title: "منشئ الفواتير",
 });
-const password = 789885;
+const authStore = useAuth();
+const { auth, signInWithEmailAndPassword } = useFirebase();
+auth.languageCode = "ar";
 const newPass = ref();
-const isAuthed = ref(false);
+const initFirebase = ref(true);
+const loading = ref(false);
+const isAuthed = ref(auth.currentUser ? true : false);
 const error = ref("");
 const route = useRoute();
+new Promise((res) => {
+  auth.onAuthStateChanged(
+    (user) => {
+      isAuthed.value = user ? true : false;
+      initFirebase.value = false;
+      if (user) {
+        newPass.value = null;
+        authStore.userData = {
+          name: user.displayName,
+          email: user.email,
+          phone: user.phone,
+          avatar: user.photoURL,
+          id: user.uid,
+        };
+      }
+      res(true);
+    },
+    (err) => {
+      res(false);
+      initFirebase.value = false;
+      console.error(err);
+    }
+  );
+});
 const currentPageTitle = computed(() => {
   return route.meta.title || "";
 });
-function login() {
-  if (password == newPass.value) {
-    isAuthed.value = true;
-  } else {
-    error.value = "كلمة المرور غير صحيحة، حاول تاني";
+async function login() {
+  loading.value = true;
+  try {
+    const res = await signInWithEmailAndPassword(
+      auth,
+      "mohamed.mojahead@gmail.com",
+      newPass.value
+    );
+  } catch (e) {
+    error.value = "كلمة المرور غير صحيحة";
   }
+  loading.value = false;
+}
+async function logout() {
+  loading.value = true;
+  await auth.signOut();
+  authStore.snackBarText = 'لقد تم إغلاق التطبيق بنجاح، إلى اللقاء'
+  loading.value = false;
 }
 </script>
 <style>
@@ -146,5 +238,101 @@ body {
 }
 .justify-between {
   justify-content: space-between;
+}
+.invoice-creator-view .app {
+  padding: 30px;
+  min-height: 90vh;
+  gap: 1.875rem;
+  display: flex;
+}
+.invoice-creator-view .app .invoice {
+  border-radius: 5px;
+  border: 1px solid gray;
+  padding: 10px;
+  width: 540px !important;
+  position: sticky;
+  top: 0;
+}
+.invoice-creator-view .app .invoice * {
+  font-weight: 400;
+  color: rgba(0, 0, 0, 0.781);
+}
+#invoice-data .v-btn * {
+  color: #fff !important;
+}
+.invoice-creator-view .invoice.printing {
+  border: unset;
+}
+.invoice-creator-view .invoice.printing .v-btn {
+  display: none;
+}
+.invoice-creator-view #invoice-data {
+  width: 500px !important;
+  max-width: 500px !important;
+  width: 100% !important;
+}
+.invoice-creator-view .v-data-table {
+  border-radius: unset !important;
+  margin-top: 5px !important;
+}
+.invoice-creator-view .v-data-table thead tr th {
+  border-top: thin solid rgba(0, 0, 0, 0.12) !important;
+}
+.invoice-creator-view .v-data-table thead tr th,
+.invoice-creator-view .v-data-table tbody tr td {
+  border-bottom: thin solid rgba(0, 0, 0, 0.12) !important;
+}
+.invoice-creator-view .v-data-table tbody tr:first-of-type td {
+  border-top: unset !important;
+}
+.invoice-creator-view .v-data-table thead tr th:first-of-type,
+.invoice-creator-view .v-data-table tbody tr td:first-of-type {
+  border-right: thin solid rgba(0, 0, 0, 0.12) !important;
+}
+.invoice-creator-view .v-data-table thead tr th:last-of-type,
+.invoice-creator-view .v-data-table tbody tr td:last-of-type {
+  border-left: thin solid rgba(0, 0, 0, 0.12) !important;
+}
+.invoice-creator-view .v-data-table thead tr th:nth-child(1),
+.invoice-creator-view .v-data-table tbody tr td:nth-child(1) {
+  border-left: thin solid rgba(0, 0, 0, 0.12) !important;
+}
+.invoice-creator-view .v-data-table thead tr th:nth-child(2),
+.invoice-creator-view .v-data-table tbody tr td:nth-child(2) {
+  border-left: thin solid rgba(0, 0, 0, 0.12) !important;
+}
+.invoice-creator-view .v-data-table thead tr th:nth-child(3),
+.invoice-creator-view .v-data-table tbody tr td:nth-child(3) {
+  border-left: thin solid rgba(0, 0, 0, 0.12) !important;
+}
+.invoice-creator-view .v-data-table thead tr th:nth-child(4),
+.invoice-creator-view .v-data-table tbody tr td:nth-child(4) {
+  border-left: thin solid rgba(0, 0, 0, 0.12) !important;
+}
+.invoice-creator-view .v-data-table thead tr th:nth-child(5),
+.invoice-creator-view .v-data-table tbody tr td:nth-child(5) {
+  border-left: thin solid rgba(0, 0, 0, 0.12) !important;
+}
+.invoice-creator-view .v-data-table__td {
+  padding: 0 5px !important;
+  height: 30px !important;
+}
+.invoice-creator-view .v-data-table__td div {
+  padding: 0 !important;
+}
+.invoice-creator-view .invoice .footer {
+  border-bottom: thin solid rgba(0, 0, 0, 0.12);
+  border-right: thin solid rgba(0, 0, 0, 0.12);
+  border-left: thin solid rgba(0, 0, 0, 0.12);
+  padding: 5px 5px 5px 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.invoice-creator-view .app .form {
+  border-radius: 5px;
+  border: 1px solid gray;
+  padding: 30px;
+  width: calc(100% - 530px);
 }
 </style>

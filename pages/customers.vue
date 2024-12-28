@@ -19,6 +19,7 @@
                 </h2>
                 <v-text-field
                   v-model="customerForm.name"
+                  :disabled="saving"
                   variant="outlined"
                   color="primary"
                   label="اسم العميل"
@@ -27,16 +28,18 @@
                   v-model="customerForm.phone"
                   variant="outlined"
                   type="number"
+                  :disabled="saving"
                   color="primary"
                   label="رقم هاتف العميل"
                 ></v-text-field>
                 <div class="d-flex ga-3">
-                  <v-btn @click="saveProduct(isActive)" flat color="success"
+                  <v-btn :loading="saving" @click="saveProduct(isActive)" flat color="success"
                     ><v-icon icon="mdi-content-save" />حفظ</v-btn
                   >
                   <v-btn
                     @click="isActive.value = false"
                     flat
+                  :disabled="saving"
                     color="black"
                     variant="outlined"
                     >إلغاء</v-btn
@@ -61,6 +64,7 @@
           :page="currentPage"
           hide-default-footer
           :items="paginateArray"
+          :loading="loading"
           hover
           enable-search
         >
@@ -113,7 +117,7 @@
                     v-tooltip:top="'تعديل'"
                     ><v-icon icon="mdi-pencil"
                   /></v-btn>
-                  <v-dialog max-width="300px">
+                  <v-dialog persistent max-width="300px">
                     <template #activator="{ props }">
                       <v-btn
                     v-tooltip:top="'حذف'"
@@ -128,17 +132,16 @@
                           أنت علي وشك حذف العميل {{ data.item.name }}
                         </p>
                         <v-btn
-                          @click="
-                            customersStore.list.splice(index, 1);
-                            isActive.value = false;
-                          "
+                          @click="deleteCustomer(data.item.id)"
                           block
                           color="error"
+                          :loading="deleting"
                           flat
                           >حذف</v-btn
                         >
                         <v-btn
                           block
+                          :disabled="deleting"
                           @click="isActive.value = false"
                           color="black"
                           variant="plain"
@@ -193,7 +196,7 @@
     title:"العملاء"
   })
   const customerFormState = ref(false);
-  const customersStore = useCustomers()
+  const customersStore = useCustomersStore()
   const paginateArray = computed(() => {
     // Calculate starting and ending indices
     const startIndex = (currentPage.value - 1) * currentPerPage.value;
@@ -202,7 +205,11 @@
     // Return the slice of the array for the current page
     return customersStore.list
       .slice(startIndex, endIndex)
-      .map((prod) => ({ ...prod, id: Math.floor(Math.random() * 99999) }));
+      .map((customer) => ({
+        id:customer.id,
+        name:customer.name,
+        phone:customer.phone,
+      }));
   });
   const searchText = ref();
   const customerForm = ref({
@@ -211,23 +218,28 @@
   });
   const currentPage = ref(1);
   const currentPerPage = ref(10);
-  function saveProduct(isActive) {
-    const isInList = customersStore.list.findIndex(
-      (p) => p.id === customerForm.value.id
-    );
-    if (isInList > -1) {
-      customersStore.list[isInList] = { ...customerForm.value };
-    } else {
-      customersStore.list.push({
-        ...customerForm.value,
-        id: Math.floor(Math.random() * 999999999),
-      });
+  const saving = ref(false);
+  const loading = ref(false);
+  const deleting = ref(false);
+  async function saveProduct(isActive) {
+    saving.value = true;
+    if(customerForm.value.id){
+     await customersStore.updateCustomer(customerForm.value.id, {...customerForm.value})
+    }else{
+      await customersStore.addCustomer({...customerForm.value})
     }
+    await loadCustomers()
     customerForm.value = {
       name: "",
       phone: null,
     };
+    saving.value = false;
     isActive.value = false;
+  }
+  async function loadCustomers() {
+    loading.value = true;
+    await customersStore.fetchCustomers()
+    loading.value = false;
   }
   function editCustomer(customer) {
     customerForm.value = {
@@ -247,5 +259,12 @@
     else if (text === "Phone") return "الهاتف";
     else return "";
   }
+  async function deleteCustomer(id) {
+    deleting.value = true;
+    await customersStore.deleteCustomer(id);
+    await loadCustomers()
+    deleting.value = false;
+  }
+  loadCustomers()
   </script>
   
