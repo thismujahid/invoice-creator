@@ -5,68 +5,11 @@
   >
     <div class="d-flex align-center mb-4 justify-between">
       <h2>المنتجات</h2>
-
-      <v-dialog  max-width="350px" v-model="productFormState">
-        <template #activator="{ props }">
-          <v-btn flat color="success" v-bind="props"
-            ><v-icon icon="mdi-plus" />إضافة منتج جديد</v-btn
-          >
-        </template>
-        <template #default="{ isActive }">
-          <div class="bg-white px-4 py-4 rounded">
-            <h2 class="mb-4">
-              {{ productForm?.id ? "تعديل المنتج" : "إضافة منتج جديد" }}
-            </h2>
-            <v-text-field
-              v-model="productForm.name"
-              variant="outlined"
-              color="primary"
-              :disabled="loading"
-              label="اسم المنتج"
-            ></v-text-field>
-            <v-text-field
-              v-model="productForm.cost_price"
-              variant="outlined"
-              color="primary"
-              label="سعر التكلفة"
-              :disabled="loading"
-
-            ></v-text-field>
-            <v-text-field
-              v-model="productForm.price"
-              variant="outlined"
-              color="primary"
-              :disabled="loading"
-
-              label="سعر البيع"
-            ></v-text-field>
-            <v-text-field
-              v-model="productForm.count"
-              variant="outlined"
-              color="primary"
-              label="العدد"
-              :disabled="loading"
-
-            ></v-text-field>
-            <div class="d-flex ga-3">
-              <v-btn
-              :loading="saving"
-              @click="saveProduct(isActive)" flat color="success"
-                ><v-icon icon="mdi-content-save" />حفظ</v-btn
-              >
-              <v-btn
-                @click="isActive.value = false"
-                flat
-              :disabled="loading"
-
-                color="black"
-                variant="outlined"
-                >إلغاء</v-btn
-              >
-            </div>
-          </div>
-        </template>
-      </v-dialog>
+      <FormsProduct :refresher="loadProds" v-model="productFormState" :edit="productForm" >
+        <v-btn flat color="success" v-bind="props"
+          ><v-icon icon="mdi-plus" />إضافة منتج جديد</v-btn
+        >
+      </FormsProduct>
     </div>
     <v-text-field
       label="بحث"
@@ -227,35 +170,9 @@ const paginateArray = computed(() => {
         count: prod.count
      }));
 });
-const productForm = ref({
-  name: "",
-  price: 0,
-  cost_price: 0,
-  count: 0,
-});
+const productForm = ref()
 const currentPage = ref(1);
 const currentPerPage = ref(10);
-async function saveProduct(isActive) {
-  saving.value = true;
-  if (productForm.value.id) {
-    await productsStore.updateProduct(productForm.value.id, {
-      ...productForm.value,
-    });
-  } else {
-    await productsStore.addProduct({
-      ...productForm.value,
-    });
-  }
-  await loadProds()
-  saving.value = false;
-  productForm.value = {
-    name: "",
-    price: 0,
-    cost_price: 0,
-    count: 0,
-  };
-  isActive.value = false;
-}
 function editProduct(product) {
   productForm.value = {
     ...product,

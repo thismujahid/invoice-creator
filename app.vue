@@ -2,7 +2,9 @@
   <v-app>
     <v-locale-provider rtl v-if="!initFirebase">
       <v-snackbar
-        @update:model-value="(v) => (!v ? (authStore.snackBarText = '') : false)"
+        @update:model-value="
+          (v) => (!v ? (authStore.snackBarText = '') : false)
+        "
         location="top end"
         color="primary"
         z-index="999999"
@@ -21,7 +23,7 @@
         <div class="bg-white rounded-lg pb-4 pt-4 px-4 text-center">
           <h4>أدخل كلمة المرور</h4>
           <v-otp-input
-          type="password"
+            type="password"
             autofocus
             :loading="loading"
             dir="ltr"
@@ -189,7 +191,7 @@ async function login() {
 async function logout() {
   loading.value = true;
   await auth.signOut();
-  authStore.snackBarText = 'لقد تم إغلاق التطبيق بنجاح، إلى اللقاء'
+  authStore.snackBarText = "لقد تم إغلاق التطبيق بنجاح، إلى اللقاء";
   loading.value = false;
 }
 </script>
@@ -224,10 +226,17 @@ body {
     border-bottom: thin solid rgba(0, 0, 0, 0.12);
     border-right: thin solid rgba(0, 0, 0, 0.12);
     border-left: thin solid rgba(0, 0, 0, 0.12);
-    padding: 5px 5px 5px 40px;
+    padding: 5px 5px 5px 5px;
+  }
+  .printable-area  .footer div {
     display: flex;
+    padding-block: 5px;
     align-items: center;
     justify-content: space-between;
+    line-height: 1;
+  }
+  .printable-area  .footer div:not(:last-of-type) {
+    border-bottom: 1px dashed rgba(128, 128, 128, 0.163);
   }
   .v-btn {
     display: none;
@@ -324,10 +333,23 @@ body {
   border-bottom: thin solid rgba(0, 0, 0, 0.12);
   border-right: thin solid rgba(0, 0, 0, 0.12);
   border-left: thin solid rgba(0, 0, 0, 0.12);
-  padding: 5px 5px 5px 40px;
+  padding: 5px;
+}
+.v-input {
+  margin-bottom: 15px;
+}
+.v-input:has(.v-input__details) {
+  margin-bottom: 8px;
+}
+.invoice-creator-view .invoice .footer div {
   display: flex;
+  padding-block: 5px;
   align-items: center;
   justify-content: space-between;
+  line-height: 1;
+}
+.invoice-creator-view .invoice .footer div:not(:last-of-type) {
+  border-bottom: 1px dashed rgba(128, 128, 128, 0.163);
 }
 .invoice-creator-view .app .form {
   border-radius: 5px;

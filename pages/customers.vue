@@ -5,49 +5,12 @@
       >
         <div class="d-flex align-center mb-4 justify-between">
           <h2>العملاء</h2>
-  
-          <v-dialog @after-leave="customerForm={name:'',phone:null}" max-width="350px" v-model="customerFormState">
-            <template #activator="{ props }">
-              <v-btn flat color="success" v-bind="props"
-                ><v-icon icon="mdi-plus" />إضافة عميل جديد</v-btn
-              >
-            </template>
-            <template #default="{ isActive }">
-              <div class="bg-white px-4 py-4 rounded">
-                <h2 class="mb-4">
-                  {{ customerForm?.id ? "تعديل العميل  " : "إضافة عميل جديد" }}
-                </h2>
-                <v-text-field
-                  v-model="customerForm.name"
-                  :disabled="saving"
-                  variant="outlined"
-                  color="primary"
-                  label="اسم العميل"
-                ></v-text-field>
-                <v-text-field
-                  v-model="customerForm.phone"
-                  variant="outlined"
-                  type="number"
-                  :disabled="saving"
-                  color="primary"
-                  label="رقم هاتف العميل"
-                ></v-text-field>
-                <div class="d-flex ga-3">
-                  <v-btn :loading="saving" @click="saveProduct(isActive)" flat color="success"
-                    ><v-icon icon="mdi-content-save" />حفظ</v-btn
-                  >
-                  <v-btn
-                    @click="isActive.value = false"
-                    flat
-                  :disabled="saving"
-                    color="black"
-                    variant="outlined"
-                    >إلغاء</v-btn
-                  >
-                </div>
-              </div>
-            </template>
-          </v-dialog>
+          <forms-customer v-model="customerFormState" :edit="customerForm" :refresher="loadCustomers">
+            <v-btn flat color="success" v-bind="props"
+            ><v-icon icon="mdi-plus" />إضافة عميل جديد</v-btn
+            >
+          </forms-customer>
+      
         </div>
         <v-text-field
           label="بحث"

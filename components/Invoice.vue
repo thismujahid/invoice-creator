@@ -26,7 +26,15 @@
       >
       </v-data-table>
       <div class="footer">
-        <strong>الإجمالي</strong> {{ formatePrice(calcTotal()) }}
+        <div v-if="invoiceData.delivery_price">
+          <strong>التوصيل</strong> {{ formatePrice(invoiceData.delivery_price) }}
+        </div>
+        <div v-if="invoiceData.old_money">
+          <strong>القديم</strong> {{ formatePrice(invoiceData.old_money) }}
+        </div>
+        <div>
+          <strong>الإجمالي</strong> {{ formatePrice(calcTotal()) }}
+        </div>
       </div>
     </div>
     <div class="d-flex ga-3 justify-between">
@@ -77,11 +85,11 @@ const calcTotalOfForm = (form) => {
   } else return 0;
 };
 function calcTotal() {
-  return (
+  return Number(
     props.invoiceData?.products
       .map((el) => Number(el.product_price) * Number(el.product_quantity))
-      .reduce((prev, current) => prev + current, 0) || ""
-  );
+      .reduce((prev, current) => prev + current, 0) || 0
+  ) + Number(props.invoiceData.old_money||0)+Number(props.invoiceData.delivery_price||0)
 }
 async function startPrint() {
   printing.value = true;

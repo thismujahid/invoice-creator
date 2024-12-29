@@ -4,7 +4,7 @@
       <div class="form">
         <v-form>
           <v-row>
-            <v-col cols="12" lg="3">
+            <v-col cols="12" lg="4">
               <v-autocomplete
                 item-title="name"
                 variant="outlined"
@@ -20,13 +20,23 @@
                 "
               >
                 <template #prepend-inner>
-                  <v-btn v-tooltip="'إضافة عميل جديد'" flat
-                    ><v-icon icon="mdi-plus"
-                  /></v-btn>
+                  <FormsCustomer
+                    :refresher="loadCustomers"
+                    @done="
+                      (cus) => {
+                        invoiceData.customer = cus;
+                        invoiceData.phone = cus?.phone;
+                      }
+                    "
+                  >
+                    <v-btn v-tooltip="'إضافة عميل جديد'" flat
+                      ><v-icon icon="mdi-plus"
+                    /></v-btn>
+                  </FormsCustomer>
                 </template>
               </v-autocomplete>
             </v-col>
-            <v-col cols="12" lg="3">
+            <v-col cols="12" lg="4">
               <v-text-field
                 variant="outlined"
                 v-model="invoiceData.phone"
@@ -36,7 +46,27 @@
               >
               </v-text-field>
             </v-col>
-            <v-col cols="12" lg="3">
+            <v-col cols="12" lg="4">
+              <v-text-field
+                variant="outlined"
+                v-model="invoiceData.old_money"
+                label="قديم"
+                placeholder="قديم"
+                type="number"
+              >
+              </v-text-field>
+            </v-col>
+            <v-col cols="12" lg="4">
+              <v-text-field
+                variant="outlined"
+                v-model="invoiceData.delivery_price"
+                label="التوصيل"
+                placeholder="التوصيل"
+                type="number"
+              >
+              </v-text-field>
+            </v-col>
+            <v-col cols="12" lg="4">
               <v-menu :close-on-content-click="false">
                 <template #activator="{ props }">
                   <v-text-field
@@ -66,7 +96,7 @@
                 ></v-date-picker>
               </v-menu>
             </v-col>
-            <v-col cols="12" lg="3">
+            <v-col cols="12" lg="4">
               <v-menu :close-on-content-click="false">
                 <template #activator="{ props }">
                   <v-text-field
@@ -108,12 +138,23 @@
                 :loading="loadingProds"
                 @update:model-value="form.product_price = form.product?.price"
                 label="اسم المنتج"
+                clearable
                 placeholder="اسم المنتج"
               >
                 <template #prepend-inner>
-                  <v-btn v-tooltip="'إضافة منتج جديد'" flat
-                    ><v-icon icon="mdi-plus"
-                  /></v-btn>
+                  <FormsProduct
+                    :refresher="loadProds"
+                    @done="
+                      (prod) => {
+                        form.product = prod;
+                        form.product_price = prod?.price;
+                      }
+                    "
+                  >
+                    <v-btn v-tooltip="'إضافة منتج جديد'" flat
+                      ><v-icon icon="mdi-plus"
+                    /></v-btn>
+                  </FormsProduct>
                 </template>
               </v-autocomplete>
             </v-col>
@@ -184,6 +225,8 @@ const customerList = computed(() => {
 const invoiceData = ref({
   customer: null,
   phone: null,
+  old_money: null,
+  delivery_price: null,
   products: [
     {
       product: "",
@@ -215,8 +258,8 @@ async function loadProds() {
   await products.fetchProducts();
   loadingProds.value = false;
 }
-loadProds()
-loadCustomers()
+loadProds();
+loadCustomers();
 function addNewForm() {
   invoiceData.value.products.push({
     product: "",
