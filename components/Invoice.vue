@@ -1,23 +1,22 @@
 <template>
   <div id="invoice-data" class="invoice">
     <div>
-      <div>
-        <strong> الاسم/ </strong>
-        {{ invoiceData.customer?.name }}
-      </div>
-      <div>
-        <strong> الهاتف/ </strong>
-        {{ invoiceData.phone }}
-      </div>
       <div class="d-flex align-center justify-between">
         <div>
-          <strong> التاريخ/ </strong>
-          {{ formatDate(invoiceData.date) }}
+          <div>
+            <strong> الاسم/ </strong>
+            {{ invoiceData.customer?.name }}
+          </div>
+          <div>
+            <strong> الهاتف/ </strong>
+            {{ invoiceData.phone }}
+          </div>
         </div>
-        <div>
+          <img src="/logo.png" alt="app logo" width="130px">
+      </div>
+      <div >
           <strong> الوقت/ </strong>
-          {{ formatTime12Hour(invoiceData.time) }}
-        </div>
+          {{ formatDate(invoiceData.date) }} {{ formatTime12Hour(invoiceData.time) }}
       </div>
       <v-data-table
         disable-sort
