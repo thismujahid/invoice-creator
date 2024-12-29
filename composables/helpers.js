@@ -2,20 +2,21 @@
 function formatePrice(price) {
   if (!import.meta.client) return price;
   let formatter = {
-    format: (price) => `${price}`,
+    format: (price) => `${price}ج`,
   };
   if (Intl && Intl.NumberFormat) {
     formatter = new Intl.NumberFormat(`ar-US`, {
+      currency: 'EGP',
       currencyDisplay: 'symbol',
       currencySign: 'standard',
       maximumFractionDigits: 2,
       minimumFractionDigits: 2,
       localeMatcher: 'best fit',
-      style: 'decimal',
+      style: 'currency',
     });
     formatter.format(price);
   }
-  return formatter.format(price);
+  return formatter.format(price).replace('.م.','');
 }
 function formatDate(date, options) {
   if (!date) return "-";

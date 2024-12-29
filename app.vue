@@ -97,10 +97,7 @@
             <v-list-item color="success" to="/customers" prepend-icon="mdi-account-multiple">
               <v-list-item-title>العملاء</v-list-item-title>
             </v-list-item>
-            <v-list-item color="success" prepend-icon="mdi-file-multiple">
-              <template #append>
-                <v-chip color="success" variant="tonal">قريبا</v-chip>
-              </template>
+            <v-list-item  to="/invoices" color="success" prepend-icon="mdi-file-multiple">
               <v-list-item-title>الفواتير</v-list-item-title>
             </v-list-item>
           </v-list>
@@ -178,7 +175,7 @@ const currentPageTitle = computed(() => {
 async function login() {
   loading.value = true;
   try {
-    const res = await signInWithEmailAndPassword(
+   await signInWithEmailAndPassword(
       auth,
       "mohamed.mojahead@gmail.com",
       newPass.value
@@ -214,6 +211,9 @@ body {
   display: none;
 }
 @media print {
+  .v-overlay-container{
+    display: none;
+  }
   .printable-area {
     display: block;
     padding: 20px;

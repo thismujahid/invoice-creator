@@ -29,7 +29,7 @@
                       }
                     "
                   >
-                   <v-icon v-ripple class="cursor-pointer" icon="mdi-plus" />
+                    <v-icon v-ripple class="cursor-pointer" icon="mdi-plus" />
                   </FormsCustomer>
                 </template>
               </v-autocomplete>
@@ -149,8 +149,7 @@
                       }
                     "
                   >
-                  <v-icon v-ripple class="cursor-pointer" icon="mdi-plus" />
-
+                    <v-icon v-ripple class="cursor-pointer" icon="mdi-plus" />
                   </FormsProduct>
                 </template>
               </v-autocomplete>
@@ -195,10 +194,10 @@
               </v-btn>
             </v-col>
           </v-row>
-          <v-btn color="success" flat @click="addNewForm">إضافة منتج </v-btn>
+            <v-btn color="success" flat @click="addNewForm">إضافة منتج </v-btn>
         </v-form>
       </div>
-      <Invoice :invoice-data="invoiceData" />
+      <Invoice @reset="resetInvoice" :invoice-data="invoiceData" />
     </div>
   </div>
 </template>
@@ -228,18 +227,31 @@ const invoiceData = ref({
     {
       product: "",
       product_price: 0,
-      product_quantity: 0,
+      product_quantity: 1,
       total: 0,
-      customer_name: "",
-      date: "",
-      time: "",
-      phone: "",
     },
   ],
   date: new Date(),
   time: new Date(),
 });
-
+function resetInvoice() {
+  invoiceData.value = {
+    customer: null,
+    phone: null,
+    old_money: null,
+    delivery_price: null,
+    products: [
+      {
+        product: "",
+        product_price: 0,
+        product_quantity: 1,
+        total: 0,
+      },
+    ],
+    date: new Date(),
+    time: new Date(),
+  };
+}
 const calcTotalOfForm = (form) => {
   if (form.product_price && form.product_quantity) {
     return Number(form.product_price) * Number(form.product_quantity);
@@ -261,12 +273,8 @@ function addNewForm() {
   invoiceData.value.products.push({
     product: "",
     product_price: 0,
-    product_quantity: 0,
+    product_quantity: 1,
     total: 0,
-    customer_name: "",
-    date: "",
-    time: "",
-    phone: "",
   });
 }
 </script>
