@@ -88,16 +88,16 @@
         </v-app-bar>
         <v-navigation-drawer app permanent fixed>
           <v-list>
-            <v-list-item to="/" prepend-icon="mdi-file-plus">
+            <v-list-item color="success" to="/" prepend-icon="mdi-file-plus">
               <v-list-item-title>إنشاء فاتورة</v-list-item-title>
             </v-list-item>
-            <v-list-item to="/products" prepend-icon="mdi-grid-large">
+            <v-list-item color="success" to="/products" prepend-icon="mdi-grid-large">
               <v-list-item-title>المنتجات</v-list-item-title>
             </v-list-item>
-            <v-list-item to="/customers" prepend-icon="mdi-account-multiple">
+            <v-list-item color="success" to="/customers" prepend-icon="mdi-account-multiple">
               <v-list-item-title>العملاء</v-list-item-title>
             </v-list-item>
-            <v-list-item prepend-icon="mdi-file-multiple">
+            <v-list-item color="success" prepend-icon="mdi-file-multiple">
               <template #append>
                 <v-chip color="success" variant="tonal">قريبا</v-chip>
               </template>

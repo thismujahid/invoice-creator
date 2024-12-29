@@ -1,5 +1,5 @@
 <template>
-  <v-dialog max-width="350px" v-model="customerFormState">
+  <v-dialog persistent max-width="350px" v-model="customerFormState">
     <template #activator="{ props }">
       <span v-bind="props">
         <slot></slot>

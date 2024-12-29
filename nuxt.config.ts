@@ -8,6 +8,18 @@ export default defineNuxtConfig({
   vuetify:{
     vuetifyOptions:{
       labComponents: true,
+      theme:{
+        themes:{
+          light:{
+            colors:{
+              primary:"#09090A",
+              error:"#FF233E",
+              success:"#50CD89",
+              "on-success":"#fff"
+            }
+          }
+        }
+      },
       locale: {
         locale: 'ar',
         messages: {ar}

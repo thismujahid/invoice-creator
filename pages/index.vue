@@ -29,9 +29,7 @@
                       }
                     "
                   >
-                    <v-btn v-tooltip="'إضافة عميل جديد'" flat
-                      ><v-icon icon="mdi-plus"
-                    /></v-btn>
+                   <v-icon v-ripple class="cursor-pointer" icon="mdi-plus" />
                   </FormsCustomer>
                 </template>
               </v-autocomplete>
@@ -151,9 +149,8 @@
                       }
                     "
                   >
-                    <v-btn v-tooltip="'إضافة منتج جديد'" flat
-                      ><v-icon icon="mdi-plus"
-                    /></v-btn>
+                  <v-icon v-ripple class="cursor-pointer" icon="mdi-plus" />
+
                   </FormsProduct>
                 </template>
               </v-autocomplete>

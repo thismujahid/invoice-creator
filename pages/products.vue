@@ -5,13 +5,18 @@
   >
     <div class="d-flex align-center mb-4 justify-between">
       <h2>المنتجات</h2>
-      <FormsProduct :refresher="loadProds" v-model="productFormState" :edit="productForm" >
+      <FormsProduct
+        :refresher="loadProds"
+        v-model="productFormState"
+        :edit="productForm"
+      >
         <v-btn flat color="success" v-bind="props"
           ><v-icon icon="mdi-plus" />إضافة منتج جديد</v-btn
         >
       </FormsProduct>
     </div>
     <v-text-field
+      max-width="350"
       label="بحث"
       variant="outlined"
       v-model="searchText"
@@ -60,19 +65,20 @@
               {{ value }}
             </td>
           </template>
-          <td>
+          <td class="pt-4 pb-4">
             <div class="d-flex ga-3">
               <v-btn
-                size="40"
+                size="30"
                 @click="editProduct(data.item)"
                 flat
-                color="primary"
-                ><v-icon icon="mdi-pencil"
+                variant="tonal"
+                color="success"
+                ><v-icon icon="mdi-pencil" size="25"
               /></v-btn>
               <v-dialog persistent max-width="300px">
                 <template #activator="{ props }">
-                  <v-btn  flat size="40" v-bind="props" color="error"
-                    ><v-icon icon="mdi-delete"
+                  <v-btn flat size="30" v-bind="props" variant="tonal" color="error"
+                    ><v-icon icon="mdi-delete-outline" size="30"
                   /></v-btn>
                 </template>
                 <template #default="{ isActive }">
@@ -82,9 +88,7 @@
                       أنت علي وشك حذف المنتج {{ data.item.name }}
                     </p>
                     <v-btn
-                      @click="
-                        deleteProd(data.item.id)
-                      "
+                      @click="deleteProd(data.item.id)"
                       block
                       :loading="deleting"
                       color="error"
@@ -153,24 +157,22 @@ const productFormState = ref(false);
 const productsStore = useProductsStore();
 const loading = ref(false);
 const saving = ref(false);
-const deleting = ref(false)
+const deleting = ref(false);
 const paginateArray = computed(() => {
   // Calculate starting and ending indices
   const startIndex = (currentPage.value - 1) * currentPerPage.value;
   const endIndex = startIndex + currentPerPage.value;
 
   // Return the slice of the array for the current page
-  return productsStore.list
-    .slice(startIndex, endIndex)
-    .map((prod) => ({ 
-        id:prod.id,
-        name: prod.name,
-        price: prod.price,
-        cost_price: prod.cost_price,
-        count: prod.count
-     }));
+  return productsStore.list.slice(startIndex, endIndex).map((prod) => ({
+    id: prod.id,
+    name: prod.name,
+    price: prod.price,
+    cost_price: prod.cost_price,
+    count: prod.count,
+  }));
 });
-const productForm = ref()
+const productForm = ref();
 const currentPage = ref(1);
 const currentPerPage = ref(10);
 function editProduct(product) {
@@ -203,7 +205,7 @@ async function loadProds() {
 async function deleteProd(id) {
   deleting.value = true;
   await productsStore.deleteProduct(id);
-  await loadProds()
+  await loadProds();
   deleting.value = false;
 }
 loadProds();
