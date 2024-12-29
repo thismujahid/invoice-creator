@@ -2,17 +2,16 @@
 function formatePrice(price) {
   if (!import.meta.client) return price;
   let formatter = {
-    format: (price) => `ج.م. ${price}`,
+    format: (price) => `${price}`,
   };
   if (Intl && Intl.NumberFormat) {
     formatter = new Intl.NumberFormat(`ar-US`, {
-      currency: 'EGP',
       currencyDisplay: 'symbol',
       currencySign: 'standard',
       maximumFractionDigits: 2,
       minimumFractionDigits: 2,
       localeMatcher: 'best fit',
-      style: 'currency',
+      style: 'decimal',
     });
     formatter.format(price);
   }
