@@ -51,6 +51,9 @@
       <div class="invoice-creator-app" v-if="isAuthed">
         <v-app-bar app color="light" flat border>
           <v-toolbar-title>
+            <v-btn @click="sideMenu = !sideMenu">
+              <v-icon icon="mdi-menu" />
+            </v-btn>
             منشئ الفواتير | {{ currentPageTitle }}</v-toolbar-title
           >
           <div v-if="authStore.userInfo" class="px-2 d-flex align-center ga-3">
@@ -86,18 +89,30 @@
             </v-dialog>
           </div>
         </v-app-bar>
-        <v-navigation-drawer app permanent fixed>
+        <v-navigation-drawer app temporary v-model="sideMenu">
           <v-list>
             <v-list-item color="success" to="/" prepend-icon="mdi-file-plus">
               <v-list-item-title>إنشاء فاتورة</v-list-item-title>
             </v-list-item>
-            <v-list-item color="success" to="/products" prepend-icon="mdi-grid-large">
+            <v-list-item
+              color="success"
+              to="/products"
+              prepend-icon="mdi-grid-large"
+            >
               <v-list-item-title>المنتجات</v-list-item-title>
             </v-list-item>
-            <v-list-item color="success" to="/customers" prepend-icon="mdi-account-multiple">
+            <v-list-item
+              color="success"
+              to="/customers"
+              prepend-icon="mdi-account-multiple"
+            >
               <v-list-item-title>العملاء</v-list-item-title>
             </v-list-item>
-            <v-list-item  to="/invoices" color="success" prepend-icon="mdi-file-multiple">
+            <v-list-item
+              to="/invoices"
+              color="success"
+              prepend-icon="mdi-file-multiple"
+            >
               <v-list-item-title>الفواتير</v-list-item-title>
             </v-list-item>
           </v-list>
@@ -141,6 +156,7 @@ const { auth, signInWithEmailAndPassword } = useFirebase();
 auth.languageCode = "ar";
 const newPass = ref();
 const initFirebase = ref(true);
+const sideMenu = ref(true);
 const loading = ref(false);
 const isAuthed = ref(auth.currentUser ? true : false);
 const error = ref("");
@@ -175,7 +191,7 @@ const currentPageTitle = computed(() => {
 async function login() {
   loading.value = true;
   try {
-   await signInWithEmailAndPassword(
+    await signInWithEmailAndPassword(
       auth,
       "mohamed.mojahead@gmail.com",
       newPass.value
@@ -211,7 +227,7 @@ body {
   display: none;
 }
 @media print {
-  .v-overlay-container{
+  .v-overlay-container {
     display: none;
   }
   .printable-area {
@@ -228,14 +244,14 @@ body {
     border-left: thin solid rgba(0, 0, 0, 0.12);
     padding: 5px 5px 5px 5px;
   }
-  .printable-area  .footer div {
+  .printable-area .footer div {
     display: flex;
     padding-block: 5px;
     align-items: center;
     justify-content: space-between;
     line-height: 1;
   }
-  .printable-area  .footer div:not(:last-of-type) {
+  .printable-area .footer div:not(:last-of-type) {
     border-bottom: 1px dashed rgba(128, 128, 128, 0.163);
   }
   .v-btn {
@@ -254,13 +270,13 @@ body {
   gap: 1.875rem;
   display: flex;
 }
+
 .invoice-creator-view .app .invoice {
   border-radius: 5px;
   border: 1px solid gray;
   padding: 10px;
   width: 540px !important;
-  position: sticky;
-  top: 0;
+  overflow: auto;
 }
 .invoice-creator-view .app .invoice * {
   font-weight: 400;
@@ -278,6 +294,7 @@ body {
 .invoice-creator-view #invoice-data {
   width: 500px !important;
   max-width: 500px !important;
+  min-width: 500px !important;
   width: 100% !important;
 }
 .invoice-creator-view .v-data-table {
@@ -356,5 +373,13 @@ body {
   border: 1px solid gray;
   padding: 30px;
   width: calc(100% - 530px);
+}
+@media (max-width: 62rem) {
+  .invoice-creator-view .app {
+    flex-wrap: wrap;
+  }
+  .invoice-creator-view .app .form {
+    width: 100%;
+  }
 }
 </style>

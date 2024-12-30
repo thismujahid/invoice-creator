@@ -152,7 +152,7 @@ definePageMeta({
   title: "المنتجات",
 });
 const searchText = ref();
-
+const {formatePrice}=useHelpers()
 const productFormState = ref(false);
 const productsStore = useProductsStore();
 const loading = ref(false);
@@ -167,8 +167,8 @@ const paginateArray = computed(() => {
   return productsStore.list.slice(startIndex, endIndex).map((prod) => ({
     id: prod.id,
     name: prod.name,
-    price: prod.price,
-    cost_price: prod.cost_price,
+    price: formatePrice(prod.price),
+    cost_price: formatePrice(prod.cost_price),
     count: prod.count,
   }));
 });
