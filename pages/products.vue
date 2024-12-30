@@ -6,6 +6,7 @@
     <div class="d-flex align-center mb-4 justify-between">
       <h2>المنتجات</h2>
       <FormsProduct
+      @close="productForm=undefined"
         :refresher="loadProds"
         v-model="productFormState"
         :edit="productForm"
@@ -25,15 +26,13 @@
     <v-data-table
       :loading="loading"
       no-data-text="لا توجد منتجات حتى الأن"
-      :items-length="productsStore.list.length"
-      :hide-default-header="productsStore.list.length === 0"
+      :items-length="prodsList.length"
+      :hide-default-header="prodsList.length === 0"
       :items-per-page="currentPerPage"
       :page="currentPage"
-      :search="searchText"
       hide-default-footer
       :items="paginateArray"
       hover
-      enable-search
     >
       <template v-slot:headers="{ columns, isSorted, getSortIcon, toggleSort }">
         <tr class="header-row">
@@ -77,7 +76,12 @@
               /></v-btn>
               <v-dialog persistent max-width="300px">
                 <template #activator="{ props }">
-                  <v-btn flat size="30" v-bind="props" variant="tonal" color="error"
+                  <v-btn
+                    flat
+                    size="30"
+                    v-bind="props"
+                    variant="tonal"
+                    color="error"
                     ><v-icon icon="mdi-delete-outline" size="30"
                   /></v-btn>
                 </template>
@@ -138,7 +142,7 @@
         size="30"
         total-visible="5"
         v-model="currentPage"
-        :length="Math.ceil(productsStore.list.length / currentPerPage)"
+        :length="Math.ceil(prodsList.length / currentPerPage)"
         active-color="primary"
         :total-visible="7"
         variant="flat"
@@ -152,19 +156,27 @@ definePageMeta({
   title: "المنتجات",
 });
 const searchText = ref();
-const {formatePrice}=useHelpers()
+const { formatePrice } = useHelpers();
 const productFormState = ref(false);
 const productsStore = useProductsStore();
 const loading = ref(false);
-const saving = ref(false);
 const deleting = ref(false);
+const prodsList = computed(() => {
+  return productsStore.list.filter((prod) => {
+    if (searchText.value) {
+      if (prod.name.toLowerCase().includes(searchText.value.toLowerCase()))
+        return true;
+      else return false;
+    } else return true;
+  });
+});
 const paginateArray = computed(() => {
   // Calculate starting and ending indices
   const startIndex = (currentPage.value - 1) * currentPerPage.value;
   const endIndex = startIndex + currentPerPage.value;
 
   // Return the slice of the array for the current page
-  return productsStore.list.slice(startIndex, endIndex).map((prod) => ({
+  return prodsList.value.slice(startIndex, endIndex).map((prod) => ({
     id: prod.id,
     name: prod.name,
     price: formatePrice(prod.price),
@@ -176,9 +188,12 @@ const productForm = ref();
 const currentPage = ref(1);
 const currentPerPage = ref(10);
 function editProduct(product) {
-  productForm.value = {
-    ...product,
-  };
+  const prod = prodsList.value.find((el) => el.id == product.id);
+  if (prod) {
+    productForm.value = {
+      ...prod,
+    };
+  }
   productFormState.value = true;
 }
 function formateHeaderTitle(title) {
@@ -200,6 +215,7 @@ async function loadProds() {
   setTimeout(async () => {
     await productsStore.fetchProducts({ name: searchText.value });
     loading.value = false;
+    currentTotalItems.value = productsStore.list.length;
   }, 100);
 }
 async function deleteProd(id) {
