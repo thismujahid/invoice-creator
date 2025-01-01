@@ -1,20 +1,20 @@
 <template>
   <div id="invoice-data" class="invoice">
     <div>
-      <div class="d-flex align-center justify-between">
+      <div :class="viewMode?'px-2':''" class="d-flex align-center justify-between">
         <div>
           <div>
             <strong> الاسم/ </strong>
-            {{ invoiceData.customer?.name }}
+            {{ invoiceData.customer_name }}
           </div>
           <div>
             <strong> الهاتف/ </strong>
-            {{ invoiceData.phone }}
+            {{ invoiceData.customer_phone }}
           </div>
         </div>
         <img src="/logo.png" alt="app logo" width="130px" />
       </div>
-      <div>
+      <div :class="viewMode?'px-2':''">
         <strong> الوقت/ </strong>
         {{ formatDate(invoiceData.date) }}
         {{ formatTime12Hour(invoiceData.time) }}
@@ -31,13 +31,13 @@
           <strong>التوصيل</strong>
           {{ formatePrice(invoiceData.delivery_price) }}
         </div>
-        <div v-if="invoiceData.old_money">
-          <strong>القديم</strong> {{ formatePrice(invoiceData.old_money) }}
+        <div v-if="invoiceData.debt">
+          <strong>القديم</strong> {{ formatePrice(invoiceData.debt) }}
         </div>
         <div><strong>الإجمالي</strong> {{ formatePrice(calcTotal()) }}</div>
       </div>
     </div>
-    <div class="d-flex mt-4 ga-3 justify-between">
+    <div :class="viewMode?'px-2':''" class="d-flex mt-4 ga-3 justify-between">
       <v-btn
         flat
         @click="startPrint"
@@ -80,6 +80,7 @@ const mappedProducts = computed(() => {
   return props.invoiceData?.products.map((prod, index) => {
     return {
       عدد: prod.product_quantity || "",
+      البيان: (prod.product_name || "") + (prod.option?` (${prod.option})`:""),
       البيان: prod.product?.name || "",
       تصحيح: "",
       "سعر الوحدة": formatePrice(prod.product_price),
@@ -99,7 +100,7 @@ function calcTotal() {
         .map((el) => Number(el.product_price) * Number(el.product_quantity))
         .reduce((prev, current) => prev + current, 0) || 0
     ) +
-    Number(props.invoiceData.old_money || 0) +
+    Number(props.invoiceData.debt || 0) +
     Number(props.invoiceData.delivery_price || 0)
   );
 }
@@ -119,28 +120,15 @@ async function startPrint() {
   printing.value = true;
   if (!props.viewMode) {
     await saveDataTo("invoices", {
-      customer_name: props.invoiceData.customer?.name,
-      customer_phone: props.invoiceData.customer?.phone,
-      date: time,
-      debt: props.invoiceData.old_money,
-      delivery_price: props.invoiceData.delivery_price,
-      total: calcTotal(),
-      products: props.invoiceData.products.map((prod) => {
-        return {
-          cost_price: prod.product?.cost_price,
-          name: prod.product?.name,
-          price: prod.product_price,
-          quantity: prod.product_quantity,
-        };
-      }),
+      ...props.invoiceData
     });
   }
   setTimeout(async () => {
     await useDownloadPDF(
       "invoice-data",
-      `فاتورة ${props.invoiceData?.customer?.name || ""} - ${formatDate(
+      `فاتورة ${props.invoiceData?.customer_name || ""}----${formatDate(
         props.invoiceData?.date
-      )} ${formatTime12Hour(props.invoiceData?.time)}`
+      ).replace(/ /g,'-')}----${formatTime12Hour(props.invoiceData?.time).replace(/ /g,'-')}`
     );
     printing.value = false;
   }, 100);

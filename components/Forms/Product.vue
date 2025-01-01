@@ -1,5 +1,5 @@
 <template>
-  <v-dialog persistent max-width="350px" v-model="productFormState">
+  <v-dialog @update:model-value="v=>v?false:emit('close')" persistent max-width="350px" v-model="productFormState">
     <template #activator="{ props }">
       <span v-bind="props">
         <slot></slot>
@@ -70,11 +70,11 @@
 </template>
 
 <script setup>
-
 const props = defineProps(["edit", "refresher"]);
-const emit = defineEmits(["done"]);
+const emit = defineEmits(["done",'close']);
 const productFormState = ref(false);
 const productsStore = useProductsStore();
+const auth = useAuth();
 const productForm = ref({
   name: "",
   price: null,
@@ -83,35 +83,42 @@ const productForm = ref({
 });
 const saving = ref(false);
 async function saveProduct(validator, isActive) {
-    validator.then(async (res)=>{
-        if(!res?.valid) return;
-        saving.value = true;
-        let id = productForm.value?.id;
-        if (productForm.value?.id) {
-            await productsStore.updateProduct(productForm.value.id, {
-                ...productForm.value,
-            });
-        } else {
-            const res = await productsStore.addProduct({
-                ...productForm.value,
-            });
-            id = res?.id;
-        }
-        await props.refresher();
-        emit(
-            "done",
-            productsStore.list.find((prod) => prod.id == id)
-        );
-        saving.value = false;
-        productForm.value = {
-            name: "",
-            price: 0,
-            cost_price: 0,
-            count: 0,
-        };
-        isActive.value = false;
-    })
+  validator.then(async (res) => {
+    const isAdded = productsStore.list.find(
+      (prod) => prod.name === productForm.value.name
+    );
+    if (isAdded) {
+      auth.snackBarText = "تمت إضافة منتج بنفس الإسم من قبل";
+      return;
     }
+    if (!res?.valid) return;
+    saving.value = true;
+    let id = productForm.value?.id;
+    if (productForm.value?.id) {
+      await productsStore.updateProduct(productForm.value.id, {
+        ...productForm.value,
+      });
+    } else {
+      const res = await productsStore.addProduct({
+        ...productForm.value,
+      });
+      id = res?.id;
+    }
+    await props.refresher();
+    emit(
+      "done",
+      productsStore.list.find((prod) => prod.id == id)
+    );
+    saving.value = false;
+    productForm.value = {
+      name: "",
+      price: 0,
+      cost_price: 0,
+      count: 0,
+    };
+    isActive.value = false;
+  });
+}
 watch(
   () => props.edit,
   () => {
@@ -119,12 +126,26 @@ watch(
       productForm.value = {
         ...props.edit,
       };
+    } else {
+      productForm.value = {
+        name: "",
+        price: null,
+        cost_price: null,
+        count: null,
+      };
     }
   }
 );
 if (props.edit) {
   productForm.value = {
     ...props.edit,
+  };
+} else {
+  productForm.value = {
+    name: "",
+    price: null,
+    cost_price: null,
+    count: null,
   };
 }
 </script>

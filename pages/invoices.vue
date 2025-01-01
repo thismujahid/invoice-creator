@@ -80,22 +80,10 @@
                   /></v-btn>
                 </template>
                 <template #default="{ isActive }">
-                  <div v-if="isActive.value" class="bg-white invoice-creator-view px-2 py-2 rounded-lg">
+                  <div v-if="isActive.value" class="bg-white invoice-creator-view py-2 rounded-lg">
                     <Invoice :viewMode="true" @close="isActive.value = false" :invoice-data="{
                       ...data.item.invoice,
-                      customer:{
-                        name:data.item.name,
-                      },
-                      products: data.item.invoice?.products.map(prod=>{
-                        return {
-                          product: {name:prod.name},
-                          product_quantity:prod.quantity,
-                          product_price:prod.price,
-                        }
-                      }),
-                      phone:data.item.phone,
                       date:data.item.created_at_object,
-                      old_money:data.item.invoice.debt,
                       time:data.item.created_at_object,
                     }" />
                     </div>

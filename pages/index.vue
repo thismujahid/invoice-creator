@@ -9,14 +9,16 @@
                 item-title="name"
                 variant="outlined"
                 return-object
-                v-model="invoiceData.customer"
                 :items="customerList"
                 label="اسم العميل"
                 placeholder="اسم العميل"
                 :loading="loadingCustomers"
                 clearable
                 @update:model-value="
-                  invoiceData.phone = invoiceData.customer?.phone
+                  (cus) => {
+                    invoiceData.customer_phone = cus?.phone;
+                    invoiceData.customer_name = cus?.name;
+                  }
                 "
               >
                 <template #prepend-inner>
@@ -24,8 +26,8 @@
                     :refresher="loadCustomers"
                     @done="
                       (cus) => {
-                        invoiceData.customer = cus;
-                        invoiceData.phone = cus?.phone;
+                        invoiceData.customer_name = cus?.name;
+                        invoiceData.customer_phone = cus?.phone;
                       }
                     "
                   >
@@ -37,7 +39,7 @@
             <v-col cols="12" lg="4">
               <v-text-field
                 variant="outlined"
-                v-model="invoiceData.phone"
+                v-model="invoiceData.customer_phone"
                 label="رقم هاتف العميل"
                 placeholder="رقم هاتف العميل"
                 type="number"
@@ -47,7 +49,7 @@
             <v-col cols="12" lg="4">
               <v-text-field
                 variant="outlined"
-                v-model="invoiceData.old_money"
+                v-model="invoiceData.debt"
                 label="قديم"
                 placeholder="قديم"
                 type="number"
@@ -126,26 +128,32 @@
             </v-col>
           </v-row>
           <v-row v-for="(form, index) in invoiceData.products">
-            <v-col cols="12" lg="5">
+            <v-col cols="12" lg="3">
               <v-autocomplete
                 item-title="name"
                 variant="outlined"
                 return-object
-                v-model="form.product"
                 :items="productsList"
                 :loading="loadingProds"
-                @update:model-value="form.product_price = form.product?.price"
-                label="اسم المنتج"
+                @update:model-value="
+                  (prod) => {
+                    form.product_price = prod?.price;
+                    form.product_cost_price = prod?.cost_price;
+                    form.product_name = prod?.name;
+                  }
+                "
+                label="المنتج"
                 clearable
-                placeholder="اسم المنتج"
+                placeholder=" المنتج"
               >
                 <template #prepend-inner>
                   <FormsProduct
                     :refresher="loadProds"
                     @done="
                       (prod) => {
-                        form.product = prod;
+                        form.product_name = prod?.name;
                         form.product_price = prod?.price;
+                        form.product_cost_price = prod?.cost_price;
                       }
                     "
                   >
@@ -153,6 +161,15 @@
                   </FormsProduct>
                 </template>
               </v-autocomplete>
+            </v-col>
+            <v-col cols="12" lg="2">
+              <v-text-field
+                variant="outlined"
+                v-model="form.option"
+                label="خيار معين"
+                placeholder="خيار معين"
+              >
+              </v-text-field>
             </v-col>
             <v-col cols="12" lg="2">
               <v-text-field
@@ -194,7 +211,7 @@
               </v-btn>
             </v-col>
           </v-row>
-            <v-btn color="success" flat @click="addNewForm">إضافة منتج </v-btn>
+          <v-btn color="success" flat @click="addNewForm">إضافة منتج </v-btn>
         </v-form>
       </div>
       <Invoice @reset="resetInvoice" :invoice-data="invoiceData" />
@@ -219,16 +236,18 @@ const customerList = computed(() => {
 });
 
 const invoiceData = ref({
-  customer: null,
-  phone: null,
-  old_money: null,
+  customer_name: null,
+  customer_phone: null,
+  debt: null,
   delivery_price: null,
   products: [
     {
-      product: "",
+      product_name: "",
       product_price: 0,
+      product_cost_price: 0,
       product_quantity: 1,
       total: 0,
+      option: "",
     },
   ],
   date: new Date(),
@@ -236,16 +255,18 @@ const invoiceData = ref({
 });
 function resetInvoice() {
   invoiceData.value = {
-    customer: null,
-    phone: null,
-    old_money: null,
+    customer_name: null,
+    customer_phone: null,
+    debt: null,
     delivery_price: null,
     products: [
       {
-        product: "",
+        product_name: "",
         product_price: 0,
         product_quantity: 1,
+        product_cost_price: 0,
         total: 0,
+        option: "",
       },
     ],
     date: new Date(),
@@ -271,10 +292,12 @@ loadProds();
 loadCustomers();
 function addNewForm() {
   invoiceData.value.products.push({
-    product: "",
+    product_name: "",
     product_price: 0,
     product_quantity: 1,
+    product_cost_price: 0,
     total: 0,
+    option: "",
   });
 }
 </script>

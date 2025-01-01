@@ -33,7 +33,7 @@ function formatDate(date, options) {
     const formatter = new Intl.DateTimeFormat("ar", optionsList);
     return formatter.format(new Date(date));
   } catch (e) {
-    return date;
+    return date||'';
   }
 }
 function formatTime12Hour(date) {
