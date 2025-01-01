@@ -79,9 +79,8 @@ const emit = defineEmits(["reset"]);
 const mappedProducts = computed(() => {
   return props.invoiceData?.products.map((prod, index) => {
     return {
-      م: index + 1,
-      البيان: prod.product?.name || "",
       عدد: prod.product_quantity || "",
+      البيان: prod.product?.name || "",
       تصحيح: "",
       "سعر الوحدة": formatePrice(prod.product_price),
       الإجمالي: formatePrice(calcTotalOfForm(prod)),
