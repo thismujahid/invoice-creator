@@ -1,23 +1,28 @@
 <template>
   <div id="invoice-data" class="invoice">
     <div>
-      <div :class="viewMode?'px-2':''" class="d-flex align-center justify-between">
-        <div>
+      <div class="invoice-header">
+        <div
+          :class="viewMode ? 'px-2' : ''"
+          class="d-flex align-center justify-between"
+        >
           <div>
-            <strong> الاسم/ </strong>
-            {{ invoiceData.customer_name }}
+            <div>
+              <strong> الاسم/ </strong>
+              {{ invoiceData.customer_name }}
+            </div>
+            <div>
+              <strong> الهاتف/ </strong>
+              {{ invoiceData.customer_phone }}
+            </div>
           </div>
-          <div>
-            <strong> الهاتف/ </strong>
-            {{ invoiceData.customer_phone }}
-          </div>
+          <img src="/logo.png" alt="app logo" width="130px" />
         </div>
-        <img src="/logo.png" alt="app logo" width="130px" />
-      </div>
-      <div :class="viewMode?'px-2':''">
-        <strong> الوقت/ </strong>
-        {{ formatDate(invoiceData.date) }}
-        {{ formatTime12Hour(invoiceData.time) }}
+        <div :class="viewMode ? 'px-2' : ''">
+          <strong> الوقت/ </strong>
+          {{ formatDate(invoiceData.date) }}
+          {{ formatTime12Hour(invoiceData.time) }}
+        </div>
       </div>
       <v-data-table
         disable-sort
@@ -26,19 +31,24 @@
         hide-default-footer
       >
       </v-data-table>
-      <div class="footer">
-        <div v-if="invoiceData.delivery_price">
-          <strong>التوصيل</strong>
-          {{ formatePrice(invoiceData.delivery_price) }}
-        </div>
+      <div class="invoice-footer">
+
+        <div class="footer">
+          <div v-if="invoiceData.delivery_price">
+            <strong>التوصيل</strong>
+            {{ formatePrice(invoiceData.delivery_price) }}
+          </div>
         <div v-if="invoiceData.debt">
           <strong>القديم</strong> {{ formatePrice(invoiceData.debt) }}
         </div>
         <div><strong>الإجمالي</strong> {{ formatePrice(calcTotal()) }}</div>
       </div>
     </div>
-    <div :class="viewMode?'px-2':''" class="d-flex mt-4 ga-3 justify-between">
-      <v-btn
+    <div
+    :class="viewMode ? 'px-2' : ''"
+    class="d-flex mt-4 ga-3 pb-2  justify-between"
+    >
+    <v-btn
         flat
         @click="startPrint"
         :loading="printing"
@@ -48,8 +58,8 @@
         >{{ viewMode ? "طباعة" : "حفظ وطباعة" }}
       </v-btn>
       <v-btn
-        v-if="!viewMode"
-        color="error"
+      v-if="!viewMode"
+      color="error"
         flat
         style="width: 48%"
         prepend-icon="mdi-close"
@@ -65,6 +75,7 @@
         >إغلاق
       </v-btn>
     </div>
+    </div>
   </div>
 </template>
 
@@ -78,10 +89,10 @@ const saving = ref(false);
 const emit = defineEmits(["reset"]);
 const mappedProducts = computed(() => {
   return props.invoiceData?.products.map((prod, index) => {
-    console.log("🚀 ~ returnprops.invoiceData?.products.map ~ prod:", prod)
     return {
       عدد: prod.product_quantity || "",
-      البيان: (prod.product_name || "") + (prod.option?` (${prod.option})`:""),
+      البيان:
+        (prod.product_name || "") + (prod.option ? ` (${prod.option})` : ""),
       تصحيح: "",
       "سعر الوحدة": formatePrice(prod.product_price),
       الإجمالي: formatePrice(calcTotalOfForm(prod)),
@@ -120,7 +131,7 @@ async function startPrint() {
   printing.value = true;
   if (!props.viewMode) {
     await saveDataTo("invoices", {
-      ...props.invoiceData
+      ...props.invoiceData,
     });
   }
   setTimeout(async () => {
@@ -128,7 +139,9 @@ async function startPrint() {
       "invoice-data",
       `فاتورة ${props.invoiceData?.customer_name || ""}----${formatDate(
         props.invoiceData?.date
-      ).replace(/ /g,'-')}----${formatTime12Hour(props.invoiceData?.time).replace(/ /g,'-')}`
+      ).replace(/ /g, "-")}----${formatTime12Hour(
+        props.invoiceData?.time
+      ).replace(/ /g, "-")}`
     );
     printing.value = false;
   }, 100);

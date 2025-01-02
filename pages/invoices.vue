@@ -67,7 +67,7 @@
           </template>
           <td class="pt-4 pb-4">
             <div class="d-flex ga-3">
-              <v-dialog persistent max-width="500px">
+              <v-dialog eager persistent max-width="520px">
                 <template #activator="{ props }">
                   <v-btn
                     v-tooltip:top="'عرض الفاتورة'"
@@ -80,13 +80,16 @@
                   /></v-btn>
                 </template>
                 <template #default="{ isActive }">
-                  <div v-if="isActive.value" class="bg-white invoice-creator-view py-2 rounded-lg">
-                    <Invoice :viewMode="true" @close="isActive.value = false" :invoice-data="{
-                      ...data.item.invoice,
-                      date:data.item.created_at_object,
-                      time:data.item.created_at_object,
-                    }" />
+                  <div style="max-height: 95vh; overflow-y: auto;overflow-x: hidden;border-radius: 10px; " class="custom-scrollbar">
+
+                    <div v-if="isActive.value" class="bg-white invoice-creator-view py-2 rounded-lg mx-auto">
+                      <Invoice class="mx-auto" :viewMode="true" @close="isActive.value = false" :invoice-data="{
+                        ...data.item.invoice,
+                        date:data.item.created_at_object,
+                        time:data.item.created_at_object,
+                      }" />
                     </div>
+                  </div>
                 </template>
               </v-dialog> 
               <v-dialog persistent max-width="300px">

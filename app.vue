@@ -270,6 +270,9 @@ body {
   gap: 1.875rem;
   display: flex;
 }
+.invoice-creator-view.in-popup{
+  min-width: 650px;
+}
 
 .invoice-creator-view .app .invoice {
   border-radius: 5px;
@@ -382,4 +385,40 @@ body {
     width: 100%;
   }
 }
+.invoice-creator-view .invoice-header{
+  position: sticky !important;
+  top: 0px !important;
+  background-color: #fff;
+  z-index: 999;
+}
+.invoice-footer{
+  position: sticky !important;
+  bottom: 0px !important;
+  z-index: 999;
+  background-color: #fff;
+}
+.custom-scrollbar {
+  scrollbar-width: thin; /* For Firefox */
+  scrollbar-color: #888 transparent; /* For Firefox */
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 8px; /* Scrollbar width */
+  height: 8px; /* Scrollbar height for horizontal scroll */
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent; /* Track background */
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: #888; /* Thumb color */
+  border-radius: 4px; /* Rounded corners */
+  border: 2px solid transparent; /* Optional border for better thumb visibility */
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: #555; /* Thumb color on hover */
+}
+
 </style>
