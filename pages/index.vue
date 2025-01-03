@@ -59,6 +59,26 @@
             <v-col cols="12" lg="4">
               <v-text-field
                 variant="outlined"
+                v-model="invoiceData.amount_of_mahros"
+                label="محروس"
+                placeholder="محروس"
+                type="number"
+              >
+              </v-text-field>
+            </v-col>
+            <v-col cols="12" lg="4">
+              <v-text-field
+                variant="outlined"
+                v-model="invoiceData.amount_of_animal_feeds"
+                label="العلف"
+                placeholder="العلف"
+                type="number"
+              >
+              </v-text-field>
+            </v-col>
+            <v-col cols="12" lg="4">
+              <v-text-field
+                variant="outlined"
                 v-model="invoiceData.delivery_price"
                 label="التوصيل"
                 placeholder="التوصيل"
@@ -127,7 +147,11 @@
               </v-menu>
             </v-col>
           </v-row>
-          <v-row v-for="(form, index) in invoiceData.products">
+
+          <v-row
+            v-for="(form, index) in invoiceData.products"
+            :key="'product-line-' + index"
+          >
             <v-col cols="12" lg="3">
               <v-autocomplete
                 item-title="name"
@@ -135,9 +159,16 @@
                 return-object
                 :items="productsList"
                 :loading="loadingProds"
+                :model-value="{
+                  id: form.product_id,
+                  name: form.product_name,
+                  price: form.product_price,
+                  cost_price: form.product_cost_price,
+                }"
                 @update:model-value="
                   (prod) => {
                     form.product_price = prod?.price;
+                    form.product_id = prod?.id;
                     form.product_cost_price = prod?.cost_price;
                     form.product_name = prod?.name;
                   }
@@ -201,7 +232,7 @@
             </v-col>
             <v-col cols="12" lg="1">
               <v-btn
-                @click="invoiceData.products.splice(index, 1)"
+                @click="removeElementIndex(index)"
                 flat
                 color="error"
                 variant="tonal"
@@ -225,6 +256,7 @@ definePageMeta({
 const { formatDate, formatTime12Hour, formatePrice, useDownloadPDF } =
   useHelpers();
 const products = useProductsStore();
+const invoices = useInvoicesStore();
 const customers = useCustomersStore();
 const loadingCustomers = ref(false);
 const loadingProds = ref(false);
@@ -240,6 +272,8 @@ const invoiceData = ref({
   customer_phone: null,
   debt: null,
   delivery_price: null,
+  amount_of_animal_feeds: null,
+  amount_of_mahros: null,
   products: [
     {
       product_name: "",
@@ -248,6 +282,7 @@ const invoiceData = ref({
       product_quantity: 1,
       total: 0,
       option: "",
+      product_id: "",
     },
   ],
   date: new Date(),
@@ -266,6 +301,7 @@ function resetInvoice() {
         product_quantity: 1,
         product_cost_price: 0,
         total: 0,
+        product_id: "",
         option: "",
       },
     ],
@@ -296,8 +332,29 @@ function addNewForm() {
     product_price: 0,
     product_quantity: 1,
     product_cost_price: 0,
+    product_id: "",
     total: 0,
     option: "",
   });
 }
+const reBuild = ref(false);
+function removeElementIndex(index) {
+  reBuild.value = true;
+  invoiceData.value.products = invoiceData.value.products.filter(
+    (p, i) => i !== index
+  );
+  setTimeout(() => {
+    reBuild.value = false;
+  }, 200);
+}
+onMounted(()=>{
+  if(invoices.invoiceToEdit){
+    invoiceData.value = {
+      ...invoices.invoiceToEdit,
+      date: new Date(invoices.invoiceToEdit.date.seconds * 1000),
+      time: new Date(invoices.invoiceToEdit.date.seconds * 1000),
+    }
+    invoices.invoiceToEdit = undefined;
+  }
+})
 </script>

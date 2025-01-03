@@ -1,5 +1,9 @@
 <template>
   <div id="invoice-data" class="invoice">
+    <v-alert color="warning" variant="tonal" v-if="invoiceData.id && !viewMode" class="mb-3">
+      <v-icon icon="mdi-file-edit-outline" />
+      أنت في وضع التعديل علي فاتورة سابقة
+    </v-alert>
     <div>
       <div class="invoice-header">
         <div
@@ -32,59 +36,79 @@
       >
       </v-data-table>
       <div class="invoice-footer">
-
         <div class="footer">
+          <div v-if="invoiceData.debt">
+            <strong>القديم</strong> {{ formatePrice(invoiceData.debt) }}
+          </div>
+          <div v-if="invoiceData.amount_of_mahros">
+            <strong>محروس</strong>
+            {{ formatePrice(invoiceData.amount_of_mahros) }}
+          </div>
+          <div v-if="invoiceData.amount_of_animal_feeds">
+            <strong>العلف</strong>
+            {{ formatePrice(invoiceData.amount_of_animal_feeds) }}
+          </div>
           <div v-if="invoiceData.delivery_price">
             <strong>التوصيل</strong>
             {{ formatePrice(invoiceData.delivery_price) }}
           </div>
-        <div v-if="invoiceData.debt">
-          <strong>القديم</strong> {{ formatePrice(invoiceData.debt) }}
+          <div>
+            <strong>الإجمالي</strong> {{ formatePrice(calcTotal(invoiceData)) }}
+          </div>
         </div>
-        <div><strong>الإجمالي</strong> {{ formatePrice(calcTotal()) }}</div>
       </div>
-    </div>
-    <div
-    :class="viewMode ? 'px-2' : ''"
-    class="d-flex mt-4 ga-3 pb-2  justify-between"
-    >
-    <v-btn
-        flat
-        @click="startPrint"
-        :loading="printing"
-        style="width: 48%"
-        color="success"
-        prepend-icon="mdi-printer"
-        >{{ viewMode ? "طباعة" : "حفظ وطباعة" }}
-      </v-btn>
-      <v-btn
-      v-if="!viewMode"
-      color="error"
-        flat
-        style="width: 48%"
-        prepend-icon="mdi-close"
-        @click="emit('reset')"
-        >إعادة ظبط الفاتورة
-      </v-btn>
-      <v-btn
-        v-if="viewMode"
-        color="error"
-        flat
-        style="width: 48%"
-        @click="$emit('close')"
-        >إغلاق
-      </v-btn>
-    </div>
+      <div
+        :class="viewMode ? 'px-2' : ''"
+        class="d-flex mt-4 ga-3 pb-2 justify-between"
+      >
+        <v-btn
+          flat
+          @click="startPrint"
+          :loading="printing"
+          style="width: 48%"
+          color="success"
+          prepend-icon="mdi-printer"
+          >{{
+            props.invoiceData.id
+              ? "طباعة وحفظ التعديل"
+              : viewMode
+              ? "طباعة"
+              : "حفظ وطباعة"
+          }}
+        </v-btn>
+        <v-btn
+          v-if="!viewMode"
+          color="error"
+          flat
+          style="width: 48%"
+          prepend-icon="mdi-close"
+          @click="emit('reset')"
+          >إعادة ظبط الفاتورة
+        </v-btn>
+        <v-btn
+          v-if="viewMode"
+          color="error"
+          flat
+          style="width: 48%"
+          @click="$emit('close')"
+          >إغلاق
+        </v-btn>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
 const props = defineProps(["invoiceData", "viewMode"]);
-const { formatDate, formatTime12Hour, formatePrice, useDownloadPDF } =
-  useHelpers();
+const {
+  formatDate,
+  calcTotal,
+  formatTime12Hour,
+  formatePrice,
+  useDownloadPDF,
+} = useHelpers();
 const printing = ref(false);
-const { saveDataTo } = useFirebase();
+const { saveDataTo, updateItem } = useFirebase();
 const saving = ref(false);
 const emit = defineEmits(["reset"]);
 const mappedProducts = computed(() => {
@@ -104,17 +128,7 @@ const calcTotalOfForm = (form) => {
     return Number(form.product_price) * Number(form.product_quantity);
   } else return 0;
 };
-function calcTotal() {
-  return (
-    Number(
-      props.invoiceData?.products
-        .map((el) => Number(el.product_price) * Number(el.product_quantity))
-        .reduce((prev, current) => prev + current, 0) || 0
-    ) +
-    Number(props.invoiceData.debt || 0) +
-    Number(props.invoiceData.delivery_price || 0)
-  );
-}
+
 async function startPrint() {
   let time = new Date();
   if (props.invoiceData.time instanceof Date) {
@@ -130,9 +144,17 @@ async function startPrint() {
   }
   printing.value = true;
   if (!props.viewMode) {
-    await saveDataTo("invoices", {
-      ...props.invoiceData,
-    });
+    if (props.invoiceData.id) {
+      const data = {
+        ...props.invoiceData,
+      };
+      delete data.id;
+      await updateItem("invoices", props.invoiceData.id, data);
+    } else {
+      await saveDataTo("invoices", {
+        ...props.invoiceData,
+      });
+    }
   }
   setTimeout(async () => {
     await useDownloadPDF(
@@ -145,11 +167,5 @@ async function startPrint() {
     );
     printing.value = false;
   }, 100);
-}
-function saveInvoice() {
-  saving.value = true;
-  setTimeout(() => {
-    saving.value = false;
-  }, 1000);
 }
 </script>

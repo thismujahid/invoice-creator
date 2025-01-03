@@ -87,7 +87,7 @@ async function saveProduct(validator, isActive) {
     const isAdded = productsStore.list.find(
       (prod) => prod.name === productForm.value.name
     );
-    if (isAdded) {
+    if (isAdded && !productForm.value?.id) {
       auth.snackBarText = "تمت إضافة منتج بنفس الإسم من قبل";
       return;
     }

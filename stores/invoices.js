@@ -1,6 +1,7 @@
 export const useInvoicesStore = defineStore("invoices", () => {
     const { readFrom, saveDataTo,updateItem, deleteItem } = useFirebase()
     const list = ref([]);
+    const invoiceToEdit = ref()
     const fetchInvoices = async (filters) => {
         list.value = await readFrom("invoices",filters);
         return true;
@@ -14,8 +15,10 @@ export const useInvoicesStore = defineStore("invoices", () => {
     const deleteInvoice = async (id) => {
         return await deleteItem("invoices", id)
     };
+
     return {
         list,
+        invoiceToEdit,
         fetchInvoices,
         addInvoice,
         updateInvoice,

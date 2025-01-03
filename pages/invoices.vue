@@ -67,6 +67,19 @@
           </template>
           <td class="pt-4 pb-4">
             <div class="d-flex ga-3">
+              <v-btn
+                    v-tooltip:top="'تعديل الفاتورة'"
+                    variant="tonal"
+                    flat
+                    size="40"
+                    @click="
+                    invoicesStore.invoiceToEdit = data.item.invoice;
+                    $router.push({
+                      name:'index'
+                    })"
+                    color="success"
+                    ><v-icon size="30" icon="mdi-file-edit-outline"
+                  /></v-btn>
               <v-dialog eager persistent max-width="520px">
                 <template #activator="{ props }">
                   <v-btn
@@ -188,30 +201,29 @@ function formatTimestamp(seconds, returnObject) {
   });
   return `${formattedDate} ${formattedTime}`;
 }
-const {formatePrice} =useHelpers()
-const customerFormState = ref(false);
+const {formatePrice,calcTotal} =useHelpers()
 const invoicesStore = useInvoicesStore();
 const paginateArray = computed(() => {
   // Calculate starting and ending indices
   const startIndex = (currentPage.value - 1) * currentPerPage.value;
   const endIndex = startIndex + currentPerPage.value;
   // Return the slice of the array for the current page
-  return invoicesStore.list.slice(startIndex, endIndex).map((invoice) => ({
+  return invoicesStore.list.sort((a,b)=> {
+    if(a.date){
+      return new Date((b.date?.seconds||0) * 1000) - new Date((a.date?.seconds||0) * 1000)
+    }else return false
+  }).slice(startIndex, endIndex).map((invoice) => ({
     id: invoice.id,
     name: invoice.customer_name,
     phone: invoice.customer_phone,
     products_count: invoice.products?.length||0,
-    total: formatePrice(invoice.total),
+    total: formatePrice(calcTotal(invoice)),
     created_at: formatTimestamp(invoice.date?.seconds),
     invoice: invoice,
     created_at_object: formatTimestamp(invoice.date?.seconds, true)
   }));
 });
 const searchText = ref();
-const customerForm = ref({
-  name: "",
-  phone: null,
-});
 const currentPage = ref(1);
 const currentPerPage = ref(10);
 const loading = ref(false);
@@ -220,12 +232,6 @@ async function loadInvoices() {
   loading.value = true;
   await invoicesStore.fetchInvoices();
   loading.value = false;
-}
-function editCustomer(customer) {
-  customerForm.value = {
-    ...customer,
-  };
-  customerFormState.value = true;
 }
 function formateHeaderTitle(title) {
   const text = title

@@ -64,6 +64,19 @@ function formatTime12Hour(date) {
 
   return `${hours}:${minutesFormatted} ${ampm}`;
 }
+function calcTotal(invoiceData) {
+  return (
+    Number(
+      invoiceData?.products
+        .map((el) => Number(el.product_price) * Number(el.product_quantity))
+        .reduce((prev, current) => prev + current, 0) || 0
+    ) +
+    Number(invoiceData.debt || 0) +
+    Number(invoiceData.amount_of_animal_feeds || 0) +
+    Number(invoiceData.amount_of_mahros || 0) +
+    Number(invoiceData.delivery_price || 0)
+  );
+}
 async function useDownloadPDF(elementId, fileName) {
   useSeoMeta({
     title: fileName
@@ -92,5 +105,6 @@ export const useHelpers = () => ({
   formatePrice,
   formatDate,
   formatTime12Hour,
-  useDownloadPDF
+  useDownloadPDF,
+  calcTotal
 })

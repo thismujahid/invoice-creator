@@ -227,6 +227,9 @@ body {
   display: none;
 }
 @media print {
+  .v-alert{
+    display: none !important;
+  }
   .v-overlay-container {
     display: none;
   }
@@ -287,6 +290,10 @@ body {
 }
 #invoice-data .v-btn * {
   color: #fff !important;
+}
+.invoice-creator-view .app .invoice .v-alert,
+.invoice-creator-view .app .invoice .v-alert * {
+  color: #ffae00e1 !important;
 }
 .invoice-creator-view .invoice.printing {
   border: unset;
