@@ -1,6 +1,5 @@
 <template>
   <div
-    style="max-height: 80vh; overflow: auto"
     class="bg-white px-4 py-4 rounded"
   >
     <div class="d-flex align-center mb-4 justify-between">

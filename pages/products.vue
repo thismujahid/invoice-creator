@@ -1,6 +1,5 @@
 <template>
   <div
-    style="max-height: 80vh; overflow: auto"
     class="bg-white px-4 py-4 rounded"
   >
     <div class="d-flex align-center mb-4 justify-between">
@@ -64,7 +63,7 @@
               {{ value }}
             </td>
           </template>
-          <td class="pt-4 pb-4">
+          <td >
             <div class="d-flex ga-3">
               <v-btn
                 size="30"
@@ -164,6 +163,7 @@ const deleting = ref(false);
 const prodsList = computed(() => {
   return productsStore.list.filter((prod) => {
     if (searchText.value) {
+      currentPage.value = 1;
       if (prod.name.toLowerCase().includes(searchText.value.toLowerCase()))
         return true;
       else return false;
@@ -176,7 +176,11 @@ const paginateArray = computed(() => {
   const endIndex = startIndex + currentPerPage.value;
 
   // Return the slice of the array for the current page
-  return prodsList.value.slice(startIndex, endIndex).map((prod) => ({
+  return prodsList.value.sort((a,b)=> {
+    if(a.date){
+      return new Date((b.date?.seconds||0) * 1000) - new Date((a.date?.seconds||0) * 1000)
+    }else return false
+  }).slice(startIndex, endIndex).map((prod) => ({
     id: prod.id,
     name: prod.name,
     price: formatePrice(prod.price),
@@ -215,7 +219,6 @@ async function loadProds() {
   setTimeout(async () => {
     await productsStore.fetchProducts({ name: searchText.value });
     loading.value = false;
-    currentTotalItems.value = productsStore.list.length;
   }, 100);
 }
 async function deleteProd(id) {
