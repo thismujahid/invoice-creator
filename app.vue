@@ -151,6 +151,9 @@
 useSeoMeta({
   title: "منشئ الفواتير",
 });
+useHead({
+  link: [{ rel: "manifest", href: "/site.webmanifest" }],
+});
 const authStore = useAuth();
 const { auth, signInWithEmailAndPassword } = useFirebase();
 auth.languageCode = "ar";
