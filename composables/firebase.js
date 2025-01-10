@@ -40,7 +40,6 @@ async function readFrom(module, filters = {}) {
     }
 }
 async function saveDataTo(module, data) {
-    console.log("🚀 ~ saveDataTo ~ data:", data)
     try {
         const productsCollection = collection(db, module);
         return await addDoc(productsCollection, data);

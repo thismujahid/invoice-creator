@@ -20,12 +20,11 @@
       variant="outlined"
       v-model="searchText"
     ></v-text-field>
-    <hr v-if="invoicesStore.list.length > 0" />
+    <hr v-if="filteredInvoices.length > 0" />
     <v-data-table
       no-data-text="لا يوجد فواتير حتى الأن"
-      :search="searchText"
-      :items-length="invoicesStore.list.length"
-      :hide-default-header="invoicesStore.list.length === 0"
+      :items-length="filteredInvoices.length"
+      :hide-default-header="filteredInvoices.length === 0"
       :items-per-page="currentPerPage"
       :page="currentPage"
       hide-default-footer
@@ -173,7 +172,7 @@
         size="30"
         total-visible="5"
         v-model="currentPage"
-        :length="invoicesStore.list.length / currentPerPage"
+        :length="filteredInvoices.length / currentPerPage"
         active-color="primary"
         :total-visible="7"
         variant="flat"
@@ -202,12 +201,20 @@ function formatTimestamp(seconds, returnObject) {
 }
 const {formatePrice,calcTotal} =useHelpers()
 const invoicesStore = useInvoicesStore();
+const filteredInvoices = computed(()=>{
+ return invoicesStore.list.filter(invoice=>{
+    if(searchText.value){
+      currentPage.value = 1;
+      return invoice.customer_name?.includes(searchText.value)||invoice.customer_phone?.includes(searchText.value)
+    }else return true;
+  })
+})
 const paginateArray = computed(() => {
   // Calculate starting and ending indices
   const startIndex = (currentPage.value - 1) * currentPerPage.value;
   const endIndex = startIndex + currentPerPage.value;
   // Return the slice of the array for the current page
-  return invoicesStore.list.sort((a,b)=> {
+  return filteredInvoices.value.sort((a,b)=> {
     if(a.date){
       return new Date((b.date?.seconds||0) * 1000) - new Date((a.date?.seconds||0) * 1000)
     }else return false

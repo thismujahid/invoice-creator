@@ -217,7 +217,7 @@ function formateHeaderTitle(title) {
 async function loadProds() {
   loading.value = true;
   setTimeout(async () => {
-    await productsStore.fetchProducts({ name: searchText.value });
+    await productsStore.fetchProducts();
     loading.value = false;
   }, 100);
 }

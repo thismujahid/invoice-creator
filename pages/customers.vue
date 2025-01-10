@@ -20,19 +20,17 @@
       variant="outlined"
       v-model="searchText"
     ></v-text-field>
-    <hr v-if="customersStore.list.length > 0" />
+    <hr v-if="filteredItems.length > 0" />
     <v-data-table
       no-data-text="لا يوجد عملاء حتى الأن"
-      :search="searchText"
-      :items-length="customersStore.list.length"
-      :hide-default-header="customersStore.list.length === 0"
+      :items-length="filteredItems.length"
+      :hide-default-header="filteredItems.length === 0"
       :items-per-page="currentPerPage"
       :page="currentPage"
       hide-default-footer
       :items="paginateArray"
       :loading="loading"
       hover
-      enable-search
     >
       <template v-slot:headers="{ columns, isSorted, getSortIcon, toggleSort }">
         <tr class="header-row">
@@ -66,14 +64,7 @@
           </template>
           <td class="pt-4 pb-4">
             <div class="d-flex ga-3">
-              <v-btn
-                size="40"
-                flat
-                variant="tonal"
-                color="primary"
-                v-tooltip:top="'فواتير العميل (قريبا)'"
-                ><v-icon size="30" icon="mdi-file-eye-outline"
-              /></v-btn>
+
               <v-btn
                 size="40"
                 @click="editCustomer(data.item)"
@@ -152,7 +143,7 @@
         size="30"
         total-visible="5"
         v-model="currentPage"
-        :length="customersStore.list.length / currentPerPage"
+        :length="filteredItems.length / currentPerPage"
         active-color="primary"
         :total-visible="7"
         variant="flat"
@@ -167,13 +158,21 @@ definePageMeta({
 });
 const customerFormState = ref(false);
 const customersStore = useCustomersStore();
+const filteredItems = computed(()=>{
+ return customersStore.list.filter(customer=>{
+    if(searchText.value){
+      currentPage.value = 1;
+      return customer.name?.includes(searchText.value)||customer.phone?.includes(searchText.value)
+    }else return true;
+  })
+})
 const paginateArray = computed(() => {
   // Calculate starting and ending indices
   const startIndex = (currentPage.value - 1) * currentPerPage.value;
   const endIndex = startIndex + currentPerPage.value;
 
   // Return the slice of the array for the current page
-  return customersStore.list.slice(startIndex, endIndex).map((customer) => ({
+  return filteredItems.value.slice(startIndex, endIndex).map((customer) => ({
     id: customer.id,
     name: customer.name,
     phone: customer.phone,

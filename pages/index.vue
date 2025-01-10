@@ -20,6 +20,14 @@
                     invoiceData.customer_name = cus?.name;
                   }
                 "
+                :model-value="
+                  invoiceData.customer_phone
+                    ? {
+                        phone: invoiceData.customer_phone,
+                        name: invoiceData.customer_name,
+                      }
+                    : undefined
+                "
               >
                 <template #prepend-inner>
                   <FormsCustomer
@@ -90,7 +98,9 @@
               <v-text-field
                 variant="outlined"
                 v-model="invoiceData.discount"
-                :label="`الخصم (${invoiceData.discount_percentage?'نسبة مئوية':'مبلغ ثابت'})`"
+                :label="`الخصم (${
+                  invoiceData.discount_percentage ? 'نسبة مئوية' : 'مبلغ ثابت'
+                })`"
                 placeholder="الخصم"
                 type="number"
               >
@@ -192,12 +202,16 @@
                 return-object
                 :items="productsList"
                 :loading="loadingProds"
-                :model-value="{
-                  id: form.product_id,
-                  name: form.product_name,
-                  price: form.product_price,
-                  cost_price: form.product_cost_price,
-                }"
+                :model-value="
+                  form.product_id
+                    ? {
+                        id: form.product_id,
+                        name: form.product_name,
+                        price: form.product_price,
+                        cost_price: form.product_cost_price,
+                      }
+                    : undefined
+                "
                 @update:model-value="
                   (prod) => {
                     form.product_price = prod?.price;
@@ -218,6 +232,7 @@
                         form.product_name = prod?.name;
                         form.product_price = prod?.price;
                         form.product_cost_price = prod?.cost_price;
+                        form.product_id = prod?.id;
                       }
                     "
                   >
@@ -244,7 +259,7 @@
               >
               </v-text-field>
             </v-col>
- 
+
             <v-col cols="12" lg="2">
               <v-text-field
                 variant="outlined"
@@ -270,14 +285,26 @@
                 :model-value="index"
                 label="الترتيب"
                 placeholder="الترتيب"
-                @update:model-value="v=>form.order=v"
-                @keydown.enter="moveIndexToNewValue(index, form.order); form.order=null"
+                @update:model-value="(v) => (form.order = v)"
+                @keydown.enter="
+                  moveIndexToNewValue(index, form.order);
+                  form.order = null;
+                "
               >
-              <template #append-inner>
-                <v-btn icon flat @click="moveIndexToNewValue(index, form.order); form.order=null" color="primary" rounded="lg">
-                  <v-icon icon="mdi-swap-vertical" />
-                </v-btn>
-              </template>
+                <!-- <template #append-inner>
+                  <v-btn
+                    icon
+                    flat
+                    @click="
+                      moveIndexToNewValue(index, form.order);
+                      form.order = null;
+                    "
+                    color="primary"
+                    rounded="lg"
+                  >
+                    <v-icon icon="mdi-swap-vertical" />
+                  </v-btn>
+                </template> -->
               </v-text-field>
             </v-col>
             <v-col cols="12" lg="1">
@@ -380,16 +407,18 @@ async function loadProds() {
 }
 loadProds();
 loadCustomers();
-function moveIndexToNewValue(from,to){
-  if(typeof from !== 'number') return;
-  if(!to) return;
-  if(invoiceData.value.products.length < Number(to)){
+function moveIndexToNewValue(from, to) {
+  if (typeof from !== "number") return;
+  if (!to) return;
+  if (invoiceData.value.products.length < Number(to)) {
     return;
   }
-  const product = invoiceData.value.products.find((_el,index)=> index == from)
-  if(product){
-    invoiceData.value.products.splice(from, 1)
-    invoiceData.value.products.splice(to, 0, product)
+  const product = invoiceData.value.products.find(
+    (_el, index) => index == from
+  );
+  if (product) {
+    invoiceData.value.products.splice(from, 1);
+    invoiceData.value.products.splice(to, 0, product);
   }
 }
 function addNewForm() {

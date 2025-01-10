@@ -1,0 +1,18 @@
+{
+    "name": "سوق البلد",
+    "short_name": "سوق البلد",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#ffffff",
+    "theme_color": "#2a2a2a",
+    "description": "سوق البلد",
+    "icons": [
+      {
+        "src": "/favicon.ico",
+        "type": "image/png",
+        "sizes": "192x192"
+      }
+    ],
+    "lang": "ar-EG"
+  }
+  

@@ -38,31 +38,31 @@
       <div class="invoice-footer">
         <div class="footer">
           <div v-if="invoiceData.debt">
-            <strong>القديم</strong> {{ formatePrice(invoiceData.debt) }}
+            <strong>القديم/</strong> {{ formatePrice(invoiceData.debt) }}
           </div>
           <div v-if="invoiceData.amount_of_mahros">
-            <strong>محروس</strong>
+            <strong>محروس/</strong>
             {{ formatePrice(invoiceData.amount_of_mahros) }}
           </div>
           <div v-if="invoiceData.amount_of_animal_feeds">
-            <strong>العلف</strong>
+            <strong>العلف/</strong>
             {{ formatePrice(invoiceData.amount_of_animal_feeds) }}
           </div>
           <div v-if="invoiceData.delivery_price">
-            <strong>التوصيل</strong>
+            <strong>التوصيل/</strong>
             {{ formatePrice(invoiceData.delivery_price) }}
           </div>
           <div v-if="invoiceData.discount">
-            <strong>الإجمالي</strong>
+            <strong>الإجمالي/</strong>
               {{ formatePrice(calcTotal(invoiceData)) }}
           </div>
           <div v-if="invoiceData.discount">
-            <strong>الخصم</strong>
+            <strong>الخصم/</strong>
               {{ invoiceData.discount_percentage?`${invoiceData.discount}%`:formatePrice(invoiceData.discount) }}
           </div>
           <div>
-            <strong>الإجمالي {{invoiceData.discount?'النهائي':''}}</strong>
-              {{ formatePrice(calcTotal(invoiceData) - discountAmount) }}
+            <strong>الإجمالي {{invoiceData.discount?'النهائي':''}}/</strong>
+               {{ formatePrice(calcTotal(invoiceData) - discountAmount) }}
           </div>
         </div>
       </div>
@@ -118,7 +118,6 @@ const {
 } = useHelpers();
 const printing = ref(false);
 const { saveDataTo, updateItem } = useFirebase();
-const saving = ref(false);
 const emit = defineEmits(["reset"]);
 const mappedProducts = computed(() => {
   return props.invoiceData?.products.map((prod, index) => {
@@ -127,7 +126,7 @@ const mappedProducts = computed(() => {
       البيان:
         (prod.product_name || "") + (prod.option ? ` (${prod.option})` : ""),
       تصحيح: "",
-      "سعر الوحدة": formatePrice(prod.product_price),
+      "سعر الوحدة": formatePrice(prod.product_price||0),
       الإجمالي: formatePrice(calcTotalOfForm(prod)),
     };
   });
@@ -161,9 +160,10 @@ async function startPrint() {
       delete data.id;
       await updateItem("invoices", props.invoiceData.id, data);
     } else {
-      await saveDataTo("invoices", {
+      const response = await saveDataTo("invoices", {
         ...props.invoiceData,
       });
+      props.invoiceData.id = response.id;
     }
   }
   setTimeout(async () => {
@@ -181,6 +181,6 @@ async function startPrint() {
 const discountAmount = computed(()=>{
   if(props.invoiceData.discount && props.invoiceData.discount_percentage){
     return (calcTotal(props.invoiceData) * props.invoiceData.discount) / 100
-  }else return props.invoiceData.discount
+  }else return props.invoiceData.discount||0
 })
 </script>
