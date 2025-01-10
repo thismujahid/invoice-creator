@@ -50,8 +50,8 @@
               <v-text-field
                 variant="outlined"
                 v-model="invoiceData.debt"
-                label="قديم"
-                placeholder="قديم"
+                label="القديم"
+                placeholder="القديم"
                 type="number"
               >
               </v-text-field>
@@ -84,6 +84,39 @@
                 placeholder="التوصيل"
                 type="number"
               >
+              </v-text-field>
+            </v-col>
+            <v-col cols="12" lg="4">
+              <v-text-field
+                variant="outlined"
+                v-model="invoiceData.discount"
+                :label="`الخصم (${invoiceData.discount_percentage?'نسبة مئوية':'مبلغ ثابت'})`"
+                placeholder="الخصم"
+                type="number"
+              >
+                <template #append-inner>
+                  <v-btn
+                    icon
+                    flat
+                    v-tooltip="'نوع الخصم (نسبة مئؤية % أم مبلغ ثابت)'"
+                    color="primary"
+                    @click="
+                      invoiceData.discount_percentage =
+                        !invoiceData.discount_percentage
+                    "
+                  >
+                    <v-icon
+                      icon="mdi-percent"
+                      size="20"
+                      v-if="invoiceData.discount_percentage"
+                    />
+                    <v-icon
+                      icon="mdi-cash"
+                      size="40"
+                      v-if="!invoiceData.discount_percentage"
+                    />
+                  </v-btn>
+                </template>
               </v-text-field>
             </v-col>
             <v-col cols="12" lg="4">
@@ -202,7 +235,7 @@
               >
               </v-text-field>
             </v-col>
-            <v-col cols="12" lg="2">
+            <v-col cols="12" lg="1">
               <v-text-field
                 variant="outlined"
                 v-model="form.product_quantity"
@@ -211,6 +244,7 @@
               >
               </v-text-field>
             </v-col>
+ 
             <v-col cols="12" lg="2">
               <v-text-field
                 variant="outlined"
@@ -228,6 +262,22 @@
                 label="الأجمالي"
                 placeholder="الأجمالي"
               >
+              </v-text-field>
+            </v-col>
+            <v-col cols="12" lg="1">
+              <v-text-field
+                variant="outlined"
+                :model-value="index"
+                label="الترتيب"
+                placeholder="الترتيب"
+                @update:model-value="v=>form.order=v"
+                @keydown.enter="moveIndexToNewValue(index, form.order); form.order=null"
+              >
+              <template #append-inner>
+                <v-btn icon flat @click="moveIndexToNewValue(index, form.order); form.order=null" color="primary" rounded="lg">
+                  <v-icon icon="mdi-swap-vertical" />
+                </v-btn>
+              </template>
               </v-text-field>
             </v-col>
             <v-col cols="12" lg="1">
@@ -272,6 +322,8 @@ const invoiceData = ref({
   customer_phone: null,
   debt: null,
   delivery_price: null,
+  discount_percentage: false,
+  discount: null,
   amount_of_animal_feeds: null,
   amount_of_mahros: null,
   products: [
@@ -292,6 +344,8 @@ function resetInvoice() {
   invoiceData.value = {
     customer_name: null,
     customer_phone: null,
+    discount: null,
+    discount_percentage: false,
     debt: null,
     delivery_price: null,
     products: [
@@ -326,6 +380,18 @@ async function loadProds() {
 }
 loadProds();
 loadCustomers();
+function moveIndexToNewValue(from,to){
+  if(typeof from !== 'number') return;
+  if(!to) return;
+  if(invoiceData.value.products.length < Number(to)){
+    return;
+  }
+  const product = invoiceData.value.products.find((_el,index)=> index == from)
+  if(product){
+    invoiceData.value.products.splice(from, 1)
+    invoiceData.value.products.splice(to, 0, product)
+  }
+}
 function addNewForm() {
   invoiceData.value.products.push({
     product_name: "",
@@ -347,14 +413,14 @@ function removeElementIndex(index) {
     reBuild.value = false;
   }, 200);
 }
-onMounted(()=>{
-  if(invoices.invoiceToEdit){
+onMounted(() => {
+  if (invoices.invoiceToEdit) {
     invoiceData.value = {
       ...invoices.invoiceToEdit,
       date: new Date(invoices.invoiceToEdit.date.seconds * 1000),
       time: new Date(invoices.invoiceToEdit.date.seconds * 1000),
-    }
+    };
     invoices.invoiceToEdit = undefined;
   }
-})
+});
 </script>

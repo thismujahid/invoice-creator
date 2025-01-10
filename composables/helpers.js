@@ -13,7 +13,7 @@ function formatePrice(price) {
       localeMatcher: 'best fit',
       style: 'decimal',
     });
-    formatter.format(price);
+    return formatter.format(price).replace('.00','');
   }
   return formatter.format(price);
 }

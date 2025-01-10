@@ -52,8 +52,17 @@
             <strong>التوصيل</strong>
             {{ formatePrice(invoiceData.delivery_price) }}
           </div>
+          <div v-if="invoiceData.discount">
+            <strong>الإجمالي</strong>
+              {{ formatePrice(calcTotal(invoiceData)) }}
+          </div>
+          <div v-if="invoiceData.discount">
+            <strong>الخصم</strong>
+              {{ invoiceData.discount_percentage?`${invoiceData.discount}%`:formatePrice(invoiceData.discount) }}
+          </div>
           <div>
-            <strong>الإجمالي</strong> {{ formatePrice(calcTotal(invoiceData)) }}
+            <strong>الإجمالي {{invoiceData.discount?'النهائي':''}}</strong>
+              {{ formatePrice(calcTotal(invoiceData) - discountAmount) }}
           </div>
         </div>
       </div>
@@ -143,6 +152,7 @@ async function startPrint() {
     );
   }
   printing.value = true;
+  delete props.invoiceData.order;
   if (!props.viewMode) {
     if (props.invoiceData.id) {
       const data = {
@@ -168,4 +178,9 @@ async function startPrint() {
     printing.value = false;
   }, 100);
 }
+const discountAmount = computed(()=>{
+  if(props.invoiceData.discount && props.invoiceData.discount_percentage){
+    return (calcTotal(props.invoiceData) * props.invoiceData.discount) / 100
+  }else return props.invoiceData.discount
+})
 </script>

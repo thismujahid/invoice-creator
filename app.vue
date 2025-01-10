@@ -242,9 +242,9 @@ body {
     color: rgba(0, 0, 0, 0.781);
   }
   .printable-area .footer {
-    border-bottom: thin solid rgba(0, 0, 0, 0.12);
-    border-right: thin solid rgba(0, 0, 0, 0.12);
-    border-left: thin solid rgba(0, 0, 0, 0.12);
+    border-bottom: thin solid rgba(0, 0, 0, 1);
+    border-right: thin solid rgba(0, 0, 0, 1);
+    border-left: thin solid rgba(0, 0, 0, 1);
     padding: 5px 5px 5px 5px;
   }
   .printable-area .footer div {
@@ -312,42 +312,42 @@ body {
   margin-top: 5px !important;
 }
 .invoice-creator-view .v-data-table thead tr th {
-  border-top: thin solid rgba(0, 0, 0, 0.12) !important;
+  border-top: thin solid rgba(0, 0, 0, 1) !important;
 }
 .invoice-creator-view .v-data-table thead tr th,
 .invoice-creator-view .v-data-table tbody tr td {
-  border-bottom: thin solid rgba(0, 0, 0, 0.12) !important;
+  border-bottom: thin solid rgba(0, 0, 0, 1) !important;
 }
 .invoice-creator-view .v-data-table tbody tr:first-of-type td {
   border-top: unset !important;
 }
 .invoice-creator-view .v-data-table thead tr th:first-of-type,
 .invoice-creator-view .v-data-table tbody tr td:first-of-type {
-  border-right: thin solid rgba(0, 0, 0, 0.12) !important;
+  border-right: thin solid rgba(0, 0, 0, 1) !important;
 }
 .invoice-creator-view .v-data-table thead tr th:last-of-type,
 .invoice-creator-view .v-data-table tbody tr td:last-of-type {
-  border-left: thin solid rgba(0, 0, 0, 0.12) !important;
+  border-left: thin solid rgba(0, 0, 0, 1) !important;
 }
 .invoice-creator-view .v-data-table thead tr th:nth-child(1),
 .invoice-creator-view .v-data-table tbody tr td:nth-child(1) {
-  border-left: thin solid rgba(0, 0, 0, 0.12) !important;
+  border-left: thin solid rgba(0, 0, 0, 1) !important;
 }
 .invoice-creator-view .v-data-table thead tr th:nth-child(2),
 .invoice-creator-view .v-data-table tbody tr td:nth-child(2) {
-  border-left: thin solid rgba(0, 0, 0, 0.12) !important;
+  border-left: thin solid rgba(0, 0, 0, 1) !important;
 }
 .invoice-creator-view .v-data-table thead tr th:nth-child(3),
 .invoice-creator-view .v-data-table tbody tr td:nth-child(3) {
-  border-left: thin solid rgba(0, 0, 0, 0.12) !important;
+  border-left: thin solid rgba(0, 0, 0, 1) !important;
 }
 .invoice-creator-view .v-data-table thead tr th:nth-child(4),
 .invoice-creator-view .v-data-table tbody tr td:nth-child(4) {
-  border-left: thin solid rgba(0, 0, 0, 0.12) !important;
+  border-left: thin solid rgba(0, 0, 0, 1) !important;
 }
 .invoice-creator-view .v-data-table thead tr th:nth-child(5),
 .invoice-creator-view .v-data-table tbody tr td:nth-child(5) {
-  border-left: thin solid rgba(0, 0, 0, 0.12) !important;
+  border-left: thin solid rgba(0, 0, 0, 1) !important;
 }
 .invoice-creator-view .v-data-table__td {
   padding: 0 5px !important;
@@ -357,9 +357,9 @@ body {
   padding: 0 !important;
 }
 .invoice-creator-view .invoice .footer {
-  border-bottom: thin solid rgba(0, 0, 0, 0.12);
-  border-right: thin solid rgba(0, 0, 0, 0.12);
-  border-left: thin solid rgba(0, 0, 0, 0.12);
+  border-bottom: thin solid rgba(0, 0, 0, 1);
+  border-right: thin solid rgba(0, 0, 0, 1);
+  border-left: thin solid rgba(0, 0, 0, 1);
   padding: 5px;
 }
 .v-input {
