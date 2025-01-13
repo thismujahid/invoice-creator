@@ -129,7 +129,16 @@
                 </template>
               </v-text-field>
             </v-col>
-            <v-col cols="12" lg="4">
+            <v-col cols="12" lg="2">
+              <v-text-field
+                variant="outlined"
+                v-model="invoiceData.discount_for"
+                label="الخصم متعلق بـ"
+                placeholder="الخصم متعلق بـ"
+              >
+              </v-text-field>
+            </v-col>
+            <v-col cols="12" lg="3">
               <v-menu :close-on-content-click="false">
                 <template #activator="{ props }">
                   <v-text-field
@@ -159,7 +168,7 @@
                 ></v-date-picker>
               </v-menu>
             </v-col>
-            <v-col cols="12" lg="4">
+            <v-col cols="12" lg="3">
               <v-menu :close-on-content-click="false">
                 <template #activator="{ props }">
                   <v-text-field
@@ -350,7 +359,7 @@ const invoiceData = ref({
   debt: null,
   delivery_price: null,
   discount_percentage: false,
-  discount: null,
+  discount: null,discount_for:null,
   amount_of_animal_feeds: null,
   amount_of_mahros: null,
   products: [
@@ -372,7 +381,7 @@ function resetInvoice() {
     customer_name: null,
     customer_phone: null,
     discount: null,
-    discount_percentage: false,
+    discount_percentage: false,discount_for:null,
     debt: null,
     delivery_price: null,
     products: [

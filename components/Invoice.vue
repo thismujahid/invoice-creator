@@ -57,7 +57,7 @@
               {{ formatePrice(calcTotal(invoiceData)) }}
           </div>
           <div v-if="invoiceData.discount">
-            <strong>الخصم/</strong>
+            <strong>الخصم {{invoiceData.discount_for?`(${invoiceData.discount_for})`:''}} /</strong>
               {{ invoiceData.discount_percentage?`${invoiceData.discount}%`:formatePrice(invoiceData.discount) }}
           </div>
           <div>
