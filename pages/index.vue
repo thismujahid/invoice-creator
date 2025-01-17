@@ -275,7 +275,12 @@
                 v-model="form.product_price"
                 label="سعر المنتج"
                 placeholder="سعر المنتج"
-              >
+                >
+                <template #append-inner>
+                  <div v-if="form.product_cost_price" style="text-wrap: nowrap;">
+                    التكلفة ({{ form.product_cost_price }})
+                  </div>
+                </template>
               </v-text-field>
             </v-col>
             <v-col cols="12" lg="2">
