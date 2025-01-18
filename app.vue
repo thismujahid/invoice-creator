@@ -22,6 +22,7 @@
           <h4>أدخل كلمة المرور</h4>
           <v-otp-input
             type="password"
+            pattern="[0-9]*" inputmode="numeric"
             autofocus
             :loading="loading"
             dir="ltr"
