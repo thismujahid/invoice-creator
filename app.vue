@@ -10,7 +10,9 @@
     >
       {{ authStore.snackBarText }}
     </v-snackbar>
-    <v-dialog persistent max-width="400px" :model-value="true" v-if="!isAuthed">
+  
+    <v-locale-provider rtl v-if="!initFirebase">
+      <v-dialog persistent max-width="400px" :model-value="true" v-if="!isAuthed">
       <div class="bg-white rounded-lg pb-4 pt-4 px-4 text-center">
         <h4>أدخل كلمة المرور</h4>
         <v-otp-input
@@ -39,7 +41,6 @@
         <!-- <v-btn @click="login" flat color="primary">متابعة</v-btn> -->
       </div>
     </v-dialog>
-    <v-locale-provider rtl v-if="!initFirebase">
       <div id="printableArea" class="printable-area invoice-creator-view"></div>
       <div class="invoice-creator-app" v-if="isAuthed">
         <v-app-bar absolute app color="light" flat border>
@@ -161,7 +162,7 @@ const { auth, signInWithEmailAndPassword } = useFirebase();
 auth.languageCode = "ar";
 const newPass = ref();
 const initFirebase = ref(true);
-const sideMenu = ref(true);
+const sideMenu = ref(false);
 const loading = ref(false);
 const isAuthed = ref(auth.currentUser ? true : false);
 const error = ref("");
