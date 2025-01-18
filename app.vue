@@ -10,37 +10,42 @@
     >
       {{ authStore.snackBarText }}
     </v-snackbar>
-  
+
     <v-locale-provider rtl v-if="!initFirebase">
-      <v-dialog persistent max-width="400px" :model-value="true" v-if="!isAuthed">
-      <div class="bg-white rounded-lg pb-4 pt-4 px-4 text-center">
-        <h4>أدخل كلمة المرور</h4>
-        <v-otp-input
-          type="password"
-          autofocus
-          :loading="loading"
-          dir="ltr"
-          @finish="login"
-          @update:model-value="error = ''"
-          :error="error ? true : false"
-          v-model="newPass"
-          length="6"
-        ></v-otp-input>
-        <v-alert class="mb-2" v-if="error" color="error" variant="tonal">
-          {{ error }}
-        </v-alert>
-        <div class="text-center w-100" style="font-size: 18px">
-          برمجة وتطوير:
-          <NuxtLink
-            target="_blank"
-            class="text-primary"
-            href="https://thismujahid.github.io"
-            >محمد إبراهيم مجاهد</NuxtLink
-          >
+      <v-dialog
+        persistent
+        max-width="400px"
+        :model-value="true"
+        v-if="!isAuthed"
+      >
+        <div class="bg-white rounded-lg pb-4 pt-4 px-4 text-center">
+          <h4>أدخل كلمة المرور</h4>
+          <v-otp-input
+            type="password"
+            autofocus
+            :loading="loading"
+            dir="ltr"
+            @finish="login"
+            @update:model-value="error = ''"
+            :error="error ? true : false"
+            v-model="newPass"
+            length="6"
+          ></v-otp-input>
+          <v-alert class="mb-2" v-if="error" color="error" variant="tonal">
+            {{ error }}
+          </v-alert>
+          <div class="text-center w-100" style="font-size: 18px">
+            برمجة وتطوير:
+            <NuxtLink
+              target="_blank"
+              class="text-primary"
+              href="https://thismujahid.github.io"
+              >محمد إبراهيم مجاهد</NuxtLink
+            >
+          </div>
+          <!-- <v-btn @click="login" flat color="primary">متابعة</v-btn> -->
         </div>
-        <!-- <v-btn @click="login" flat color="primary">متابعة</v-btn> -->
-      </div>
-    </v-dialog>
+      </v-dialog>
       <div id="printableArea" class="printable-area invoice-creator-view"></div>
       <div class="invoice-creator-app" v-if="isAuthed">
         <v-app-bar absolute app color="light" flat border>
@@ -92,7 +97,7 @@
             </v-dialog>
           </div>
         </v-app-bar>
-        <v-navigation-drawer app mobile  temporary v-model="sideMenu">
+        <v-navigation-drawer app mobile temporary v-model="sideMenu">
           <v-list>
             <v-list-item color="success" to="/" prepend-icon="mdi-file-plus">
               <v-list-item-title>إنشاء فاتورة</v-list-item-title>
@@ -240,6 +245,11 @@ body {
   display: none;
 }
 @media print {
+  html,
+  body {
+    font-size: 16px !important;
+  }
+
   .v-alert {
     display: none !important;
   }
@@ -410,7 +420,7 @@ body {
     width: 100%;
   }
 }
-.v-navigation-drawer{
+.v-navigation-drawer {
   max-height: 100vh !important;
 }
 .invoice-creator-view .invoice-header {
@@ -497,5 +507,8 @@ body {
     width: 30px !important;
     font-size: 16px !important;
   }
+}
+input,textarea{
+  font-size: 16px !important;
 }
 </style>
