@@ -93,7 +93,7 @@
                 <template #default="{ isActive }">
                   <div style="max-height: 95vh; overflow-y: auto;overflow-x: hidden;border-radius: 10px; " class="custom-scrollbar">
 
-                    <div v-if="isActive.value" class="bg-white invoice-creator-view py-2 rounded-lg mx-auto">
+                    <div v-if="isActive.value" class="bg-white invoice-creator-view py-2 rounded-lg mx-auto custom-scrollbar" style="overflow-x: auto;">
                       <Invoice class="mx-auto" :viewMode="true" @close="isActive.value = false" :invoice-data="{
                         ...data.item.invoice,
                         date:data.item.created_at_object,

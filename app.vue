@@ -92,7 +92,7 @@
             </v-dialog>
           </div>
         </v-app-bar>
-        <v-navigation-drawer app mobile absolute temporary v-model="sideMenu">
+        <v-navigation-drawer app mobile  temporary v-model="sideMenu">
           <v-list>
             <v-list-item color="success" to="/" prepend-icon="mdi-file-plus">
               <v-list-item-title>إنشاء فاتورة</v-list-item-title>
@@ -409,6 +409,9 @@ body {
   .invoice-creator-view .app .form {
     width: 100%;
   }
+}
+.v-navigation-drawer{
+  max-height: 100vh !important;
 }
 .invoice-creator-view .invoice-header {
   position: sticky !important;

@@ -78,7 +78,7 @@
           color="success"
           prepend-icon="mdi-printer"
           >{{
-            props.invoiceData.id
+            props.invoiceData.id&&!viewMode
               ? "طباعة وحفظ التعديل"
               : viewMode
               ? "طباعة"
