@@ -1,57 +1,53 @@
 <template>
   <v-app>
-    <v-locale-provider rtl v-if="!initFirebase">
-      <v-snackbar
-        @update:model-value="
-          (v) => (!v ? (authStore.snackBarText = '') : false)
-        "
-        location="top end"
-        color="primary"
-        z-index="999999"
-        :model-value="authStore.snackBarText ? true : false"
-        :timeout="5000"
-      >
-        {{ authStore.snackBarText }}
-      </v-snackbar>
-      <div id="printableArea" class="printable-area invoice-creator-view"></div>
-      <v-dialog
-        persistent
-        max-width="400px"
-        :model-value="true"
-        v-if="!isAuthed"
-      >
-        <div class="bg-white rounded-lg pb-4 pt-4 px-4 text-center">
-          <h4>أدخل كلمة المرور</h4>
-          <v-otp-input
-            type="password"
-            autofocus
-            :loading="loading"
-            dir="ltr"
-            @finish="login"
-            @update:model-value="error = ''"
-            :error="error ? true : false"
-            v-model="newPass"
-            length="6"
-          ></v-otp-input>
-          <v-alert class="mb-2" v-if="error" color="error" variant="tonal">
-            {{ error }}
-          </v-alert>
-          <div class="text-center w-100" style="font-size: 18px">
-            برمجة وتطوير:
-            <NuxtLink
-              target="_blank"
-              class="text-primary"
-              href="https://thismujahid.github.io"
-              >محمد إبراهيم مجاهد</NuxtLink
-            >
-          </div>
-          <!-- <v-btn @click="login" flat color="primary">متابعة</v-btn> -->
+    <v-snackbar
+      @update:model-value="(v) => (!v ? (authStore.snackBarText = '') : false)"
+      location="top end"
+      color="primary"
+      z-index="999999"
+      :model-value="authStore.snackBarText ? true : false"
+      :timeout="5000"
+    >
+      {{ authStore.snackBarText }}
+    </v-snackbar>
+    <v-dialog persistent max-width="400px" :model-value="true" v-if="!isAuthed">
+      <div class="bg-white rounded-lg pb-4 pt-4 px-4 text-center">
+        <h4>أدخل كلمة المرور</h4>
+        <v-otp-input
+          type="password"
+          autofocus
+          :loading="loading"
+          dir="ltr"
+          @finish="login"
+          @update:model-value="error = ''"
+          :error="error ? true : false"
+          v-model="newPass"
+          length="6"
+        ></v-otp-input>
+        <v-alert class="mb-2" v-if="error" color="error" variant="tonal">
+          {{ error }}
+        </v-alert>
+        <div class="text-center w-100" style="font-size: 18px">
+          برمجة وتطوير:
+          <NuxtLink
+            target="_blank"
+            class="text-primary"
+            href="https://thismujahid.github.io"
+            >محمد إبراهيم مجاهد</NuxtLink
+          >
         </div>
-      </v-dialog>
+        <!-- <v-btn @click="login" flat color="primary">متابعة</v-btn> -->
+      </div>
+    </v-dialog>
+    <v-locale-provider rtl v-if="!initFirebase">
+      <div id="printableArea" class="printable-area invoice-creator-view"></div>
       <div class="invoice-creator-app" v-if="isAuthed">
-        <v-app-bar app color="light" flat border>
+        <v-app-bar absolute app color="light" flat border>
           <v-toolbar-title>
-            <v-btn @click="sideMenu = !sideMenu">
+            <v-btn
+              class="small-padding small-btn"
+              @click="sideMenu = !sideMenu"
+            >
               <v-icon icon="mdi-menu" />
             </v-btn>
             منشئ الفواتير | {{ currentPageTitle }}</v-toolbar-title
@@ -59,7 +55,13 @@
           <div v-if="authStore.userInfo" class="px-2 d-flex align-center ga-3">
             <v-dialog persistent max-width="300px">
               <template #activator="{ props }">
-                <v-btn flat color="error" v-bind="props" variant="tonal">
+                <v-btn
+                  flat
+                  color="error"
+                  class="small-padding"
+                  v-bind="props"
+                  variant="tonal"
+                >
                   <v-icon icon="mdi-logout" />
                   إغلاق التطبيق
                 </v-btn>
@@ -89,7 +91,7 @@
             </v-dialog>
           </div>
         </v-app-bar>
-        <v-navigation-drawer app temporary v-model="sideMenu">
+        <v-navigation-drawer app mobile absolute temporary v-model="sideMenu">
           <v-list>
             <v-list-item color="success" to="/" prepend-icon="mdi-file-plus">
               <v-list-item-title>إنشاء فاتورة</v-list-item-title>
@@ -222,6 +224,13 @@ html,
 body {
   font-family: "Baloo Bhaijaan 2", serif;
 }
+
+.v-toolbar {
+  position: sticky !important;
+}
+.v-main {
+  padding-top: 0 !important;
+}
 .v-btn--flat {
   height: 44px !important;
   padding-inline: 25px !important;
@@ -307,8 +316,6 @@ body {
 .invoice-creator-view #invoice-data {
   width: 500px !important;
   max-width: 500px !important;
-  min-width: 500px !important;
-  width: 100% !important;
 }
 .invoice-creator-view .v-data-table {
   border-radius: unset !important;
@@ -317,6 +324,7 @@ body {
 .invoice-creator-view .v-data-table thead tr th {
   border-top: thin solid rgba(0, 0, 0, 1) !important;
 }
+
 .invoice-creator-view .v-data-table thead tr th,
 .invoice-creator-view .v-data-table tbody tr td {
   border-bottom: thin solid rgba(0, 0, 0, 1) !important;
@@ -435,5 +443,55 @@ body {
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background-color: #555; /* Thumb color on hover */
+}
+.v-btn--icon.v-btn--density-default {
+  width: 40px !important;
+  height: 40px !important;
+  display: flex;
+  min-width: unset !important;
+}
+.v-btn--icon.v-btn--density-default .mdi {
+  font-size: 30px !important;
+}
+@media (max-width: 600px) {
+  html,
+  body {
+    font-size: 11px;
+  }
+
+  table tr td {
+    text-wrap: nowrap !important;
+  }
+  .invoice-creator-view .app {
+    padding: 15px !important;
+  }
+  .invoice-creator-view .app .form {
+    border: unset !important;
+    padding: 0 !important;
+  }
+  .v-input__details {
+    display: none !important;
+  }
+  .v-input__details:has(.v-messages__message) {
+    display: block !important;
+  }
+  .v-text-field input {
+    padding: 7px !important;
+  }
+  .v-input--density-default {
+    --v-input-control-height: 48px !important;
+  }
+  .v-field__input {
+    padding-bottom: unset !important;
+    padding-top: unset !important;
+  }
+  .small-padding {
+    padding: 7px !important;
+  }
+  .small-padding.small-btn {
+    min-width: unset !important;
+    width: 30px !important;
+    font-size: 16px !important;
+  }
 }
 </style>

@@ -250,7 +250,7 @@
                 </template>
               </v-autocomplete>
             </v-col>
-            <v-col cols="12" lg="2">
+            <v-col cols="12" lg="3">
               <v-text-field
                 variant="outlined"
                 v-model="form.option"
@@ -275,21 +275,21 @@
                 v-model="form.product_price"
                 label="سعر المنتج"
                 placeholder="سعر المنتج"
-                >
+              >
                 <template #append-inner>
-                  <div v-if="form.product_cost_price" style="text-wrap: nowrap;">
+                  <div v-if="form.product_cost_price" style="text-wrap: nowrap">
                     التكلفة ({{ form.product_cost_price }})
                   </div>
                 </template>
               </v-text-field>
             </v-col>
-            <v-col cols="12" lg="2">
+            <v-col cols="12" lg="1">
               <v-text-field
                 readonly
                 variant="outlined"
                 :model-value="formatePrice(calcTotalOfForm(form))"
-                label="الأجمالي"
-                placeholder="الأجمالي"
+                label="الإجمالي"
+                placeholder="الإجمالي"
               >
               </v-text-field>
             </v-col>
@@ -321,19 +321,22 @@
                 </template> -->
               </v-text-field>
             </v-col>
-            <v-col cols="12" lg="1">
+            <v-col cols="3" lg="1">
               <v-btn
                 @click="removeElementIndex(index)"
                 flat
                 color="error"
                 variant="tonal"
-                class="mt-2"
               >
                 <v-icon icon="mdi-delete-outline" size="30" />
               </v-btn>
             </v-col>
+            <v-col cols="9" lg="12" v-if="index === (invoiceData.products.length -1)">
+              <v-btn color="success" block flat @click="addNewForm"
+                >إضافة منتج
+              </v-btn>
+            </v-col>
           </v-row>
-          <v-btn color="success" flat @click="addNewForm">إضافة منتج </v-btn>
         </v-form>
       </div>
       <Invoice @reset="resetInvoice" :invoice-data="invoiceData" />
@@ -364,7 +367,8 @@ const invoiceData = ref({
   debt: null,
   delivery_price: null,
   discount_percentage: false,
-  discount: null,discount_for:null,
+  discount: null,
+  discount_for: null,
   amount_of_animal_feeds: null,
   amount_of_mahros: null,
   products: [
@@ -386,7 +390,8 @@ function resetInvoice() {
     customer_name: null,
     customer_phone: null,
     discount: null,
-    discount_percentage: false,discount_for:null,
+    discount_percentage: false,
+    discount_for: null,
     debt: null,
     delivery_price: null,
     products: [
