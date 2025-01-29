@@ -1,7 +1,5 @@
 <template>
-  <div
-    class="bg-white px-4 py-4 rounded"
-  >
+  <div class="bg-white px-4 py-4 rounded">
     <div class="d-flex align-center mb-4 justify-between">
       <h2>الفواتير</h2>
       <!-- <forms-customer
@@ -37,7 +35,9 @@
         <tr class="header-row">
           <template v-for="column in columns" :key="column.key">
             <td
-              v-if="!['id','invoice','created_at_object'].includes(column.key)"
+              v-if="
+                !['id', 'invoice', 'created_at_object'].includes(column.key)
+              "
               :class="{ 'b-dashed': dashedTd }"
             >
               <span
@@ -59,25 +59,26 @@
       <template v-slot:item="data">
         <tr>
           <template v-for="(value, key, i) of data.item">
-            <td v-if="!['created_at_object','id','invoice'].includes(key)">
+            <td v-if="!['created_at_object', 'id', 'invoice'].includes(key)">
               {{ value }}
             </td>
           </template>
           <td class="pt-4 pb-4">
             <div class="d-flex ga-3">
               <v-btn
-                    v-tooltip:top="'تعديل الفاتورة'"
-                    variant="tonal"
-                    flat
-                    size="40"
-                    @click="
-                    invoicesStore.invoiceToEdit = data.item.invoice;
-                    $router.push({
-                      name:'index'
-                    })"
-                    color="success"
-                    ><v-icon size="30" icon="mdi-file-edit-outline"
-                  /></v-btn>
+                v-tooltip:top="'تعديل الفاتورة'"
+                variant="tonal"
+                flat
+                size="40"
+                @click="
+                  invoicesStore.invoiceToEdit = data.item.invoice;
+                  $router.push({
+                    name: 'index',
+                  });
+                "
+                color="success"
+                ><v-icon size="30" icon="mdi-file-edit-outline"
+              /></v-btn>
               <v-dialog eager persistent max-width="520px">
                 <template #activator="{ props }">
                   <v-btn
@@ -91,18 +92,34 @@
                   /></v-btn>
                 </template>
                 <template #default="{ isActive }">
-                  <div style="max-height: 95vh; overflow-y: auto;overflow-x: hidden;border-radius: 10px; " class="custom-scrollbar">
-
-                    <div v-if="isActive.value" class="bg-white invoice-creator-view py-2 rounded-lg mx-auto custom-scrollbar" style="overflow-x: auto;">
-                      <Invoice class="mx-auto" :viewMode="true" @close="isActive.value = false" :invoice-data="{
-                        ...data.item.invoice,
-                        date:data.item.created_at_object,
-                        time:data.item.created_at_object,
-                      }" />
+                  <div
+                    style="
+                      max-height: 95vh;
+                      overflow-y: auto;
+                      overflow-x: hidden;
+                      border-radius: 10px;
+                    "
+                    class="custom-scrollbar"
+                  >
+                    <div
+                      v-if="isActive.value"
+                      class="bg-white invoice-creator-view py-2 rounded-lg mx-auto custom-scrollbar"
+                      style="overflow-x: auto"
+                    >
+                      <Invoice
+                        class="mx-auto"
+                        :viewMode="true"
+                        @close="isActive.value = false"
+                        :invoice-data="{
+                          ...data.item.invoice,
+                          date: data.item.created_at_object,
+                          time: data.item.created_at_object,
+                        }"
+                      />
                     </div>
                   </div>
                 </template>
-              </v-dialog> 
+              </v-dialog>
               <v-dialog persistent max-width="300px">
                 <template #activator="{ props }">
                   <v-btn
@@ -187,7 +204,7 @@ definePageMeta({
 });
 function formatTimestamp(seconds, returnObject) {
   const date = new Date(seconds * 1000);
-  if(returnObject) return date;
+  if (returnObject) return date;
   const formattedDate = date.toLocaleDateString("ar-US", {
     year: "numeric",
     month: "long",
@@ -199,35 +216,49 @@ function formatTimestamp(seconds, returnObject) {
   });
   return `${formattedDate} ${formattedTime}`;
 }
-const {formatePrice,calcTotal} =useHelpers()
+const { formatePrice, calcTotal } = useHelpers();
 const invoicesStore = useInvoicesStore();
-const filteredInvoices = computed(()=>{
- return invoicesStore.list.filter(invoice=>{
-    if(searchText.value){
+const filteredInvoices = computed(() => {
+  return invoicesStore.list.filter((invoice) => {
+    if (searchText.value) {
       currentPage.value = 1;
-      return invoice.customer_name?.includes(searchText.value)||invoice.customer_phone?.includes(searchText.value)
-    }else return true;
-  })
-})
+      return (
+        invoice.customer_name?.includes(searchText.value) ||
+        invoice.customer_phone?.includes(searchText.value)
+      );
+    } else return true;
+  });
+});
+function discountAmount(invoice) {
+  if (invoice.discount && invoice.discount_percentage) {
+    return (calcTotal(invoice) * invoice.discount) / 100;
+  } else return invoice.discount || 0;
+}
 const paginateArray = computed(() => {
   // Calculate starting and ending indices
   const startIndex = (currentPage.value - 1) * currentPerPage.value;
   const endIndex = startIndex + currentPerPage.value;
   // Return the slice of the array for the current page
-  return filteredInvoices.value.sort((a,b)=> {
-    if(a.date){
-      return new Date((b.date?.seconds||0) * 1000) - new Date((a.date?.seconds||0) * 1000)
-    }else return false
-  }).slice(startIndex, endIndex).map((invoice) => ({
-    id: invoice.id,
-    name: invoice.customer_name,
-    phone: invoice.customer_phone,
-    products_count: invoice.products?.length||0,
-    total: formatePrice(calcTotal(invoice)),
-    created_at: formatTimestamp(invoice.date?.seconds),
-    invoice: invoice,
-    created_at_object: formatTimestamp(invoice.date?.seconds, true)
-  }));
+  return filteredInvoices.value
+    .sort((a, b) => {
+      if (a.date) {
+        return (
+          new Date((b.date?.seconds || 0) * 1000) -
+          new Date((a.date?.seconds || 0) * 1000)
+        );
+      } else return false;
+    })
+    .slice(startIndex, endIndex)
+    .map((invoice) => ({
+      id: invoice.id,
+      name: invoice.customer_name,
+      phone: invoice.customer_phone,
+      products_count: invoice.products?.length || 0,
+      total: formatePrice(calcTotal(invoice) - discountAmount(invoice)),
+      created_at: formatTimestamp(invoice.date?.seconds),
+      invoice: invoice,
+      created_at_object: formatTimestamp(invoice.date?.seconds, true),
+    }));
 });
 const searchText = ref();
 const currentPage = ref(1);
