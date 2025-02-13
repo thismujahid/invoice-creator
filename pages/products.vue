@@ -1,11 +1,9 @@
 <template>
-  <div
-    class="bg-white px-4 py-4 rounded"
-  >
+  <div class="bg-white px-4 py-4 rounded">
     <div class="d-flex align-center mb-4 justify-between">
       <h2>المنتجات</h2>
       <FormsProduct
-      @close="productForm=undefined"
+        @close="productForm = undefined"
         :refresher="loadProds"
         v-model="productFormState"
         :edit="productForm"
@@ -15,12 +13,53 @@
         >
       </FormsProduct>
     </div>
-    <v-text-field
-      max-width="350"
-      label="بحث"
-      variant="outlined"
-      v-model="searchText"
-    ></v-text-field>
+    <div class="d-flex justify-between">
+      <v-text-field
+        max-width="350"
+        label="بحث"
+        variant="outlined"
+        v-model="searchText"
+      ></v-text-field>
+      <div v-if="selectProducts.length > 0" class="d-flex ga-4">
+        <v-btn @click="createInvoiceFromSelectedProducts" flat color="success"
+          ><v-icon icon="mdi-file-plus" />إنشاء فاتورة بالمنتجات المحددة ({{
+            selectProducts.length
+          }})</v-btn
+        >
+        <v-dialog :loading="fillingProducts" max-width="400" persistent>
+          <template #activator="{ props }">
+            <v-btn v-bind="props" flat color="error"
+              ><v-icon icon="mdi-close" />إلغاء تحديد الكل</v-btn
+            >
+          </template>
+          <template #default="{ isActive }">
+            <div class="bg-white rounded py-4 px-4 text-center">
+              <p class="py-2">
+                أنت علي وشك إلغاء المنتجات المحددة، هل أنت متاكد؟
+              </p>
+              <div class="d-flex ga-4 justify-center">
+                <v-btn
+                  color="error"
+                  @click="
+                    selectProducts = [];
+                    isActive.value = true;
+                  "
+                  flat
+                  >تاكيد</v-btn
+                >
+                <v-btn
+                  color="black"
+                  @click="isActive.value = false"
+                  variant="outlined"
+                  flat
+                  >إلغاء</v-btn
+                >
+              </div>
+            </div>
+          </template>
+        </v-dialog>
+      </div>
+    </div>
     <hr v-if="productsStore.list.length > 0" />
     <v-data-table
       :loading="loading"
@@ -35,11 +74,11 @@
     >
       <template v-slot:headers="{ columns, isSorted, getSortIcon, toggleSort }">
         <tr class="header-row">
-          <template v-for="column in columns" :key="column.key">
-            <td
-              v-if="!['id'].includes(column.key)"
-              :class="{ 'b-dashed': dashedTd }"
-            >
+          <template
+            v-for="column in columns.filter((el) => el.key !== 'id')"
+            :key="column.key"
+          >
+            <td :class="{ 'b-dashed': dashedTd }">
               <span
                 class="mr-2 cursor-pointer"
                 v-if="column.title"
@@ -56,14 +95,38 @@
           </td>
         </tr>
       </template>
+
       <template v-slot:item="data">
-        <tr>
+        <tr class="cursor-pointer">
           <template v-for="(value, key, i) of data.item">
-            <td v-if="key !== 'id'">
+            <td
+              @click="
+                () => {
+                  data.item.select = !isSelected(data.item);
+                  toggleSelect(data.item);
+                }
+              "
+              v-if="!['id', 'select'].includes(key)"
+            >
               {{ value }}
             </td>
+            <td
+              @click="
+                () => {
+                  data.item.select = !isSelected(data.item);
+                  toggleSelect(data.item);
+                }
+              "
+              v-else-if="key == 'select'"
+            >
+              <v-checkbox
+                hide-details
+                :model-value="isSelected(data.item)"
+                readonly
+              />
+            </td>
           </template>
-          <td >
+          <td>
             <div class="d-flex ga-3">
               <v-btn
                 size="30"
@@ -176,21 +239,41 @@ const paginateArray = computed(() => {
   const endIndex = startIndex + currentPerPage.value;
 
   // Return the slice of the array for the current page
-  return prodsList.value.sort((a,b)=> {
-    if(a.date){
-      return new Date((b.date?.seconds||0) * 1000) - new Date((a.date?.seconds||0) * 1000)
-    }else return false
-  }).slice(startIndex, endIndex).map((prod) => ({
-    id: prod.id,
-    name: prod.name,
-    price: formatePrice(prod.price),
-    cost_price: formatePrice(prod.cost_price),
-    count: prod.count,
-  }));
+  return prodsList.value
+    .sort((a, b) => {
+      if (a.date) {
+        return (
+          new Date((b.date?.seconds || 0) * 1000) -
+          new Date((a.date?.seconds || 0) * 1000)
+        );
+      } else return false;
+    })
+    .slice(startIndex, endIndex)
+    .map((prod) => ({
+      id: prod.id,
+      select: false,
+      name: prod.name,
+      price: formatePrice(prod.price),
+      cost_price: formatePrice(prod.cost_price),
+      count: prod.count,
+    }));
 });
 const productForm = ref();
 const currentPage = ref(1);
 const currentPerPage = ref(10);
+const selectProducts = ref([]);
+const invoiceStore = useInvoicesStore();
+function isSelected(item) {
+  return selectProducts.value.includes(item.id);
+}
+function toggleSelect(item) {
+  const index = selectProducts.value.indexOf(item.id);
+  if (index > -1) {
+    selectProducts.value.splice(index, 1);
+  } else {
+    selectProducts.value.push(item.id);
+  }
+}
 function editProduct(product) {
   const prod = prodsList.value.find((el) => el.id == product.id);
   if (prod) {
@@ -212,6 +295,7 @@ function formateHeaderTitle(title) {
   else if (text === "Price") return "سعر البيع";
   else if (text === "Cost Price") return "سعر التكلفة";
   else if (text === "Count") return "العدد";
+  else if (text === "Select") return "تحديد";
   else return "";
 }
 async function loadProds() {
@@ -226,6 +310,32 @@ async function deleteProd(id) {
   await productsStore.deleteProduct(id);
   await loadProds();
   deleting.value = false;
+}
+function createInvoiceFromSelectedProducts() {
+  invoiceStore.invoiceToEdit = {
+    customer_name: null,
+    customer_phone: null,
+    debt: null,
+    delivery_price: null,
+    discount_percentage: false,
+    discount: null,
+    discount_for: null,
+    amount_of_animal_feeds: null,
+    amount_of_mahros: null,
+    products: selectProducts.value.map((id) => {
+      const product = prodsList.value.find((prod) => prod.id == id);
+        return {
+          product_name: product.name,
+          product_price: product.price,
+          product_cost_price: product.cost_price,
+          product_quantity: 1,
+          total: 0,
+          option: "",
+          product_id: product.id,
+        };
+      }),
+  };
+  navigateTo("/");
 }
 loadProds();
 </script>

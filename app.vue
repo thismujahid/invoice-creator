@@ -22,7 +22,8 @@
           <h4>أدخل كلمة المرور</h4>
           <v-otp-input
             type="password"
-            pattern="[0-9]*" inputmode="numeric"
+            pattern="[0-9]*"
+            inputmode="numeric"
             autofocus
             :loading="loading"
             dir="ltr"
@@ -222,6 +223,24 @@ async function logout() {
 </script>
 <style>
 @import url("https://fonts.googleapis.com/css2?family=Baloo+Bhaijaan+2:wght@400..800&display=swap");
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #888;
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
 body {
   padding: 0;
   margin: 0;
@@ -390,6 +409,11 @@ body {
   border-left: thin solid rgba(0, 0, 0, 1);
   padding: 5px;
 }
+.invoice thead {
+  position: sticky;
+  top: 0;
+  background-color: #fff;
+}
 .v-input {
   margin-bottom: 15px;
 }
@@ -509,7 +533,8 @@ body {
     font-size: 16px !important;
   }
 }
-input,textarea{
+input,
+textarea {
   font-size: 16px !important;
 }
 </style>

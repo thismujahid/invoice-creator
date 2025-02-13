@@ -1,5 +1,5 @@
 <template>
-  <div id="invoice-data" class="invoice">
+  <div id="invoice-data" class="invoice" >
     <v-alert color="warning" variant="tonal" v-if="invoiceData.id && !viewMode" class="mb-3">
       <v-icon icon="mdi-file-edit-outline" />
       أنت في وضع التعديل علي فاتورة سابقة
@@ -33,6 +33,7 @@
         :items-per-page="100000"
         :items="mappedProducts"
         hide-default-footer
+        :style="viewMode?'':`max-height: 60vh; overflow: auto;`"
       >
       </v-data-table>
       <div class="invoice-footer">

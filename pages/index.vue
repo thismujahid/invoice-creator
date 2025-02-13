@@ -199,144 +199,143 @@
               </v-menu>
             </v-col>
           </v-row>
-
-          <v-row
-            v-for="(form, index) in invoiceData.products"
-            :key="'product-line-' + index"
+          <div
+            ref="containerRef"
+            class="py-4 px-3"
+            style="
+              max-height: 50vh !important;
+              overflow-y: auto;
+              overflow-x: hidden;
+            "
           >
-            <v-col cols="12" lg="3">
-              <v-autocomplete
-                item-title="name"
-                variant="outlined"
-                return-object
-                :items="productsList"
-                :loading="loadingProds"
-                :model-value="
-                  form.product_id
-                    ? {
-                        id: form.product_id,
-                        name: form.product_name,
-                        price: form.product_price,
-                        cost_price: form.product_cost_price,
-                      }
-                    : undefined
-                "
-                @update:model-value="
-                  (prod) => {
-                    form.product_price = prod?.price;
-                    form.product_id = prod?.id;
-                    form.product_cost_price = prod?.cost_price;
-                    form.product_name = prod?.name;
-                  }
-                "
-                label="المنتج"
-                clearable
-                placeholder=" المنتج"
-              >
-                <template #prepend-inner>
-                  <FormsProduct
-                    :refresher="loadProds"
-                    @done="
-                      (prod) => {
-                        form.product_name = prod?.name;
-                        form.product_price = prod?.price;
-                        form.product_cost_price = prod?.cost_price;
-                        form.product_id = prod?.id;
-                      }
-                    "
-                  >
-                    <v-icon v-ripple class="cursor-pointer" icon="mdi-plus" />
-                  </FormsProduct>
-                </template>
-              </v-autocomplete>
-            </v-col>
-            <v-col cols="12" lg="3">
-              <v-text-field
-                variant="outlined"
-                v-model="form.option"
-                label="خيار معين"
-                placeholder="خيار معين"
-              >
-              </v-text-field>
-            </v-col>
-            <v-col cols="12" lg="1">
-              <v-text-field
-                variant="outlined"
-                v-model="form.product_quantity"
-                label="كمية المنتج"
-                placeholder="كمية المنتج"
-              >
-              </v-text-field>
-            </v-col>
+            <v-row
+              v-for="(form, index) in invoiceData.products"
+              :key="'product-line-' + index"
+            >
+              <v-col cols="12" lg="3">
+                <v-autocomplete
+                  item-title="name"
+                  variant="outlined"
+                  return-object
+                  :items="productsList"
+                  :loading="loadingProds"
+                  :model-value="
+                    form.product_id
+                      ? {
+                          id: form.product_id,
+                          name: form.product_name,
+                          price: form.product_price,
+                          cost_price: form.product_cost_price,
+                        }
+                      : undefined
+                  "
+                  @update:model-value="
+                    (prod) => {
+                      form.product_price = prod?.price;
+                      form.product_id = prod?.id;
+                      form.product_cost_price = prod?.cost_price;
+                      form.product_name = prod?.name;
+                    }
+                  "
+                  label="المنتج"
+                  clearable
+                  placeholder=" المنتج"
+                >
+                  <template #prepend-inner>
+                    <FormsProduct
+                      :refresher="loadProds"
+                      @done="
+                        (prod) => {
+                          form.product_name = prod?.name;
+                          form.product_price = prod?.price;
+                          form.product_cost_price = prod?.cost_price;
+                          form.product_id = prod?.id;
+                        }
+                      "
+                    >
+                      <v-icon v-ripple class="cursor-pointer" icon="mdi-plus" />
+                    </FormsProduct>
+                  </template>
+                </v-autocomplete>
+              </v-col>
+              <v-col cols="12" lg="3">
+                <v-text-field
+                  variant="outlined"
+                  v-model="form.option"
+                  label="خيار معين"
+                  placeholder="خيار معين"
+                >
+                </v-text-field>
+              </v-col>
+              <v-col cols="12" lg="1">
+                <v-text-field
+                  variant="outlined"
+                  v-model="form.product_quantity"
+                  label="كمية المنتج"
+                  placeholder="كمية المنتج"
+                >
+                </v-text-field>
+              </v-col>
 
-            <v-col cols="12" lg="2">
-              <v-text-field
-                variant="outlined"
-                v-model="form.product_price"
-                label="سعر المنتج"
-                placeholder="سعر المنتج"
-              >
-                <template #append-inner>
-                  <div v-if="form.product_cost_price" style="text-wrap: nowrap">
-                    التكلفة ({{ form.product_cost_price }})
-                  </div>
-                </template>
-              </v-text-field>
-            </v-col>
-            <v-col cols="12" lg="1">
-              <v-text-field
-                readonly
-                variant="outlined"
-                :model-value="formatePrice(calcTotalOfForm(form))"
-                label="الإجمالي"
-                placeholder="الإجمالي"
-              >
-              </v-text-field>
-            </v-col>
-            <v-col cols="12" lg="1">
-              <v-text-field
-                variant="outlined"
-                :model-value="index"
-                label="الترتيب"
-                placeholder="الترتيب"
-                @update:model-value="(v) => (form.order = v)"
-                @keydown.enter="
-                  moveIndexToNewValue(index, form.order);
-                  form.order = null;
-                "
-              >
-                <!-- <template #append-inner>
-                  <v-btn
-                    icon
-                    flat
-                    @click="
-                      moveIndexToNewValue(index, form.order);
-                      form.order = null;
-                    "
-                    color="primary"
-                    rounded="lg"
-                  >
-                    <v-icon icon="mdi-swap-vertical" />
-                  </v-btn>
-                </template> -->
-              </v-text-field>
-            </v-col>
-            <v-col cols="3" lg="1">
-              <v-btn
-                @click="removeElementIndex(index)"
-                flat
-                color="error"
-                variant="tonal"
-              >
-                <v-icon icon="mdi-delete-outline" size="30" />
-              </v-btn>
-            </v-col>
-            <v-col cols="9" lg="12" v-if="index === (invoiceData.products.length -1)">
-              <v-btn color="success" block flat @click="addNewForm"
-                >إضافة منتج
-              </v-btn>
-            </v-col>
-          </v-row>
+              <v-col cols="12" lg="2">
+                <v-text-field
+                  variant="outlined"
+                  v-model="form.product_price"
+                  label="سعر المنتج"
+                  placeholder="سعر المنتج"
+                >
+                  <template #append-inner>
+                    <div
+                      v-if="form.product_cost_price"
+                      style="text-wrap: nowrap"
+                    >
+                      التكلفة ({{ form.product_cost_price }})
+                    </div>
+                  </template>
+                </v-text-field>
+              </v-col>
+              <v-col cols="12" lg="1">
+                <v-text-field
+                  readonly
+                  variant="outlined"
+                  :model-value="formatePrice(calcTotalOfForm(form))"
+                  label="الإجمالي"
+                  placeholder="الإجمالي"
+                >
+                </v-text-field>
+              </v-col>
+              <v-col cols="12" lg="1">
+                <v-text-field
+                  variant="outlined"
+                  :model-value="index"
+                  label="الترتيب"
+                  placeholder="الترتيب"
+                  @update:model-value="(v) => (form.order = v)"
+                  @keydown.enter="
+                    moveIndexToNewValue(index, form.order);
+                    form.order = null;
+                  "
+                >
+                </v-text-field>
+              </v-col>
+              <v-col cols="3" lg="1">
+                <v-btn
+                  @click="removeElementIndex(index)"
+                  flat
+                  color="error"
+                  variant="tonal"
+                >
+                  <v-icon icon="mdi-delete-outline" size="30" />
+                </v-btn>
+              </v-col>
+            </v-row>
+          </div>
+
+          <v-col cols="9" lg="12">
+            <v-btn color="success" block flat @click="addNewForm"
+              >إضافة منتج
+            </v-btn>
+          </v-col>
         </v-form>
       </div>
       <Invoice @reset="resetInvoice" :invoice-data="invoiceData" />
@@ -347,13 +346,13 @@
 definePageMeta({
   title: "إنشاء فاتورة",
 });
-const { formatDate, formatTime12Hour, formatePrice, useDownloadPDF } =
-  useHelpers();
+const { formatDate, formatTime12Hour, formatePrice } = useHelpers();
 const products = useProductsStore();
 const invoices = useInvoicesStore();
 const customers = useCustomersStore();
 const loadingCustomers = ref(false);
 const loadingProds = ref(false);
+const containerRef = ref();
 const productsList = computed(() => {
   return [...products.list];
 });
@@ -424,8 +423,21 @@ async function loadProds() {
   await products.fetchProducts();
   loadingProds.value = false;
 }
+const scrollToBottom = () => {
+  if (containerRef.value) {
+    containerRef.value.scrollTop = containerRef.value.scrollHeight;
+  }
+};
 loadProds();
 loadCustomers();
+watch(
+  () => invoiceData.value.products,
+  async () => {
+    await nextTick();
+    scrollToBottom();
+  },
+  { deep: true }
+);
 function moveIndexToNewValue(from, to) {
   if (typeof from !== "number") return;
   if (!to) return;
@@ -461,12 +473,37 @@ function removeElementIndex(index) {
     reBuild.value = false;
   }, 200);
 }
+// function fillProdsInTheInvoice(isActive) {
+//   fillingProducts.value = true;
+//   invoiceData.value.products = [];
+//   setTimeout(() => {
+//     const newProducts = productsList.value.map((element) => ({
+//       product_name: element.name,
+//       product_price: element.price,
+//       product_quantity: 1,
+//       product_cost_price: element.cost_price,
+//       product_id: element.id,
+//       total: 0,
+//       option: "",
+//     }));
+
+//     // Assign all at once to reduce UI re-renders
+//     invoiceData.value.products = [...invoiceData.value.products, ...newProducts];
+
+//     fillingProducts.value = false;
+//     isActive.value = false;
+//   }, 200);
+// }
 onMounted(() => {
   if (invoices.invoiceToEdit) {
     invoiceData.value = {
       ...invoices.invoiceToEdit,
-      date: new Date(invoices.invoiceToEdit.date.seconds * 1000),
-      time: new Date(invoices.invoiceToEdit.date.seconds * 1000),
+      date: invoices.invoiceToEdit.date
+        ? new Date(invoices.invoiceToEdit.date.seconds * 1000)
+        : new Date(),
+      time: invoices.invoiceToEdit.date
+        ? new Date(invoices.invoiceToEdit.date.seconds * 1000)
+        : new Date(),
     };
     invoices.invoiceToEdit = undefined;
   }
