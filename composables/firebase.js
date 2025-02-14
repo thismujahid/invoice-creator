@@ -1,6 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getAuth, signInWithEmailAndPassword } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import { getFirestore, onSnapshot } from "firebase/firestore";
 import { collection, getDocs, doc, updateDoc, deleteDoc, addDoc, query, Timestamp, where } from "firebase/firestore";
 
 const firebaseConfig = {
@@ -17,6 +17,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 async function readFrom(module, filters = {}) {
+    console.log("🚀 ~ readFrom ~ module:", module)
     try {
         const productsCollection = collection(db, module);
         let q = productsCollection;
@@ -66,4 +67,15 @@ async function deleteItem(module, itemId) {
         return null
     }
 }
-export const useFirebase = () => ({ auth, db, signInWithEmailAndPassword, readFrom, saveDataTo, updateItem, deleteItem });
+async function onDocChange(collectionName, callback) {
+    const collectionRef = collection(db, collectionName);
+    const unsubscribe = onSnapshot(collectionRef, (snapshot) => {
+        snapshot.docChanges().forEach((change) => {
+            if (change.type === 'modified') {
+                callback(snapshot.docs)
+            }
+        })
+    });
+    return unsubscribe;
+}
+export const useFirebase = () => ({ auth, db, onDocChange, signInWithEmailAndPassword, readFrom, saveDataTo, updateItem, deleteItem });

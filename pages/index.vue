@@ -2,6 +2,20 @@
   <div class="invoice-creator-view">
     <div class="app">
       <div class="form">
+        <div
+          v-if="invoiceData.id"
+          class="invoice-actions d-flex mb-4 justify-end ga-4"
+        >
+          <v-btn
+            color="success"
+            :loading="updating"
+            prepend-icon="mdi-update"
+            flat
+            @click="updateInvoiceData"
+          >
+            تحديث الفاتورة
+          </v-btn>
+        </div>
         <v-form>
           <v-row>
             <v-col cols="12" lg="4">
@@ -348,8 +362,10 @@ definePageMeta({
 });
 const { formatDate, formatTime12Hour, formatePrice } = useHelpers();
 const products = useProductsStore();
+const { onDocChange } = useFirebase();
 const invoices = useInvoicesStore();
 const customers = useCustomersStore();
+const updating = ref(false);
 const loadingCustomers = ref(false);
 const loadingProds = ref(false);
 const containerRef = ref();
@@ -418,9 +434,12 @@ async function loadCustomers() {
   await customers.fetchCustomers();
   loadingCustomers.value = false;
 }
-async function loadProds() {
+async function loadProds(updatePrices) {
   loadingProds.value = true;
   await products.fetchProducts();
+  if (updatePrices) {
+    updateProdsPrices();
+  }
   loadingProds.value = false;
 }
 const scrollToBottom = () => {
@@ -473,28 +492,29 @@ function removeElementIndex(index) {
     reBuild.value = false;
   }, 200);
 }
-// function fillProdsInTheInvoice(isActive) {
-//   fillingProducts.value = true;
-//   invoiceData.value.products = [];
-//   setTimeout(() => {
-//     const newProducts = productsList.value.map((element) => ({
-//       product_name: element.name,
-//       product_price: element.price,
-//       product_quantity: 1,
-//       product_cost_price: element.cost_price,
-//       product_id: element.id,
-//       total: 0,
-//       option: "",
-//     }));
-
-//     // Assign all at once to reduce UI re-renders
-//     invoiceData.value.products = [...invoiceData.value.products, ...newProducts];
-
-//     fillingProducts.value = false;
-//     isActive.value = false;
-//   }, 200);
-// }
-onMounted(() => {
+function updateProdsPrices() {
+  for (let index = 0; index < invoiceData.value.products.length; index++) {
+    const element = invoiceData.value.products[index];
+    const currentProduct = productsList.value.find(
+      (prod) => prod.id == element.product_id
+    );
+    if (currentProduct) {
+      element.product_price = currentProduct.price;
+      element.product_cost_price = currentProduct.cost_price;
+      element.product_name = currentProduct.name;
+    }
+  }
+}
+async function updateInvoiceData() {
+  // Update all products in the invoice to the price in the productsList and also update the date to now
+  updating.value = true;
+  await loadProds();
+  invoiceData.value.date = new Date();
+  invoiceData.value.time = new Date();
+  updateProdsPrices();
+  updating.value = false;
+}
+onMounted(async () => {
   if (invoices.invoiceToEdit) {
     invoiceData.value = {
       ...invoices.invoiceToEdit,
@@ -507,5 +527,15 @@ onMounted(() => {
     };
     invoices.invoiceToEdit = undefined;
   }
+  const unSubCustomers =await onDocChange("customers", (customers) => {
+    loadCustomers();
+  });
+  const usSubProds = await onDocChange("products", (products) => {
+    loadProds(true);
+  });
+  onUnmounted(() => {
+    unSubCustomers();
+    usSubProds();
+  });
 });
 </script>
