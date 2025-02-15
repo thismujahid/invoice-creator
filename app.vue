@@ -306,6 +306,9 @@ body {
   .invoice-creator-app {
     display: none;
   }
+  .v-data-table{
+    max-height: unset !important;
+  }
 }
 .justify-between {
   justify-content: space-between;
