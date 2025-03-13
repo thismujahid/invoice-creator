@@ -22,8 +22,7 @@
               <v-autocomplete
                 item-title="name"
                 variant="outlined"
-                return-object
-                :items="customerList"
+                :items="customers.list"
                 label="اسم العميل"
                 placeholder="اسم العميل"
                 :loading="loadingCustomers"
@@ -221,6 +220,7 @@
               overflow-y: auto;
               overflow-x: hidden;
             "
+            v-if="!loadingProds"
           >
             <v-row
               v-for="(form, index) in invoiceData.products"
@@ -231,7 +231,7 @@
                   item-title="name"
                   variant="outlined"
                   return-object
-                  :items="productsList"
+                  :items="products.list"
                   :loading="loadingProds"
                   :model-value="
                     form.product_id
@@ -344,7 +344,9 @@
               </v-col>
             </v-row>
           </div>
-
+          <div v-else class="my-3 text-center">
+        جاري تحميل المنتجات... الرجاء الإنتظار
+      </div>
           <v-col cols="9" lg="12">
             <v-btn color="success" block flat @click="addNewForm"
               >إضافة منتج
@@ -352,7 +354,10 @@
           </v-col>
         </v-form>
       </div>
-      <Invoice @reset="resetInvoice" :invoice-data="invoiceData" />
+      <Invoice v-if="!loadingProds" @reset="resetInvoice" :invoice-data="invoiceData" />
+      <div v-else class="my-3 text-center">
+        جاري تحميل المنتجات... الرجاء الإنتظار
+      </div>
     </div>
   </div>
 </template>
@@ -369,12 +374,6 @@ const updating = ref(false);
 const loadingCustomers = ref(false);
 const loadingProds = ref(false);
 const containerRef = ref();
-const productsList = computed(() => {
-  return [...products.list];
-});
-const customerList = computed(() => {
-  return [...customers.list];
-});
 
 const invoiceData = ref({
   customer_name: null,
@@ -447,15 +446,10 @@ const scrollToBottom = () => {
     containerRef.value.scrollTop = containerRef.value.scrollHeight;
   }
 };
-loadProds();
-loadCustomers();
 watch(
-  () => invoiceData.value.products,
-  async () => {
-    await nextTick();
-    scrollToBottom();
-  },
-  { deep: true }
+  () => invoiceData.value.products.length, 
+  () => nextTick(scrollToBottom),
+  { flush: "post" }
 );
 function moveIndexToNewValue(from, to) {
   if (typeof from !== "number") return;
@@ -493,17 +487,16 @@ function removeElementIndex(index) {
   }, 200);
 }
 function updateProdsPrices() {
-  for (let index = 0; index < invoiceData.value.products.length; index++) {
-    const element = invoiceData.value.products[index];
-    const currentProduct = productsList.value.find(
-      (prod) => prod.id == element.product_id
-    );
-    if (currentProduct) {
-      element.product_price = currentProduct.price;
-      element.product_cost_price = currentProduct.cost_price;
-      element.product_name = currentProduct.name;
+  const productMap = new Map(products.list.map((p) => [p.id, p]));
+  
+  invoiceData.value.products.forEach((item) => {
+    const prod = productMap.get(item.product_id);
+    if (prod) {
+      item.product_price = prod.price;
+      item.product_cost_price = prod.cost_price;
+      item.product_name = prod.name;
     }
-  }
+  });
 }
 async function updateInvoiceData() {
   // Update all products in the invoice to the price in the productsList and also update the date to now
@@ -518,21 +511,18 @@ onMounted(async () => {
   if (invoices.invoiceToEdit) {
     invoiceData.value = {
       ...invoices.invoiceToEdit,
-      date: invoices.invoiceToEdit.date
+      date: invoices.invoiceToEdit.id &&invoices.invoiceToEdit.date
         ? new Date(invoices.invoiceToEdit.date.seconds * 1000)
         : new Date(),
-      time: invoices.invoiceToEdit.date
+      time: invoices.invoiceToEdit.id&&invoices.invoiceToEdit.date
         ? new Date(invoices.invoiceToEdit.date.seconds * 1000)
         : new Date(),
     };
     invoices.invoiceToEdit = undefined;
   }
-  const unSubCustomers =await onDocChange("customers", (customers) => {
-    loadCustomers();
-  });
-  const usSubProds = await onDocChange("products", (products) => {
-    loadProds(true);
-  });
+  await Promise.all([loadCustomers(), loadProds()]);
+  const unSubCustomers =await onDocChange("customers", loadCustomers);
+  const usSubProds = await onDocChange("products", loadProds);
   onUnmounted(() => {
     unSubCustomers();
     usSubProds();

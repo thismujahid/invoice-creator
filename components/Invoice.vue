@@ -122,8 +122,16 @@ const { saveDataTo, updateItem } = useFirebase();
 const emit = defineEmits(["reset"]);
 const mappedProducts = computed(() => {
   return props.invoiceData?.products.map((prod, index) => {
+    let quantity = prod.product_quantity||"";
+    if(prod.product_quantity == 0.5){
+      quantity = '1/2'
+    }else if(prod.product_quantity == 0.25){
+      quantity = '1/4'
+    }else if(prod.product_quantity == 0.75){
+      quantity = '3/4'
+    }
     return {
-      عدد: prod.product_quantity || "",
+      عدد: quantity,
       البيان:
         (prod.product_name || "") + (prod.option ? ` (${prod.option})` : ""),
       تصحيح: "",

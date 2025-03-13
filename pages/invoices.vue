@@ -66,6 +66,23 @@
           <td class="pt-4 pb-4">
             <div class="d-flex ga-3">
               <v-btn
+                v-tooltip:top="'نسخ الفاتورة'"
+                variant="tonal"
+                flat
+                size="40"
+                @click="
+                  () => {
+                    delete data.item.invoice.id;
+                    invoicesStore.invoiceToEdit = data.item.invoice;
+                    $router.push({
+                      name: 'index',
+                    });
+                  }
+                "
+                color="success"
+                ><v-icon size="30" icon="mdi-content-copy"
+              /></v-btn>
+              <v-btn
                 v-tooltip:top="'تعديل الفاتورة'"
                 variant="tonal"
                 flat
