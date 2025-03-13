@@ -22,6 +22,7 @@
               <v-autocomplete
                 item-title="name"
                 variant="outlined"
+                return-object
                 :items="customers.list"
                 label="اسم العميل"
                 placeholder="اسم العميل"
