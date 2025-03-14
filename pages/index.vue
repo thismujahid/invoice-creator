@@ -449,7 +449,7 @@ const scrollToBottom = () => {
 };
 watch(
   () => invoiceData.value.products.length, 
-  () => nextTick(scrollToBottom),
+  (n,o) => o>n?null:nextTick(scrollToBottom),
   { flush: "post" }
 );
 function moveIndexToNewValue(from, to) {
