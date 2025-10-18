@@ -80,7 +80,47 @@ export const useInvoicesStore = defineStore("invoices", () => {
       return  "❌ حدث خطأ أثناء تصدير الفواتير"
     }
   };
+const deleteOldInvoices = async () => {
+  try {
+    // التاريخ الحالي
+    const now = new Date();
 
+    // بداية الشهر الحالي (1 في اليوم، 00:00:00)
+    const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+
+    console.log("🗓️ سيتم حذف الفواتير الأقدم من:", firstDayOfMonth.toLocaleString());
+
+    // نقرأ كل الفواتير
+    const allInvoices = await readFrom("invoices");
+
+    let deletedCount = 0;
+
+    // نمشي على كل فاتورة
+    for (const inv of allInvoices) {
+      // لو فيها تاريخ
+      if (inv.date) {
+        // Firestore Timestamp → JS Date
+        const invDate = inv.date.seconds
+          ? new Date(inv.date.seconds * 1000)
+          : new Date(inv.date);
+
+        // لو تاريخها قبل أول الشهر
+        if (invDate < firstDayOfMonth) {
+          console.log("🚀 ~ deleteOldInvoices ~ inv.id:", inv.id)
+          await deleteInvoice(inv.id);
+          
+          deletedCount++;
+        }
+      }
+    }
+
+    alert(`✅ تم حذف ${deletedCount} فاتورة أقدم من ${firstDayOfMonth.toLocaleDateString()}`);
+    console.log(`✅ Deleted ${deletedCount} old invoices.`);
+  } catch (err) {
+    console.error("❌ خطأ أثناء حذف الفواتير القديمة:", err);
+    alert("حدث خطأ أثناء عملية الحذف.");
+  }
+};
   return {
     list,
     invoiceToEdit,
@@ -88,6 +128,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
     addInvoice,
     updateInvoice,
     deleteInvoice,
+    deleteOldInvoices,
     exportInvoicesToExcel, // ← أضفها هنا
   };
 });
