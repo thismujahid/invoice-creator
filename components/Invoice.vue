@@ -183,7 +183,7 @@ const calcTotalOfForm = (form) => {
 
 async function startPrint(saveOnly) {
   if (!props.invoiceData.customer_name) {
-    alert("شكلك نسيت تحدد عميل... مينفعش تحفظ فاتورة ملهاش عميل");
+    alert("يبدو أنك نسيت تحديد العميل، لا يمكن حفظ فاتورة دون اختيار عميل.");
     return true;
   }
   if (
@@ -192,10 +192,10 @@ async function startPrint(saveOnly) {
       .product_id
   ) {
     if (props.invoiceData.products.length === 1) {
-      alert("مينفعش تحفظ فاتورة فاضية");
+      alert("لا يمكن حفظ فاتورة فارغة.");
     } else {
       alert(
-        "أخر عنصر في الفاتورة مش متحدد فيه منتج حدد منتج أو شيل العنصر لو مش محتاجه"
+        "العنصر الأخير في الفاتورة غير محدد به منتج، يرجى اختيار منتج له أو حذف العنصر إذا لم تكن بحاجة إليه."
       );
     }
     return true;

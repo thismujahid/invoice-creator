@@ -335,6 +335,7 @@
               </v-col>
               <v-col cols="3" lg="1">
                 <v-btn
+                  v-if="index >= 1"
                   @click="removeElementIndex(index)"
                   flat
                   color="error"
@@ -471,7 +472,8 @@ function moveIndexToNewValue(from, to) {
   }
 }
 function addNewForm() {
-  const lastProduct = invoiceData.value.products[invoiceData.value.products.length - 1];
+  const lastProduct =
+    invoiceData.value.products[invoiceData.value.products.length - 1];
   if (lastProduct && lastProduct.product_id) {
     invoiceData.value.products.push({
       product_name: "",
@@ -482,8 +484,8 @@ function addNewForm() {
       total: 0,
       option: "",
     });
-  }else{
-    alert("معلش... لازم تضيف منتج في أخر صف عشان تقدر تضيف غيره")
+  } else {
+    alert("عذرًا، يجب أن تُضيف منتجًا في الصف الأخير أولًا حتى تتمكّن من إضافة منتج جديد للفاتورة.");
   }
 }
 const reBuild = ref(false);
