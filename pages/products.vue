@@ -64,7 +64,7 @@
     <v-data-table
       :loading="loading"
       no-data-text="لا توجد منتجات حتى الأن"
-      :items-length="prodsList.length"
+      :items-length="prodsList.length||0"
       :hide-default-header="prodsList.length === 0"
       :items-per-page="currentPerPage"
       :page="currentPage"
@@ -78,7 +78,7 @@
             v-for="column in columns.filter((el) => el.key !== 'id')"
             :key="column.key"
           >
-            <td :class="{ 'b-dashed': dashedTd }">
+            <td >
               <span
                 class="mr-2 cursor-pointer"
                 v-if="column.title"
@@ -186,7 +186,7 @@
               class="main"
               color="gray"
               append-icon="mdi-chevron-down"
-              :text="currentPerPage"
+              :text="String(currentPerPage)"
               variant="tonal"
               v-bind="props"
             />
@@ -204,7 +204,7 @@
         size="30"
         total-visible="5"
         v-model="currentPage"
-        :length="Math.ceil(prodsList.length / currentPerPage)"
+        :length="Math.ceil(prodsList.length / currentPerPage)||0"
         active-color="primary"
         :total-visible="7"
         variant="flat"

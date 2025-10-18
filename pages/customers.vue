@@ -23,7 +23,7 @@
     <hr v-if="filteredItems.length > 0" />
     <v-data-table
       no-data-text="لا يوجد عملاء حتى الأن"
-      :items-length="filteredItems.length"
+      :items-length="filteredItems.length||0"
       :hide-default-header="filteredItems.length === 0"
       :items-per-page="currentPerPage"
       :page="currentPage"
@@ -37,7 +37,6 @@
           <template v-for="column in columns" :key="column.key">
             <td
               v-if="!['id'].includes(column.key)"
-              :class="{ 'b-dashed': dashedTd }"
             >
               <span
                 class="mr-2 cursor-pointer"
@@ -125,7 +124,8 @@
               class="main"
               color="gray"
               append-icon="mdi-chevron-down"
-              :text="currentPerPage"
+                       :text="String(currentPerPage)"
+
               variant="tonal"
               v-bind="props"
             />
@@ -143,7 +143,7 @@
         size="30"
         total-visible="5"
         v-model="currentPage"
-        :length="filteredItems.length / currentPerPage"
+        :length="(filteredItems.length / currentPerPage)||0"
         active-color="primary"
         :total-visible="7"
         variant="flat"

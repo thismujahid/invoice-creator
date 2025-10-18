@@ -154,6 +154,9 @@
     >
       جاري التحميل...
       <v-progress-circular indeterminate size="20" width="2" />
+      <div v-show="false">
+        <NuxtPage  />
+      </div>
     </div>
   </v-app>
 </template>

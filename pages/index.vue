@@ -346,8 +346,8 @@
             </v-row>
           </div>
           <div v-else class="my-3 text-center">
-        جاري تحميل المنتجات... الرجاء الإنتظار
-      </div>
+            جاري تحميل المنتجات... الرجاء الإنتظار
+          </div>
           <v-col cols="9" lg="12">
             <v-btn color="success" block flat @click="addNewForm"
               >إضافة منتج
@@ -355,7 +355,11 @@
           </v-col>
         </v-form>
       </div>
-      <Invoice v-if="!loadingProds" @reset="resetInvoice" :invoice-data="invoiceData" />
+      <Invoice
+        v-if="!loadingProds"
+        @reset="resetInvoice"
+        :invoice-data="invoiceData"
+      />
       <div v-else class="my-3 text-center">
         جاري تحميل المنتجات... الرجاء الإنتظار
       </div>
@@ -448,8 +452,8 @@ const scrollToBottom = () => {
   }
 };
 watch(
-  () => invoiceData.value.products.length, 
-  (n,o) => o>n?null:nextTick(scrollToBottom),
+  () => invoiceData.value.products.length,
+  (n, o) => (o > n ? null : nextTick(scrollToBottom)),
   { flush: "post" }
 );
 function moveIndexToNewValue(from, to) {
@@ -467,15 +471,20 @@ function moveIndexToNewValue(from, to) {
   }
 }
 function addNewForm() {
-  invoiceData.value.products.push({
-    product_name: "",
-    product_price: 0,
-    product_quantity: 1,
-    product_cost_price: 0,
-    product_id: "",
-    total: 0,
-    option: "",
-  });
+  const lastProduct = invoiceData.value.products[invoiceData.value.products.length - 1];
+  if (lastProduct && lastProduct.product_id) {
+    invoiceData.value.products.push({
+      product_name: "",
+      product_price: 0,
+      product_quantity: 1,
+      product_cost_price: 0,
+      product_id: "",
+      total: 0,
+      option: "",
+    });
+  }else{
+    alert("معلش... لازم تضيف منتج في أخر صف عشان تقدر تضيف غيره")
+  }
 }
 const reBuild = ref(false);
 function removeElementIndex(index) {
@@ -489,7 +498,7 @@ function removeElementIndex(index) {
 }
 function updateProdsPrices() {
   const productMap = new Map(products.list.map((p) => [p.id, p]));
-  
+
   invoiceData.value.products.forEach((item) => {
     const prod = productMap.get(item.product_id);
     if (prod) {
@@ -499,6 +508,7 @@ function updateProdsPrices() {
     }
   });
 }
+
 async function updateInvoiceData() {
   // Update all products in the invoice to the price in the productsList and also update the date to now
   updating.value = true;
@@ -508,25 +518,33 @@ async function updateInvoiceData() {
   updateProdsPrices();
   updating.value = false;
 }
+const unSubCustomers = ref();
+const usSubProds = ref();
 onMounted(async () => {
   if (invoices.invoiceToEdit) {
     invoiceData.value = {
       ...invoices.invoiceToEdit,
-      date: invoices.invoiceToEdit.id &&invoices.invoiceToEdit.date
-        ? new Date(invoices.invoiceToEdit.date.seconds * 1000)
-        : new Date(),
-      time: invoices.invoiceToEdit.id&&invoices.invoiceToEdit.date
-        ? new Date(invoices.invoiceToEdit.date.seconds * 1000)
-        : new Date(),
+      date:
+        invoices.invoiceToEdit.id && invoices.invoiceToEdit.date
+          ? new Date(invoices.invoiceToEdit.date.seconds * 1000)
+          : new Date(),
+      time:
+        invoices.invoiceToEdit.id && invoices.invoiceToEdit.date
+          ? new Date(invoices.invoiceToEdit.date.seconds * 1000)
+          : new Date(),
     };
     invoices.invoiceToEdit = undefined;
   }
   await Promise.all([loadCustomers(), loadProds()]);
-  const unSubCustomers =await onDocChange("customers", loadCustomers);
-  const usSubProds = await onDocChange("products", loadProds);
-  onUnmounted(() => {
-    unSubCustomers();
-    usSubProds();
-  });
+  unSubCustomers.value = await onDocChange("customers", loadCustomers);
+  usSubProds.value = await onDocChange("products", loadProds);
+});
+onUnmounted(() => {
+  if (unSubCustomers.value) {
+    unSubCustomers.value();
+  }
+  if (usSubProds.value) {
+    usSubProds.value();
+  }
 });
 </script>

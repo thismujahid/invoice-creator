@@ -21,7 +21,7 @@
     <hr v-if="filteredInvoices.length > 0" />
     <v-data-table
       no-data-text="لا يوجد فواتير حتى الأن"
-      :items-length="filteredInvoices.length"
+      :items-length="filteredInvoices.length||0"
       :hide-default-header="filteredInvoices.length === 0"
       :items-per-page="currentPerPage"
       :page="currentPage"
@@ -38,7 +38,6 @@
               v-if="
                 !['id', 'invoice', 'created_at_object'].includes(column.key)
               "
-              :class="{ 'b-dashed': dashedTd }"
             >
               <span
                 class="mr-2 cursor-pointer"
@@ -188,7 +187,8 @@
               class="main"
               color="gray"
               append-icon="mdi-chevron-down"
-              :text="currentPerPage"
+                      :text="String(currentPerPage)"
+
               variant="tonal"
               v-bind="props"
             />
@@ -206,7 +206,7 @@
         size="30"
         total-visible="5"
         v-model="currentPage"
-        :length="filteredInvoices.length / currentPerPage"
+        :length="(filteredInvoices.length / currentPerPage)||0"
         active-color="primary"
         :total-visible="7"
         variant="flat"
