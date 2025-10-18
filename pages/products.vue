@@ -17,8 +17,8 @@
           flat
           color="success"
           @click="handleViewCostClick"
-          :prepend-icon="`mdi-eye${viewCost?'-off-':'-'}outline`"
-          >{{ viewCost?'إخفاء القيمة':'عرض القيمة' }}</v-btn
+          :prepend-icon="`mdi-eye${viewCost ? '-off-' : '-'}outline`"
+          >{{ viewCost ? "إخفاء القيمة" : "عرض القيمة" }}</v-btn
         >
         <FormsAuthScreen
           @close="() => (startView = false)"
@@ -91,7 +91,9 @@
       <template v-slot:headers="{ columns, isSorted, getSortIcon, toggleSort }">
         <tr class="header-row">
           <template
-            v-for="column in columns.filter((el) => !['id', !viewCost?'cost_price':''].includes(el.key))"
+            v-for="column in columns.filter(
+              (el) => !['id', !viewCost ? 'cost_price' : ''].includes(el.key)
+            )"
             :key="column.key"
           >
             <td>
@@ -122,7 +124,9 @@
                   toggleSelect(data.item);
                 }
               "
-              v-if="!['id', 'select'].includes(key)"
+              v-if="
+                !['id', 'select', !viewCost ? 'cost_price' : ''].includes(key)
+              "
             >
               {{ value }}
             </td>
@@ -238,7 +242,7 @@ const { formatePrice } = useHelpers();
 const productFormState = ref(false);
 const productsStore = useProductsStore();
 const startView = ref(false);
-const viewCost = ref(false)
+const viewCost = ref(false);
 const loading = ref(false);
 const deleting = ref(false);
 const prodsList = computed(() => {
