@@ -245,10 +245,12 @@ async function startPrint(saveOnly) {
       printing.value = false;
     }, 100);
   }
-  snackBarText.value = {
-    loading: false,
-    text: "تم حفظ الفاتورة بنجاح",
-  };
+  if(!props.viewMode){
+    snackBarText.value = {
+      loading: false,
+      text: "تم حفظ الفاتورة بنجاح",
+    };
+  }
 }
 const discountAmount = computed(() => {
   if (props.invoiceData.discount && props.invoiceData.discount_percentage) {
