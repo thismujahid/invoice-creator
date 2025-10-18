@@ -12,42 +12,7 @@
     </v-snackbar>
 
     <v-locale-provider rtl v-if="!initFirebase">
-      <v-dialog
-        persistent
-        max-width="400px"
-        :model-value="true"
-        v-if="!isAuthed"
-      >
-        <div class="bg-white rounded-lg pb-4 pt-4 px-4 text-center">
-          <h4>أدخل كلمة المرور</h4>
-          <v-otp-input
-            type="password"
-            pattern="[0-9]*"
-            inputmode="numeric"
-            autofocus
-            :loading="loading"
-            dir="ltr"
-            @finish="login"
-            @update:model-value="error = ''"
-            :error="error ? true : false"
-            v-model="newPass"
-            length="6"
-          ></v-otp-input>
-          <v-alert class="mb-2" v-if="error" color="error" variant="tonal">
-            {{ error }}
-          </v-alert>
-          <div class="text-center w-100" style="font-size: 18px">
-            برمجة وتطوير:
-            <NuxtLink
-              target="_blank"
-              class="text-primary"
-              href="https://thismujahid.github.io"
-              >محمد إبراهيم مجاهد</NuxtLink
-            >
-          </div>
-          <!-- <v-btn @click="login" flat color="primary">متابعة</v-btn> -->
-        </div>
-      </v-dialog>
+      <FormsAuthScreen @success="(v)=> isAuthed=v" v-if="!isAuthed" />
       <div id="printableArea" class="printable-area invoice-creator-view"></div>
       <div class="invoice-creator-app" v-if="isAuthed">
         <v-app-bar absolute app color="light" flat border>
@@ -168,55 +133,36 @@ useHead({
   link: [{ rel: "manifest", href: "/site.webmanifest" }],
 });
 const authStore = useAuth();
-const { auth, signInWithEmailAndPassword } = useFirebase();
+const { auth } = useFirebase();
 auth.languageCode = "ar";
-const newPass = ref();
 const initFirebase = ref(true);
 const sideMenu = ref(false);
 const loading = ref(false);
 const isAuthed = ref(auth.currentUser ? true : false);
-const error = ref("");
 const route = useRoute();
-new Promise((res) => {
-  auth.onAuthStateChanged(
-    (user) => {
-      isAuthed.value = user ? true : false;
-      initFirebase.value = false;
-      if (user) {
-        newPass.value = null;
-        authStore.userData = {
-          name: user.displayName,
-          email: user.email,
-          phone: user.phone,
-          avatar: user.photoURL,
-          id: user.uid,
-        };
-      }
-      res(true);
-    },
-    (err) => {
-      res(false);
-      initFirebase.value = false;
-      console.error(err);
+auth.onAuthStateChanged(
+  (user) => {
+    isAuthed.value = user ? true : false;
+    initFirebase.value = false;
+    if (user) {
+      authStore.userData = {
+        name: user.displayName,
+        email: user.email,
+        phone: user.phone,
+        avatar: user.photoURL,
+        id: user.uid,
+      };
     }
-  );
-});
+  },
+  (err) => {
+    initFirebase.value = false;
+    console.error(err);
+  }
+);
 const currentPageTitle = computed(() => {
   return route.meta.title || "";
 });
-async function login() {
-  loading.value = true;
-  try {
-    await signInWithEmailAndPassword(
-      auth,
-      "mohamed.mojahead@gmail.com",
-      newPass.value
-    );
-  } catch (e) {
-    error.value = "كلمة المرور غير صحيحة";
-  }
-  loading.value = false;
-}
+
 async function logout() {
   loading.value = true;
   await auth.signOut();

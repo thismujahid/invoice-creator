@@ -2,16 +2,32 @@
   <div class="bg-white px-4 py-4 rounded">
     <div class="d-flex align-center mb-4 justify-between">
       <h2>المنتجات</h2>
-      <FormsProduct
-        @close="productForm = undefined"
-        :refresher="loadProds"
-        v-model="productFormState"
-        :edit="productForm"
-      >
-        <v-btn flat color="success" v-bind="props"
-          ><v-icon icon="mdi-plus" />إضافة منتج جديد</v-btn
+      <div class="d-flex items-center" style="gap: 10px">
+        <FormsProduct
+          @close="productForm = undefined"
+          :refresher="loadProds"
+          v-model="productFormState"
+          :edit="productForm"
         >
-      </FormsProduct>
+          <v-btn flat color="success" v-bind="props"
+            ><v-icon icon="mdi-plus" />إضافة منتج جديد</v-btn
+          >
+        </FormsProduct>
+        <v-btn
+          flat
+          color="success"
+          @click="handleViewCostClick"
+          :prepend-icon="`mdi-eye${viewCost?'-off-':'-'}outline`"
+          >{{ viewCost?'إخفاء القيمة':'عرض القيمة' }}</v-btn
+        >
+        <FormsAuthScreen
+          @close="() => (startView = false)"
+          @success="(value) => (viewCost = value)"
+          v-if="startView"
+          success-text="تم التحقق من الهوية بنجاح... تم عرض القيمة بنجاح"
+          title="برجاء تأكيد هويتك لتتمكن من عرض القيمة"
+        />
+      </div>
     </div>
     <div class="d-flex justify-between">
       <v-text-field
@@ -64,7 +80,7 @@
     <v-data-table
       :loading="loading"
       no-data-text="لا توجد منتجات حتى الأن"
-      :items-length="prodsList.length||0"
+      :items-length="prodsList.length || 0"
       :hide-default-header="prodsList.length === 0"
       :items-per-page="currentPerPage"
       :page="currentPage"
@@ -75,10 +91,10 @@
       <template v-slot:headers="{ columns, isSorted, getSortIcon, toggleSort }">
         <tr class="header-row">
           <template
-            v-for="column in columns.filter((el) => el.key !== 'id')"
+            v-for="column in columns.filter((el) => !['id', !viewCost?'cost_price':''].includes(el.key))"
             :key="column.key"
           >
-            <td >
+            <td>
               <span
                 class="mr-2 cursor-pointer"
                 v-if="column.title"
@@ -204,7 +220,7 @@
         size="30"
         total-visible="5"
         v-model="currentPage"
-        :length="Math.ceil(prodsList.length / currentPerPage)||0"
+        :length="Math.ceil(prodsList.length / currentPerPage) || 0"
         active-color="primary"
         :total-visible="7"
         variant="flat"
@@ -221,6 +237,8 @@ const searchText = ref();
 const { formatePrice } = useHelpers();
 const productFormState = ref(false);
 const productsStore = useProductsStore();
+const startView = ref(false);
+const viewCost = ref(false)
 const loading = ref(false);
 const deleting = ref(false);
 const prodsList = computed(() => {
@@ -265,6 +283,14 @@ const selectProducts = ref([]);
 const invoiceStore = useInvoicesStore();
 function isSelected(item) {
   return selectProducts.value.includes(item.id);
+}
+function handleViewCostClick() {
+  if (viewCost.value) {
+    startView.value = false;
+    viewCost.value = false;
+  } else {
+    startView.value = true;
+  }
 }
 function toggleSelect(item) {
   const index = selectProducts.value.indexOf(item.id);
@@ -324,16 +350,16 @@ function createInvoiceFromSelectedProducts() {
     amount_of_mahros: null,
     products: selectProducts.value.map((id) => {
       const product = prodsList.value.find((prod) => prod.id == id);
-        return {
-          product_name: product.name,
-          product_price: product.price,
-          product_cost_price: product.cost_price,
-          product_quantity: 1,
-          total: 0,
-          option: "",
-          product_id: product.id,
-        };
-      }),
+      return {
+        product_name: product.name,
+        product_price: product.price,
+        product_cost_price: product.cost_price,
+        product_quantity: 1,
+        total: 0,
+        option: "",
+        product_id: product.id,
+      };
+    }),
   };
   navigateTo("/");
 }

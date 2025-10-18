@@ -3,11 +3,12 @@
     <div class="app">
       <div class="form">
         <div
-          v-if="invoiceData.id"
           class="invoice-actions d-flex mb-4 justify-end ga-4"
         >
           <v-btn
             color="success"
+          v-if="invoiceData.id"
+
             :loading="updating"
             prepend-icon="mdi-update"
             flat
@@ -15,6 +16,20 @@
           >
             تحديث الفاتورة
           </v-btn>
+          <v-btn
+            flat
+            color="success"
+            @click="handleViewCostClick"
+            :prepend-icon="`mdi-eye${viewCost ? '-off-' : '-'}outline`"
+            >{{ viewCost ? "إخفاء القيمة" : "عرض القيمة" }}</v-btn
+          >
+          <FormsAuthScreen
+            @close="() => (startView = false)"
+            @success="(value) => (viewCost = value)"
+            v-if="startView"
+            success-text="تم التحقق من الهوية بنجاح... تم عرض القيمة بنجاح"
+            title="برجاء تأكيد هويتك لتتمكن من عرض القيمة"
+          />
         </div>
         <v-form>
           <v-row>
@@ -301,7 +316,7 @@
                 >
                   <template #append-inner>
                     <div
-                      v-if="form.product_cost_price"
+                      v-if="form.product_cost_price && viewCost"
                       style="text-wrap: nowrap"
                     >
                       التكلفة ({{ form.product_cost_price }})
@@ -380,7 +395,8 @@ const updating = ref(false);
 const loadingCustomers = ref(false);
 const loadingProds = ref(false);
 const containerRef = ref();
-
+const startView = ref(false);
+const viewCost = ref(false)
 const invoiceData = ref({
   customer_name: null,
   customer_phone: null,
@@ -485,7 +501,9 @@ function addNewForm() {
       option: "",
     });
   } else {
-    alert("عذرًا، يجب أن تُضيف منتجًا في الصف الأخير أولًا حتى تتمكّن من إضافة منتج جديد للفاتورة.");
+    alert(
+      "عذرًا، يجب أن تُضيف منتجًا في الصف الأخير أولًا حتى تتمكّن من إضافة منتج جديد للفاتورة."
+    );
   }
 }
 const reBuild = ref(false);
@@ -510,7 +528,14 @@ function updateProdsPrices() {
     }
   });
 }
-
+function handleViewCostClick() {
+  if (viewCost.value) {
+    startView.value = false;
+    viewCost.value = false;
+  } else {
+    startView.value = true;
+  }
+}
 async function updateInvoiceData() {
   // Update all products in the invoice to the price in the productsList and also update the date to now
   updating.value = true;

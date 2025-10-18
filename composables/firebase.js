@@ -17,7 +17,6 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 async function readFrom(module, filters = {}) {
-    console.log("🚀 ~ readFrom ~ module:", module)
     try {
         const productsCollection = collection(db, module);
         let q = productsCollection;

@@ -12,16 +12,35 @@
         >
       </forms-customer> -->
     </div>
-    <v-text-field
-      max-width="350"
-      label="بحث"
-      variant="outlined"
-      v-model="searchText"
-    ></v-text-field>
+    <div class="d-flex items-center justify-between">
+      <v-text-field
+        max-width="350"
+        label="بحث"
+        variant="outlined"
+        v-model="searchText"
+      ></v-text-field>
+      <div>
+        <v-btn
+          prepend-icon="mdi-export-variant"
+          @click="startExport = true"
+          color="info"
+          :loading="exporting"
+          :disabled="loading"
+          >تصدير البيانات</v-btn
+        >
+        <FormsAuthScreen
+          @close="() => (startExport = false)"
+          @success="handleSuccess"
+          v-if="startExport"
+          success-text="تم التحقق من الهوية بنجاح... جاري تصدير الفواتير"
+          title="برجاء تأكيد هويتك لتتمكن من تصدير الفواتير"
+        />
+      </div>
+    </div>
     <hr v-if="filteredInvoices.length > 0" />
     <v-data-table
       no-data-text="لا يوجد فواتير حتى الأن"
-      :items-length="filteredInvoices.length||0"
+      :items-length="filteredInvoices.length || 0"
       :hide-default-header="filteredInvoices.length === 0"
       :items-per-page="currentPerPage"
       :page="currentPage"
@@ -187,8 +206,7 @@
               class="main"
               color="gray"
               append-icon="mdi-chevron-down"
-                      :text="String(currentPerPage)"
-
+              :text="String(currentPerPage)"
               variant="tonal"
               v-bind="props"
             />
@@ -206,7 +224,7 @@
         size="30"
         total-visible="5"
         v-model="currentPage"
-        :length="(filteredInvoices.length / currentPerPage)||0"
+        :length="filteredInvoices.length / currentPerPage || 0"
         active-color="primary"
         :total-visible="7"
         variant="flat"
@@ -219,6 +237,8 @@
 definePageMeta({
   title: "الفواتير",
 });
+const authStore = useAuth();
+const startExport = ref(false);
 function formatTimestamp(seconds, returnObject) {
   const date = new Date(seconds * 1000);
   if (returnObject) return date;
@@ -281,6 +301,7 @@ const searchText = ref();
 const currentPage = ref(1);
 const currentPerPage = ref(10);
 const loading = ref(false);
+const exporting = ref(false);
 const deleting = ref(false);
 async function loadInvoices() {
   loading.value = true;
@@ -307,6 +328,23 @@ async function deleteCustomer(id) {
   await invoicesStore.deleteInvoice(id);
   await loadInvoices();
   deleting.value = false;
+}
+async function handleSuccess(isSuccess) {
+  if (isSuccess) {
+    exporting.value = true;
+    invoicesStore
+      .exportInvoicesToExcel(filteredInvoices.value)
+      .then((res) => {
+        console.log("🚀 ~ handleSuccess ~ res:", res)
+        authStore.snackBarText = res;
+        exporting.value = false;
+      })
+      .catch((err) => {
+        authStore.snackBarText = err
+        exporting.value = false;
+        authStore.snackBarText = err;
+      });
+  }
 }
 loadInvoices();
 </script>

@@ -1,27 +1,93 @@
-export const useInvoicesStore = defineStore("invoices", () => {
-    const { readFrom, saveDataTo,updateItem, deleteItem } = useFirebase()
-    const list = ref([]);
-    const invoiceToEdit = ref()
-    const fetchInvoices = async (filters) => {
-        list.value = await readFrom("invoices",filters);
-        return true;
-    };
-    const addInvoice = async (product) => {
-        return await saveDataTo("invoices", product)
-    };
-    const updateInvoice = async (id, updatedFields) => {
-        return await updateItem("invoices", id, updatedFields)
-    };
-    const deleteInvoice = async (id) => {
-        return await deleteItem("invoices", id)
-    };
+import * as XLSX from "xlsx";
 
-    return {
-        list,
-        invoiceToEdit,
-        fetchInvoices,
-        addInvoice,
-        updateInvoice,
-        deleteInvoice
+export const useInvoicesStore = defineStore("invoices", () => {
+  const { readFrom, saveDataTo, updateItem, deleteItem } = useFirebase();
+  const list = ref([]);
+  const invoiceToEdit = ref();
+
+  const fetchInvoices = async (filters) => {
+    list.value = await readFrom("invoices", filters);
+    return true;
+  };
+
+  const addInvoice = async (invoice) => {
+    return await saveDataTo("invoices", invoice);
+  };
+
+  const updateInvoice = async (id, updatedFields) => {
+    return await updateItem("invoices", id, updatedFields);
+  };
+
+  const deleteInvoice = async (id) => {
+    return await deleteItem("invoices", id);
+  };
+
+  // ✅ الدالة الجديدة لتصدير الفواتير بالعربي
+  const exportInvoicesToExcel = async (invoices) => {
+    try {
+      if (!invoices.length) {
+        alert("لا توجد فواتير للتصدير.");
+        return;
+      }
+
+      // نحول كل فاتورة إلى كائن بالعناوين العربية
+      const formatted = invoices.map((inv) => ({
+        "رقم الفاتورة": inv.id || "",
+        "اسم العميل": inv.customer_name || "",
+        "رقم الهاتف": inv.customer_phone || "",
+        "التاريخ": inv.date ? new Date(inv.date.seconds * 1000).toLocaleString() : "",
+        "إجمالي العلف": inv.amount_of_animal_feeds || "",
+        "إجمالي محروس": inv.amount_of_mahros || "",
+        "الديون": inv.debt || "",
+        "سعر التوصيل": inv.delivery_price || "",
+        "الخصم": `${inv.discount || "0"}${inv.discount_percentage?'%':''}`,
+        "الخصم لـ": inv.discount_for || "",
+        "نسبة الخصم": inv.discount_percentage ? "نسبة مئوية" : "مبلغ ثابت",
+        "الوقت": inv.time ? new Date(inv.time.seconds * 1000).toLocaleString() : "",
+        "المنتجات": Array.isArray(inv.products)
+          ? inv.products
+              .map((p, i) => {
+                const name = p.product_name || "غير محدد";
+                const qty = p.product_quantity || "1";
+                const price = p.product_price || "0";
+                const total = p.product_price * p.product_quantity || "0";
+                return `(${i + 1}) ${name} - الكمية: ${qty} - السعر: ${price} - الإجمالي: ${total}`;
+              })
+              .join("\n")
+          : "",
+      }));
+
+      // تحويل إلى شيت Excel
+      const worksheet = XLSX.utils.json_to_sheet(formatted);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "الفواتير");
+
+      // كتابة الملف وتنزيله
+      const excelBuffer = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
+      const blob = new Blob([excelBuffer], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "الفواتير.xlsx";
+      link.click();
+      URL.revokeObjectURL(url);
+
+      return `✅ تم تصدير ${invoices.length} فاتورة بنجاح`
+    } catch (err) {
+      return  "❌ حدث خطأ أثناء تصدير الفواتير"
     }
-})
+  };
+
+  return {
+    list,
+    invoiceToEdit,
+    fetchInvoices,
+    addInvoice,
+    updateInvoice,
+    deleteInvoice,
+    exportInvoicesToExcel, // ← أضفها هنا
+  };
+});
