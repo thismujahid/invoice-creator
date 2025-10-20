@@ -6,7 +6,6 @@ export const useInvoicesStore = defineStore("invoices", () => {
   const invoiceToEdit = ref();
 
   const fetchInvoices = async (filters = {}) => {
-  
     list.value = await readFrom("invoices", filters);
     return true;
   };
@@ -22,9 +21,14 @@ export const useInvoicesStore = defineStore("invoices", () => {
   const deleteInvoice = async (id) => {
     return await deleteItem("invoices", id);
   };
-
+  function discountAmount(invoice) {
+    if (invoice.discount && invoice.discount_percentage) {
+      return (calcTotal(invoice) * invoice.discount) / 100;
+    } else return invoice.discount || 0;
+  }
   // ✅ الدالة الجديدة لتصدير الفواتير بالعربي
   const exportInvoicesToExcel = async (invoices) => {
+    const { calcTotal } = useHelpers();
     try {
       if (!invoices.length) {
         alert("لا توجد فواتير للتصدير.");
@@ -32,37 +36,41 @@ export const useInvoicesStore = defineStore("invoices", () => {
       }
 
       // نحول كل فاتورة إلى كائن بالعناوين العربية
-      const formatted = invoices.map((inv) => ({
-        "رقم الفاتورة": inv.id || "",
-        "اسم العميل": inv.customer_name || "",
-        "رقم الهاتف": inv.customer_phone || "",
-        التاريخ: inv.date
-          ? new Date(inv.date.seconds * 1000).toLocaleString()
-          : "",
-        "إجمالي العلف": inv.amount_of_animal_feeds || "",
-        "إجمالي محروس": inv.amount_of_mahros || "",
-        الديون: inv.debt || "",
-        "سعر التوصيل": inv.delivery_price || "",
-        الخصم: `${inv.discount || "0"}${inv.discount_percentage ? "%" : ""}`,
-        "الخصم لـ": inv.discount_for || "",
-        "نسبة الخصم": inv.discount_percentage ? "نسبة مئوية" : "مبلغ ثابت",
-        الوقت: inv.time
-          ? new Date(inv.time.seconds * 1000).toLocaleString()
-          : "",
-        المنتجات: Array.isArray(inv.products)
-          ? inv.products
-              .map((p, i) => {
-                const name = p.product_name || "غير محدد";
-                const qty = p.product_quantity || "1";
-                const price = p.product_price || "0";
-                const total = p.product_price * p.product_quantity || "0";
-                return `(${
-                  i + 1
-                }) ${name} - الكمية: ${qty} - السعر: ${price} - الإجمالي: ${total}`;
-              })
-              .join("\n")
-          : "",
-      }));
+      const formatted = invoices.map((inv) => {
+        return {
+          "رقم الفاتورة": inv.id || "",
+          "اسم العميل": inv.customer_name || "",
+          "رقم الهاتف": inv.customer_phone || "",
+          "منشئ الفاتورة": formateActiveUserKey(inv.created_by).name || "",
+          التاريخ: inv.date
+            ? new Date(inv.date.seconds * 1000).toLocaleString()
+            : "",
+          "إجمالي العلف": inv.amount_of_animal_feeds || "",
+          "إجمالي محروس": inv.amount_of_mahros || "",
+          الديون: inv.debt || "",
+          "سعر التوصيل": inv.delivery_price || "",
+          الخصم: `${inv.discount || "0"}${inv.discount_percentage ? "%" : ""}`,
+          "الخصم لـ": inv.discount_for || "",
+          "نسبة الخصم": inv.discount_percentage ? "نسبة مئوية" : "مبلغ ثابت",
+          "إجمالي الفاتورة (قبل الخصم)": calcTotal(inv),
+          "إجمالي الفاتورة": calcTotal(inv) - discountAmount(inv),
+          المنتجات: Array.isArray(inv.products)
+            ? inv.products
+                .map((p, i) => {
+                  const name = p.product_name || "غير محدد";
+                  const qty = p.product_quantity || "1";
+                  const price = p.product_price || "0";
+                  const total = p.product_price * p.product_quantity || "0";
+                  const cost = p.product_cost_price || "0";
+                  const total_cost = qty * p.product_cost_price || "0";
+                  return `(${
+                    i + 1
+                  }) ${name} - الكمية: ${qty} - السعر: ${price}- التكلفة: ${cost} - إجمالي التكلفة: ${total_cost} - الإجمالي: ${total}`;
+                })
+                .join("\n")
+            : "",
+        };
+      });
 
       // تحويل إلى شيت Excel
       const worksheet = XLSX.utils.json_to_sheet(formatted);

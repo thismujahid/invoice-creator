@@ -39,3 +39,20 @@ export function formateActiveUserKey(key) {
       };
   }
 }
+
+export const usersList = computed(() => {
+  return [
+    {
+      label: "الكل",
+      value: null,
+    },
+    {
+      label: "المسؤل",
+      value: "su",
+    },
+    {
+      label: "طارق أبو قاسية",
+      value: "c_tarek",
+    },
+  ];
+});

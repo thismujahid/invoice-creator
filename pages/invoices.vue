@@ -2,15 +2,57 @@
   <div class="bg-white px-4 py-4 rounded">
     <div class="d-flex align-center mb-4 justify-between">
       <h2>الفواتير</h2>
-
     </div>
     <div class="d-flex items-center justify-between">
-      <v-text-field
-        max-width="350"
-        label="بحث"
-        variant="outlined"
-        v-model="searchText"
-      ></v-text-field>
+      <div class="d-flex" style="gap: 10px">
+        <v-text-field
+          min-width="250"
+          label="بحث"
+          variant="outlined"
+          v-model="searchText"
+        ></v-text-field>
+        <v-autocomplete
+          item-title="label"
+          item-value="value"
+          min-width="250"
+          label="منشئ الفواتير"
+          variant="outlined"
+          v-model="activeUser"
+          :items="usersList"
+          @update:model-value="loadInvoices"
+        ></v-autocomplete>
+        <v-menu
+          ref="menu"
+          v-model="dateMenu"
+          :close-on-content-click="false"
+          transition="scale-transition"
+        >
+          <template #activator="{ props }">
+            <v-text-field
+              v-model="displayDate"
+              label="تاريخ الفاتورة"
+              readonly
+              min-width="250px"
+              variant="outlined"
+              v-bind="props"
+              append-inner-icon="mdi-calendar"
+              @update:model-value="loadInvoices"
+              @click:clear="() => ((selectedDate = null), loadInvoices())"
+              clearable
+            />
+          </template>
+
+          <v-card>
+            <v-date-picker v-model="selectedDate" hide-header></v-date-picker>
+
+            <v-card-actions>
+              <v-spacer />
+              <v-btn text @click="dateMenu = false">إلغاء</v-btn>
+              <v-btn text @click="applyDate">موافق</v-btn>
+            </v-card-actions>
+          </v-card>
+        </v-menu>
+      </div>
       <div>
         <v-btn
           prepend-icon="mdi-export-variant"
@@ -30,6 +72,16 @@
         />
       </div>
     </div>
+    <v-alert color="success" variant="tonal" v-if="isAdmin" class="mb-4 d-flex align-center">
+      إجمالي مبيعات الفواتير المعروضة:
+      <strong v-if="!hideTotal" >
+        {{ formatePrice(filteredInvoices.reduce((total, inv)=>total+(calcTotal(inv) - discountAmount(inv)), 0)) }} ج.م
+      </strong>
+      <strong v-else>
+        *********** 
+      </strong>
+      <v-icon @click="hideTotal=!hideTotal" :icon="hideTotal?'mdi-eye-off':'mdi-eye'" />
+    </v-alert>
     <hr v-if="filteredInvoices.length > 0" />
     <v-data-table
       no-data-text=" لا يوجد فواتير مسجلة بالمستخدم الحالي حتى الأن"
@@ -239,8 +291,27 @@
 definePageMeta({
   title: "الفواتير",
 });
+const hideTotal = ref(true);
 const authStore = useAuth();
+const activeUser = ref(
+  useCookie("__AU").value === "su" ? undefined : useCookie("__AU").value
+);
+const dateMenu = ref(false);
 const startExport = ref(false);
+const selectedDate = ref(null);
+const displayDate = ref("");
+
+function applyDate() {
+  dateMenu.value = false;
+  displayDate.value = selectedDate.value
+    ? selectedDate.value.toLocaleDateString()
+    : "";
+  loadInvoices();
+}
+
+watch(selectedDate, (val) => {
+  displayDate.value = val ? val.toLocaleDateString() : "";
+});
 function formatTimestamp(seconds, returnObject) {
   const date = new Date(seconds * 1000);
   if (returnObject) return date;
@@ -309,8 +380,8 @@ const deleting = ref(false);
 async function loadInvoices() {
   loading.value = true;
   await invoicesStore.fetchInvoices({
-    created_by:
-      useCookie("__AU").value === "su" ? undefined : useCookie("__AU").value,
+    created_by: activeUser.value,
+    date: selectedDate.value,
   });
   loading.value = false;
 }
