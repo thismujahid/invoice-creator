@@ -4,7 +4,7 @@ import { transformAssetUrls } from 'vite-plugin-vuetify'
 import { ar } from 'vuetify/locale';
 export default defineNuxtConfig({
   compatibilityDate: "2024-11-01",
-  devtools: { enabled: true },
+  devtools: { enabled: false },
   modules: ["vuetify-nuxt-module", "@pinia/nuxt", "@vite-pwa/nuxt"],
   nitro: {
     prerender: {

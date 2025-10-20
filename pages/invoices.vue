@@ -2,15 +2,7 @@
   <div class="bg-white px-4 py-4 rounded">
     <div class="d-flex align-center mb-4 justify-between">
       <h2>الفواتير</h2>
-      <!-- <forms-customer
-        v-model="customerFormState"
-        :edit="customerForm"
-        :refresher="loadInvoices"
-      >
-        <v-btn flat color="success" v-bind="props"
-          ><v-icon icon="mdi-plus" />إضافة عميل جديد</v-btn
-        >
-      </forms-customer> -->
+
     </div>
     <div class="d-flex items-center justify-between">
       <v-text-field
@@ -24,6 +16,7 @@
           prepend-icon="mdi-export-variant"
           @click="startExport = true"
           color="info"
+          v-if="isAdmin"
           :loading="exporting"
           :disabled="loading"
           >تصدير البيانات</v-btn
@@ -31,7 +24,7 @@
         <FormsAuthScreen
           @close="() => (startExport = false)"
           @success="handleSuccess"
-          v-if="startExport"
+          v-if="startExport && isAdmin"
           success-text="تم التحقق من الهوية بنجاح... جاري تصدير الفواتير"
           title="برجاء تأكيد هويتك لتتمكن من تصدير الفواتير"
         />
@@ -39,7 +32,7 @@
     </div>
     <hr v-if="filteredInvoices.length > 0" />
     <v-data-table
-      no-data-text="لا يوجد فواتير حتى الأن"
+      no-data-text=" لا يوجد فواتير مسجلة بالمستخدم الحالي حتى الأن"
       :items-length="filteredInvoices.length || 0"
       :hide-default-header="filteredInvoices.length === 0"
       :items-per-page="currentPerPage"
@@ -77,8 +70,17 @@
       <template v-slot:item="data">
         <tr>
           <template v-for="(value, key, i) of data.item">
-            <td v-if="!['created_at_object', 'id', 'invoice'].includes(key)">
+            <td
+              v-if="
+                !['created_at_object', 'id', 'invoice', 'created_by'].includes(
+                  key
+                )
+              "
+            >
               {{ value }}
+            </td>
+            <td v-else-if="['created_by'].includes(key)">
+              {{ formateActiveUserKey(value).name }}
             </td>
           </template>
           <td class="pt-4 pb-4">
@@ -155,7 +157,7 @@
                   </div>
                 </template>
               </v-dialog>
-              <v-dialog persistent max-width="300px">
+              <v-dialog v-if="isAdmin" persistent max-width="300px">
                 <template #activator="{ props }">
                   <v-btn
                     v-tooltip:top="'حذف'"
@@ -289,6 +291,7 @@ const paginateArray = computed(() => {
     .map((invoice) => ({
       id: invoice.id,
       name: invoice.customer_name,
+      created_by: invoice.created_by,
       phone: invoice.customer_phone,
       products_count: invoice.products?.length || 0,
       total: formatePrice(calcTotal(invoice) - discountAmount(invoice)),
@@ -305,7 +308,10 @@ const exporting = ref(false);
 const deleting = ref(false);
 async function loadInvoices() {
   loading.value = true;
-  await invoicesStore.fetchInvoices();
+  await invoicesStore.fetchInvoices({
+    created_by:
+      useCookie("__AU").value === "su" ? undefined : useCookie("__AU").value,
+  });
   loading.value = false;
 }
 function formateHeaderTitle(title) {
@@ -318,6 +324,7 @@ function formateHeaderTitle(title) {
     .join(" ");
   if (text === "Name") return "الأسم";
   else if (text === "Phone") return "الهاتف";
+  else if (text === "Created By") return "منشئ الفاتورة";
   else if (text === "Products Count") return "عدد المنتجات";
   else if (text === "Total") return "الإجمالي";
   else if (text === "Created At") return "تاريخ الإنشاء";
@@ -335,12 +342,11 @@ async function handleSuccess(isSuccess) {
     invoicesStore
       .exportInvoicesToExcel(filteredInvoices.value)
       .then((res) => {
-        console.log("🚀 ~ handleSuccess ~ res:", res)
         authStore.snackBarText = res;
         exporting.value = false;
       })
       .catch((err) => {
-        authStore.snackBarText = err
+        authStore.snackBarText = err;
         exporting.value = false;
         authStore.snackBarText = err;
       });

@@ -228,6 +228,7 @@ async function startPrint(saveOnly) {
     } else {
       const response = await saveDataTo("invoices", {
         ...props.invoiceData,
+        created_by: useCookie("__AU").value || "su"
       });
       props.invoiceData.id = response.id;
     }

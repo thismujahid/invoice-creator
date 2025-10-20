@@ -4,6 +4,7 @@
       <h2>المنتجات</h2>
       <div class="d-flex items-center" style="gap: 10px">
         <FormsProduct
+          :hide-cost="!viewCost && productForm"
           @close="productForm = undefined"
           :refresher="loadProds"
           v-model="productFormState"
@@ -12,6 +13,18 @@
           <v-btn flat color="success" v-bind="props"
             ><v-icon icon="mdi-plus" />إضافة منتج جديد</v-btn
           >
+          <template #cost-input-place>
+            <v-btn
+              flat
+              density="compact"
+              size="small"
+              class="!h-[25px]"
+              color="primary"
+              @click="handleViewCostClick"
+              :prepend-icon="`mdi-eye${viewCost ? '-off-' : '-'}outline`"
+              >{{ viewCost ? "إخفاء القيمة" : "عرض القيمة" }}</v-btn
+            >
+          </template>
         </FormsProduct>
         <v-btn
           flat
@@ -236,6 +249,7 @@
 <script setup>
 definePageMeta({
   title: "المنتجات",
+  middleware: "admin-only",
 });
 const searchText = ref();
 const { formatePrice } = useHelpers();

@@ -3,7 +3,7 @@
     <v-snackbar
       @update:model-value="(v) => (!v ? (authStore.snackBarText = '') : false)"
       location="top end"
-      color="primary"
+      color="success"
       z-index="999999"
       :model-value="authStore.snackBarText ? true : false"
       :timeout="5000"
@@ -12,7 +12,7 @@
     </v-snackbar>
 
     <v-locale-provider rtl v-if="!initFirebase">
-      <FormsAuthScreen @success="(v)=> isAuthed=v" v-if="!isAuthed" />
+      <FormsAuthScreen @success="(v) => (isAuthed = v)" v-if="!isAuthed" />
       <div id="printableArea" class="printable-area invoice-creator-view"></div>
       <div class="invoice-creator-app" v-if="isAuthed">
         <v-app-bar absolute app color="light" flat border>
@@ -25,43 +25,70 @@
             </v-btn>
             منشئ الفواتير | {{ currentPageTitle }}</v-toolbar-title
           >
-          <div v-if="authStore.userInfo" class="px-2 d-flex align-center ga-3">
-            <v-dialog persistent max-width="300px">
+          <div
+            v-if="authStore.userInfo"
+            class="px-2 d-flex align-center ga-3"
+            style="cursor: pointer"
+          >
+            <v-menu offset="12" location="bottom right" v-if="userDetails">
               <template #activator="{ props }">
-                <v-btn
-                  flat
-                  color="error"
-                  class="small-padding"
-                  v-bind="props"
-                  variant="tonal"
-                >
-                  <v-icon icon="mdi-logout" />
-                  إغلاق التطبيق
-                </v-btn>
-              </template>
-              <template #default="{ isActive }">
-                <div class="bg-white py-4 px-4 rounded">
-                  <h4>هل أنت متأكد</h4>
-                  <p class="mb-4">أنت علي وشك تسجيل الخروج وإغلاق التطبيق</p>
-                  <v-btn
-                    @click="logout"
-                    :loading="loading"
-                    block
-                    color="error"
-                    flat
-                    >تأكيد الإغلاق</v-btn
+                <div v-bind="props" class="d-flex align-center ga-1">
+                  <v-avatar
+                    :size="$vuetify.display.smAndDown ? '30' : '40'"
+                    color="success"
+                    >{{ userDetails.avatar_text }}</v-avatar
                   >
-                  <v-btn
-                    block
-                    @click="isActive.value = false"
-                    color="black"
-                    variant="plain"
-                    flat
-                    >إلغاء</v-btn
-                  >
+                  <div style="line-height: 1">
+                    <div>
+                      {{ userDetails.name }}
+                    </div>
+                    <small>
+                      {{ userDetails.position }}
+                    </small>
+                  </div>
                 </div>
               </template>
-            </v-dialog>
+              <div class="bg-white">
+                <v-dialog max-width="300px">
+                  <template #activator="{ props }">
+                    <v-btn
+                      flat
+                      color="error"
+                      v-bind="props"
+                      variant="tonal"
+                      density="compact"
+                    >
+                      <v-icon icon="mdi-logout" size="25" />
+                      تسجيل الخروج
+                    </v-btn>
+                  </template>
+                  <template #default="{ isActive }">
+                    <div class="bg-white py-4 px-4 rounded">
+                      <h4>هل أنت متأكد</h4>
+                      <p class="mb-4">
+                        أنت علي وشك تسجيل الخروج وإغلاق التطبيق
+                      </p>
+                      <v-btn
+                        @click="logout"
+                        :loading="loading"
+                        block
+                        color="error"
+                        flat
+                        >تأكيد الإغلاق</v-btn
+                      >
+                      <v-btn
+                        block
+                        @click="isActive.value = false"
+                        color="black"
+                        variant="plain"
+                        flat
+                        >إلغاء</v-btn
+                      >
+                    </div>
+                  </template>
+                </v-dialog>
+              </div>
+            </v-menu>
           </div>
         </v-app-bar>
         <v-navigation-drawer app mobile temporary v-model="sideMenu">
@@ -72,6 +99,7 @@
             <v-list-item
               color="success"
               to="/products"
+              v-if="isAdmin"
               prepend-icon="mdi-grid-large"
             >
               <v-list-item-title>المنتجات</v-list-item-title>
@@ -120,7 +148,7 @@
       جاري التحميل...
       <v-progress-circular indeterminate size="20" width="2" />
       <div v-show="false">
-        <NuxtPage  />
+        <NuxtPage />
       </div>
     </div>
   </v-app>
@@ -142,17 +170,19 @@ const isAuthed = ref(auth.currentUser ? true : false);
 const route = useRoute();
 auth.onAuthStateChanged(
   (user) => {
-    isAuthed.value = user ? true : false;
-    initFirebase.value = false;
-    if (user) {
-      authStore.userData = {
-        name: user.displayName,
-        email: user.email,
-        phone: user.phone,
-        avatar: user.photoURL,
-        id: user.uid,
-      };
-    }
+    setTimeout(() => {
+      isAuthed.value = user ? true : false;
+      initFirebase.value = false;
+      if (user) {
+        authStore.userData = {
+          name: user.displayName,
+          email: user.email,
+          phone: user.phone,
+          avatar: user.photoURL,
+          id: user.uid,
+        };
+      }
+    }, 100);
   },
   (err) => {
     initFirebase.value = false;
@@ -207,7 +237,7 @@ body {
   padding-top: 0 !important;
 }
 .v-btn--flat {
-  height: 44px !important;
+  height: 35px !important;
   padding-inline: 25px !important;
 }
 .printable-area {
@@ -255,7 +285,7 @@ body {
   .invoice-creator-app {
     display: none;
   }
-  .v-data-table{
+  .v-data-table {
     max-height: unset !important;
   }
 }

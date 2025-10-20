@@ -1,7 +1,12 @@
 <template>
-  <v-dialog :persistent="title?false:true" @update:model-value="emit('close')" max-width="400px" :model-value="true">
+  <v-dialog
+    :persistent="title ? false : true"
+    @update:model-value="emit('close')"
+    max-width="400px"
+    :model-value="true"
+  >
     <div class="bg-white rounded-lg pb-4 pt-4 px-4 text-center">
-      <h4>{{title||'أدخل كلمة المرور لتسجيل الدخول'}}</h4>
+      <h4>{{ title || "أدخل كلمة المرور لتسجيل الدخول" }}</h4>
       <p v-if="title">أدخل كلمة المرور</p>
       <v-otp-input
         type="password"
@@ -40,17 +45,46 @@ const loading = ref(false);
 const authStore = useAuth();
 
 const props = defineProps(["title", "successText"]);
-const emit = defineEmits(["success","close"]);
-
+const emit = defineEmits(["success", "close"]);
+const activeUser = useCookie("__AU");
 async function login() {
   loading.value = true;
   try {
     await signInWithEmailAndPassword(
       auth,
       "mohamed.mojahead@gmail.com",
-      newPass.value
+      ["789885", "156354", "755955", "855127"].includes(newPass.value)
+        ? "789885"
+        : "a6sd45as64das6d4as6d4"
     );
-    authStore.snackBarText = props.successText || "تم تسجيل الدخول بنجاح";
+    switch (newPass.value) {
+      case "789885":
+        useCookie("__AU").value = "su";
+        authStore.snackBarText =
+          props.successText || "تم تسجيل الدخول كمسؤل بنجاح";
+        break;
+      case "156354":
+        useCookie("__AU").value = "c_tarek";
+        authStore.snackBarText =
+          props.successText || "تم تسجيل الدخول بنجاح... أهلا بيك ياريكو 😃";
+        break;
+
+      case "755955":
+        useCookie("__AU").value = "c_saleh";
+        authStore.snackBarText =
+          props.successText || "تم تسجيل الدخول بنجاح... أهلا بيك ياصالح 😃";
+        break;
+
+      case "855127":
+        useCookie("__AU").value = "c_abanob";
+        authStore.snackBarText =
+          props.successText || "تم تسجيل الدخول بنجاح... أهلا بيك أبانوب 😃";
+        break;
+
+      default:
+        useCookie("__AU").value = undefined;
+        break;
+    }
     emit("success", true);
     emit("close");
   } catch (e) {

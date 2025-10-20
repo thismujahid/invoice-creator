@@ -1,5 +1,10 @@
 <template>
-  <v-dialog @update:model-value="v=>v?false:emit('close')" persistent max-width="350px" v-model="productFormState">
+  <v-dialog
+    @update:model-value="(v) => (v ? false : emit('close'))"
+    persistent
+    max-width="350px"
+    v-model="productFormState"
+  >
     <template #activator="{ props }">
       <span v-bind="props">
         <slot></slot>
@@ -27,9 +32,21 @@
             color="primary"
             label="سعر التكلفة"
             :disabled="saving"
+            v-if="!hideCost"
             type="number"
             hide-details="auto"
           ></v-text-field>
+          <v-alert
+          v-if="hideCost"
+            class="mb-3 "
+            color="warning"
+            variant="tonal"
+            density="compact"
+          >
+            <small>
+              تم إخفاء حقل سعر التكلفة، إذا كنت تريد تعديل سعر التكلفة قم بعرض القيمة أولاً <br/><slot name="cost-input-place"></slot>
+            </small>
+          </v-alert>
           <v-text-field
             v-model="productForm.price"
             type="number"
@@ -70,8 +87,8 @@
 </template>
 
 <script setup>
-const props = defineProps(["edit", "refresher"]);
-const emit = defineEmits(["done",'close']);
+const props = defineProps(["edit", "refresher", "hideCost"]);
+const emit = defineEmits(["done", "close"]);
 const productFormState = ref(false);
 const productsStore = useProductsStore();
 const auth = useAuth();

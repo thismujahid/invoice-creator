@@ -1,0 +1,41 @@
+export const userDetails = computed(() => {
+  const currentUser = useCookie("__AU");
+  return formateActiveUserKey(currentUser.value);
+});
+
+export const isAdmin = computed(() => useCookie("__AU").value === "su");
+
+export function formateActiveUserKey(key) {
+  switch (key) {
+    case "su":
+      return {
+        avatar_text: "م ع",
+        name: "مسؤل",
+        position: "صلاحية مطلقة",
+      };
+    case "c_tarek":
+      return {
+        avatar_text: "ط أ",
+        name: "طارق أبو قاسية",
+        position: "كاشير خارجي",
+      };
+    case "c_saleh":
+      return {
+        avatar_text: "ص إ",
+        name: "صالح إبراهيم",
+        position: "كاشير داخلي",
+      };
+    case "c_abanob":
+      return {
+        avatar_text: "أ",
+        name: "أبانوب",
+        position: "كاشير",
+      };
+    default:
+      return {
+        avatar_text: "م ع",
+        name: "مسؤل",
+        position: "صلاحية مطلقة",
+      };
+  }
+}

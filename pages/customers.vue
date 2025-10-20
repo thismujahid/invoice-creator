@@ -73,7 +73,7 @@
                 v-tooltip:top="'تعديل'"
                 ><v-icon size="30" icon="mdi-pencil"
               /></v-btn>
-              <v-dialog persistent max-width="300px">
+              <v-dialog v-if="isAdmin" persistent max-width="300px">
                 <template #activator="{ props }">
                   <v-btn
                     v-tooltip:top="'حذف'"

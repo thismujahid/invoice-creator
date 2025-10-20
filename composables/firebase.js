@@ -17,27 +17,39 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 async function readFrom(module, filters = {}) {
-    try {
-        const productsCollection = collection(db, module);
-        let q = productsCollection;
-        Object.entries(filters).forEach(([key, value]) => {
-            if (key === "created_at" && value) {
-                const timestamp = Timestamp.fromDate(new Date(value));
-                q = query(q, where(key, "==", timestamp));
-            } else if (value) {
-                q = query(q,
-                    where(key, ">=", value),
-                    where(key, "<=", value + '\uf8ff'));
-            }
-        });
-        const snapshot = await getDocs(q);
-        return snapshot.docs.map((doc) => {
-            return ({ id: doc.id, ...doc.data() })
-        });
-    } catch (e) {
-        console.error(e);
-        return [];
-    }
+  try {
+    const productsCollection = collection(db, module);
+    let q = productsCollection;
+
+    // استخدم مصفوفة لتجميع شروط where
+    const whereClauses = [];
+
+    Object.entries(filters).forEach(([key, value]) => {
+      if (!value) return;
+
+      if (key === "created_at") {
+        // فلترة بالتاريخ
+        const timestamp = Timestamp.fromDate(new Date(value));
+        whereClauses.push(where(key, "==", timestamp));
+      } else if (key === "created_by") {
+        // فلترة باسم المستخدم
+        whereClauses.push(where(key, "==", value));
+      } else {
+        // بحث جزئي (fuzzy) في الحقول النصية
+        whereClauses.push(where(key, ">=", value));
+        whereClauses.push(where(key, "<=", value + "\uf8ff"));
+      }
+    });
+
+    // دمج كل شروط where في query واحدة
+    q = query(productsCollection, ...whereClauses);
+
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  } catch (e) {
+    console.error(e);
+    return [];
+  }
 }
 async function saveDataTo(module, data) {
     try {
