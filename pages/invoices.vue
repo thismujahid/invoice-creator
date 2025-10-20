@@ -72,15 +72,39 @@
         />
       </div>
     </div>
-    <v-alert color="success" variant="tonal" v-if="isAdmin" class="mb-4 d-flex align-center">
+    <v-alert
+      color="success"
+      variant="tonal"
+      v-if="isAdmin"
+      class="mb-4 d-flex align-center"
+    >
       إجمالي مبيعات الفواتير المعروضة:
-      <strong v-if="!hideTotal" >
-        {{ formatePrice(filteredInvoices.reduce((total, inv)=>total+(calcTotal(inv) - discountAmount(inv)), 0)) }} ج.م
+      <strong v-if="!hideTotal">
+        {{
+          formatePrice(
+            filteredInvoices.reduce(
+              (total, inv) => total + (calcTotal(inv) - discountAmount(inv)),
+              0
+            )
+          )
+        }}
+        ج.م
       </strong>
-      <strong v-else>
-        *********** 
-      </strong>
-      <v-icon @click="hideTotal=!hideTotal" :icon="hideTotal?'mdi-eye-off':'mdi-eye'" />
+      <strong v-else> *********** </strong>
+      <v-icon
+        @click="!hideTotal ? (hideTotal = true) : (startViewTotal = true)"
+        :icon="hideTotal ? 'mdi-eye-off' : 'mdi-eye'"
+      />
+      <FormsAuthScreen
+        @close="() => (startViewTotal = false)"
+        @success="
+          (val) =>
+            val ? ((hideTotal = !hideTotal), (startViewTotal = false)) : false
+        "
+        v-if="startViewTotal && isAdmin"
+        success-text="تم التحقق من الهوية بنجاح... تم عرض إجمالي مبيعات الفواتير المعروضة بنجاح"
+        title="برجاء تأكيد هويتك لتتمكن من عرض إجمالي مبيعات الفواتير المعروضة"
+      />
     </v-alert>
     <hr v-if="filteredInvoices.length > 0" />
     <v-data-table
@@ -300,7 +324,7 @@ const dateMenu = ref(false);
 const startExport = ref(false);
 const selectedDate = ref(null);
 const displayDate = ref("");
-
+const startViewTotal = ref(false);
 function applyDate() {
   dateMenu.value = false;
   displayDate.value = selectedDate.value
