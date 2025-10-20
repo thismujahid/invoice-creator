@@ -54,11 +54,9 @@ async function readFrom(module, filters = {}) {
         q = query(q, where(key, "==", value));
       }
     }
-    console.log("🚀 ~ readFrom ~ q:", q);
 
     const snapshot = await getDocs(q);
     const data = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-    console.log("Found docs:", data.length);
     return data;
   } catch (error) {
     console.error("Error reading from Firestore:", error);
