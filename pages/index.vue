@@ -28,7 +28,7 @@
             @close="() => (startView = false)"
             @success="(value) => (viewCost = value)"
             v-if="startView && isAdmin"
-            success-text="تم التحقق من الهوية بنجاح... تم عرض القيمة بنجاح"
+            success-text="تم عرض القيمة"
             title="برجاء تأكيد هويتك لتتمكن من عرض القيمة"
           />
         </div>
