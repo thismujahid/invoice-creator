@@ -18,6 +18,7 @@
           </v-btn>
           <v-btn
             flat
+            v-if="isAdmin"
             color="success"
             @click="handleViewCostClick"
             :prepend-icon="`mdi-eye${viewCost ? '-off-' : '-'}outline`"
@@ -26,7 +27,7 @@
           <FormsAuthScreen
             @close="() => (startView = false)"
             @success="(value) => (viewCost = value)"
-            v-if="startView"
+            v-if="startView && isAdmin"
             success-text="تم التحقق من الهوية بنجاح... تم عرض القيمة بنجاح"
             title="برجاء تأكيد هويتك لتتمكن من عرض القيمة"
           />

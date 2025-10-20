@@ -13,6 +13,7 @@
         ></v-text-field>
         <v-autocomplete
           item-title="label"
+          v-if="isAdmin"
           item-value="value"
           min-width="250"
           label="منشئ الفواتير"
