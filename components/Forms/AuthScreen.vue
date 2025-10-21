@@ -53,7 +53,9 @@ async function login() {
     await signInWithEmailAndPassword(
       auth,
       "mohamed.mojahead@gmail.com",
-      ["789885", "156354", "755955", "855127"].includes(newPass.value)
+      props.title
+        ? newPass.value
+        : ["789885", "156354", "755955", "855127"].includes(newPass.value)
         ? "789885"
         : "a6sd45as64das6d4as6d4"
     );

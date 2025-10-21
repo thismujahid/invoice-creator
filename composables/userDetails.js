@@ -1,6 +1,3 @@
-export const currentUserKey = useCookie("__AU", {
-  maxAge: 60 * 60 * 24 * 30
-});
 export const userDetails = computed(() => {
   const useAuthStore = useAuth()
   return formateActiveUserKey(useAuthStore.currentUserKey);
