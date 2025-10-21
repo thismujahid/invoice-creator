@@ -1,4 +1,4 @@
-import * as XLSX from "xlsx";
+import * as XLSX from "xlsx/dist/xlsx.full.min.js";
 
 export const useInvoicesStore = defineStore("invoices", () => {
   const { readFrom, saveDataTo, updateItem, deleteItem } = useFirebase();
