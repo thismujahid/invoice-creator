@@ -34,20 +34,6 @@
             <v-col cols="12" lg="4">
               <v-autocomplete
                 hide-details="auto"
-                variant="outlined"
-                item-title="label"
-                class="mb-0"
-                item-value="value"
-                :items="usersList.slice(1)"
-                label="منشئ الفاتورة"
-                placeholder="منشئ الفاتورة"
-                v-model="invoiceData.created_by"
-              >
-              </v-autocomplete>
-            </v-col>
-            <v-col cols="12" lg="4">
-              <v-autocomplete
-                hide-details="auto"
                 class="mb-0"
                 item-title="name"
                 variant="outlined"
@@ -134,6 +120,20 @@
                 type="number"
               >
               </v-text-field>
+            </v-col>
+            <v-col cols="12" lg="4">
+              <v-autocomplete
+                hide-details="auto"
+                variant="outlined"
+                item-title="label"
+                class="mb-0"
+                item-value="value"
+                :items="usersList.slice(1)"
+                label="منشئ الفاتورة"
+                placeholder="منشئ الفاتورة"
+                v-model="invoiceData.created_by"
+              >
+              </v-autocomplete>
             </v-col>
             <v-col cols="12" lg="2">
               <v-text-field
@@ -281,8 +281,8 @@
                   return-object
                   :items="products.list"
                   :loading="loadingProds"
-                       hide-details="auto"
-                    class="mb-0"
+                  hide-details="auto"
+                  class="mb-0"
                   :model-value="
                     form.product_id
                       ? {
@@ -326,8 +326,8 @@
                 <v-text-field
                   variant="outlined"
                   v-model="form.option"
-                       hide-details="auto"
-                    class="mb-0"
+                  hide-details="auto"
+                  class="mb-0"
                   label="خيار معين"
                   placeholder="خيار معين"
                 >
@@ -339,8 +339,8 @@
                   v-model="form.product_quantity"
                   label="كمية المنتج"
                   placeholder="كمية المنتج"
-                       hide-details="auto"
-                    class="mb-0"
+                  hide-details="auto"
+                  class="mb-0"
                 >
                 </v-text-field>
               </v-col>
@@ -351,8 +351,8 @@
                   v-model="form.product_price"
                   label="سعر المنتج"
                   placeholder="سعر المنتج"
-                       hide-details="auto"
-                    class="mb-0"
+                  hide-details="auto"
+                  class="mb-0"
                 >
                   <template #append-inner>
                     <div
@@ -371,8 +371,8 @@
                   :model-value="formatePrice(calcTotalOfForm(form))"
                   label="الإجمالي"
                   placeholder="الإجمالي"
-                       hide-details="auto"
-                    class="mb-0"
+                  hide-details="auto"
+                  class="mb-0"
                 >
                 </v-text-field>
               </v-col>
@@ -381,8 +381,8 @@
                   variant="outlined"
                   :model-value="index"
                   label="الترتيب"
-                       hide-details="auto"
-                    class="mb-0"
+                  hide-details="auto"
+                  class="mb-0"
                   placeholder="الترتيب"
                   @update:model-value="(v) => (form.order = v)"
                   @keydown.enter="
