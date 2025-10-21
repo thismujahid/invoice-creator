@@ -46,7 +46,7 @@ const authStore = useAuth();
 
 const props = defineProps(["title", "successText"]);
 const emit = defineEmits(["success", "close"]);
-const activeUser = useCookie("__AU");
+
 async function login() {
   loading.value = true;
   try {
@@ -59,30 +59,30 @@ async function login() {
     );
     switch (newPass.value) {
       case "789885":
-        useCookie("__AU").value = "su";
+        authStore.setUserKey("su");
         authStore.snackBarText =
           props.successText || "تم تسجيل الدخول كمسؤل بنجاح";
         break;
       case "156354":
-        useCookie("__AU").value = "c_tarek";
+        authStore.setUserKey("c_tarek");
         authStore.snackBarText =
           props.successText || "تم تسجيل الدخول بنجاح... أهلا بيك ياريكو 😃";
         break;
 
       case "755955":
-        useCookie("__AU").value = "c_saleh";
+        authStore.setUserKey("c_saleh");
         authStore.snackBarText =
           props.successText || "تم تسجيل الدخول بنجاح... أهلا بيك ياصالح 😃";
         break;
 
       case "855127":
-        useCookie("__AU").value = "c_abanob";
+        authStore.setUserKey("c_abanob");
         authStore.snackBarText =
           props.successText || "تم تسجيل الدخول بنجاح... أهلا بيك أبانوب 😃";
         break;
 
       default:
-        useCookie("__AU").value = undefined;
+        authStore.setUserKey(undefined);
         break;
     }
     emit("success", true);

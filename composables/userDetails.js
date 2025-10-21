@@ -1,6 +1,9 @@
+export const currentUserKey = useCookie("__AU", {
+  maxAge: 60 * 60 * 24 * 30
+});
 export const userDetails = computed(() => {
-  const currentUser = useCookie("__AU");
-  return formateActiveUserKey(currentUser.value);
+  const useAuthStore = useAuth()
+  return formateActiveUserKey(useAuthStore.currentUserKey);
 });
 
 export const isAdmin = computed(() => useCookie("__AU").value === "su");

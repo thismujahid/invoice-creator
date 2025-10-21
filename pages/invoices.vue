@@ -319,7 +319,7 @@ definePageMeta({
 const hideTotal = ref(true);
 const authStore = useAuth();
 const activeUser = ref(
-  useCookie("__AU").value === "su" ? undefined : useCookie("__AU").value
+  authStore.currentUserKey === "su" ? undefined : authStore.currentUserKey
 );
 const dateMenu = ref(false);
 const startExport = ref(false);

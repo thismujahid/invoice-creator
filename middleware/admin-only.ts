@@ -1,6 +1,7 @@
 // middleware/admin.ts
 export default defineNuxtRouteMiddleware(() => {
-  if (useCookie("__AU").value !== "su") {
+  const au = useCookie("__AU")
+  if (au.value !== "su") {
     return navigateTo("/");
   }
 });

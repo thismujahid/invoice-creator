@@ -2,13 +2,10 @@
   <div class="invoice-creator-view">
     <div class="app">
       <div class="form">
-        <div
-          class="invoice-actions d-flex mb-4 justify-end ga-4"
-        >
+        <div class="invoice-actions mb-2 d-flex justify-end ga-4">
           <v-btn
             color="success"
-          v-if="invoiceData.id"
-
+            v-if="invoiceData.id"
             :loading="updating"
             prepend-icon="mdi-update"
             flat
@@ -36,6 +33,22 @@
           <v-row>
             <v-col cols="12" lg="4">
               <v-autocomplete
+                hide-details="auto"
+                variant="outlined"
+                item-title="label"
+                class="mb-0"
+                item-value="value"
+                :items="usersList.slice(1)"
+                label="منشئ الفاتورة"
+                placeholder="منشئ الفاتورة"
+                v-model="invoiceData.created_by"
+              >
+              </v-autocomplete>
+            </v-col>
+            <v-col cols="12" lg="4">
+              <v-autocomplete
+                hide-details="auto"
+                class="mb-0"
                 item-title="name"
                 variant="outlined"
                 return-object
@@ -77,6 +90,8 @@
             <v-col cols="12" lg="4">
               <v-text-field
                 variant="outlined"
+                hide-details="auto"
+                class="mb-0"
                 v-model="invoiceData.customer_phone"
                 label="رقم هاتف العميل"
                 placeholder="رقم هاتف العميل"
@@ -90,6 +105,8 @@
                 v-model="invoiceData.debt"
                 label="القديم"
                 placeholder="القديم"
+                hide-details="auto"
+                class="mb-0"
                 type="number"
               >
               </v-text-field>
@@ -99,6 +116,8 @@
                 variant="outlined"
                 v-model="invoiceData.amount_of_mahros"
                 label="محروس"
+                hide-details="auto"
+                class="mb-0"
                 placeholder="محروس"
                 type="number"
               >
@@ -109,25 +128,31 @@
                 variant="outlined"
                 v-model="invoiceData.amount_of_animal_feeds"
                 label="العلف"
+                hide-details="auto"
+                class="mb-0"
                 placeholder="العلف"
                 type="number"
               >
               </v-text-field>
             </v-col>
-            <v-col cols="12" lg="4">
+            <v-col cols="12" lg="2">
               <v-text-field
                 variant="outlined"
                 v-model="invoiceData.delivery_price"
                 label="التوصيل"
                 placeholder="التوصيل"
                 type="number"
+                hide-details="auto"
+                class="mb-0"
               >
               </v-text-field>
             </v-col>
-            <v-col cols="12" lg="4">
+            <v-col cols="12" lg="3">
               <v-text-field
                 variant="outlined"
                 v-model="invoiceData.discount"
+                hide-details="auto"
+                class="mb-0"
                 :label="`الخصم (${
                   invoiceData.discount_percentage ? 'نسبة مئوية' : 'مبلغ ثابت'
                 })`"
@@ -163,6 +188,8 @@
               <v-text-field
                 variant="outlined"
                 v-model="invoiceData.discount_for"
+                hide-details="auto"
+                class="mb-0"
                 label="الخصم متعلق بـ"
                 placeholder="الخصم متعلق بـ"
               >
@@ -176,6 +203,8 @@
                     readonly
                     :model-value="formatDate(invoiceData.date)"
                     variant="outlined"
+                    hide-details="auto"
+                    class="mb-0"
                     label="التاريخ"
                   >
                     <template #append-inner>
@@ -198,7 +227,7 @@
                 ></v-date-picker>
               </v-menu>
             </v-col>
-            <v-col cols="12" lg="3">
+            <v-col cols="12" lg="2">
               <v-menu :close-on-content-click="false">
                 <template #activator="{ props }">
                   <v-text-field
@@ -207,6 +236,8 @@
                     :model-value="formatTime12Hour(invoiceData.time)"
                     variant="outlined"
                     label="الوقت"
+                    hide-details="auto"
+                    class="mb-0"
                   >
                     <template #append-inner>
                       <v-btn
@@ -250,6 +281,8 @@
                   return-object
                   :items="products.list"
                   :loading="loadingProds"
+                       hide-details="auto"
+                    class="mb-0"
                   :model-value="
                     form.product_id
                       ? {
@@ -293,6 +326,8 @@
                 <v-text-field
                   variant="outlined"
                   v-model="form.option"
+                       hide-details="auto"
+                    class="mb-0"
                   label="خيار معين"
                   placeholder="خيار معين"
                 >
@@ -304,6 +339,8 @@
                   v-model="form.product_quantity"
                   label="كمية المنتج"
                   placeholder="كمية المنتج"
+                       hide-details="auto"
+                    class="mb-0"
                 >
                 </v-text-field>
               </v-col>
@@ -314,6 +351,8 @@
                   v-model="form.product_price"
                   label="سعر المنتج"
                   placeholder="سعر المنتج"
+                       hide-details="auto"
+                    class="mb-0"
                 >
                   <template #append-inner>
                     <div
@@ -332,6 +371,8 @@
                   :model-value="formatePrice(calcTotalOfForm(form))"
                   label="الإجمالي"
                   placeholder="الإجمالي"
+                       hide-details="auto"
+                    class="mb-0"
                 >
                 </v-text-field>
               </v-col>
@@ -340,6 +381,8 @@
                   variant="outlined"
                   :model-value="index"
                   label="الترتيب"
+                       hide-details="auto"
+                    class="mb-0"
                   placeholder="الترتيب"
                   @update:model-value="(v) => (form.order = v)"
                   @keydown.enter="
@@ -375,6 +418,7 @@
       <Invoice
         v-if="!loadingProds"
         @reset="resetInvoice"
+        :isForAdmin="isForAdmin"
         :invoice-data="invoiceData"
       />
       <div v-else class="my-3 text-center">
@@ -392,12 +436,14 @@ const products = useProductsStore();
 const { onDocChange } = useFirebase();
 const invoices = useInvoicesStore();
 const customers = useCustomersStore();
+const authStore = useAuth();
+const isForAdmin = ref(false);
 const updating = ref(false);
 const loadingCustomers = ref(false);
 const loadingProds = ref(false);
 const containerRef = ref();
 const startView = ref(false);
-const viewCost = ref(false)
+const viewCost = ref(false);
 const invoiceData = ref({
   customer_name: null,
   customer_phone: null,
@@ -408,6 +454,7 @@ const invoiceData = ref({
   discount_for: null,
   amount_of_animal_feeds: null,
   amount_of_mahros: null,
+  created_by: authStore.currentUserKey || "su",
   products: [
     {
       product_name: "",

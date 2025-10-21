@@ -143,7 +143,7 @@
 </template>
 
 <script setup>
-const props = defineProps(["invoiceData", "viewMode"]);
+const props = defineProps(["invoiceData", "viewMode","isForAdmin"]);
 const {
   formatDate,
   calcTotal,
@@ -214,6 +214,8 @@ async function startPrint(saveOnly) {
   }
   printing.value = saveOnly ? false : true;
   delete props.invoiceData.order;
+  const useAuthStore = useAuth()
+
   if (!props.viewMode) {
     snackBarText.value = {
       loading: true,
@@ -228,7 +230,6 @@ async function startPrint(saveOnly) {
     } else {
       const response = await saveDataTo("invoices", {
         ...props.invoiceData,
-        created_by: useCookie("__AU").value || "su"
       });
       props.invoiceData.id = response.id;
     }
