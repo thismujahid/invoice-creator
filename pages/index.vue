@@ -1,5 +1,5 @@
 <template>
-  <div class="invoice-creator-view">
+  <div class="invoice-creator-view" id="editor-area">
     <div class="app">
       <div class="form">
         <div class="invoice-actions mb-2 d-flex justify-end ga-4">
@@ -97,6 +97,20 @@
               >
               </v-text-field>
             </v-col>
+                        <v-col cols="12" lg="4">
+              <v-autocomplete
+                hide-details="auto"
+                variant="outlined"
+                item-title="label"
+                class="mb-0"
+                item-value="value"
+                :items="usersList.slice(1)"
+                label="منشئ الفاتورة"
+                placeholder="منشئ الفاتورة"
+                v-model="invoiceData.created_by"
+              >
+              </v-autocomplete>
+            </v-col>
             <v-col cols="12" lg="4">
               <v-text-field
                 variant="outlined"
@@ -121,20 +135,7 @@
               >
               </v-text-field>
             </v-col>
-            <v-col cols="12" lg="4">
-              <v-autocomplete
-                hide-details="auto"
-                variant="outlined"
-                item-title="label"
-                class="mb-0"
-                item-value="value"
-                :items="usersList.slice(1)"
-                label="منشئ الفاتورة"
-                placeholder="منشئ الفاتورة"
-                v-model="invoiceData.created_by"
-              >
-              </v-autocomplete>
-            </v-col>
+
             <v-col cols="12" lg="2">
               <v-text-field
                 variant="outlined"
@@ -189,9 +190,9 @@
                 variant="outlined"
                 v-model="invoiceData.discount_for"
                 hide-details="auto"
-                class="mb-0"
                 label="الخصم متعلق بـ"
                 placeholder="الخصم متعلق بـ"
+                
               >
               </v-text-field>
             </v-col>
@@ -330,7 +331,8 @@
                   class="mb-0"
                   label="خيار معين"
                   placeholder="خيار معين"
-                >
+                  :input-attrs="`prod-option-${index}`"
+                  >
                 </v-text-field>
               </v-col>
               <v-col cols="12" lg="1">

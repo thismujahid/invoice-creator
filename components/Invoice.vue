@@ -40,6 +40,11 @@
         hide-default-footer
         :style="viewMode ? '' : `max-height: 60vh; overflow: auto;`"
       >
+      <template #item.البيان="data">
+        <span :id="`prod-option-${data.index}`">
+          {{ data.value }}
+        </span>
+      </template>
       </v-data-table>
       <div class="invoice-footer">
         <div class="footer">
