@@ -81,15 +81,16 @@ const exportInvoicesToExcel = async (invoices = []) => {
         التاريخ: inv.date
           ? new Date(inv.date.seconds * 1000).toLocaleString()
           : "",
-        "صافي الفاتورة (المنتجات فقط)": netTotal,
-        "قيمة الخصم": discountValue,
-        "إجمالي الفاتورة (بعد الخصم + التوصيل)": totalAfterDiscount,
-        "إجمالي التكلفة": totalCost,
-        "الربح (من المنتجات فقط)": profit,
-        الديون: inv.debt || "",
-        "سعر التوصيل": inv.delivery_price || "",
-        الخصم: `${inv.discount || 0}${inv.discount_percentage ? "%" : ""}`,
-        "نوع الخصم": inv.discount_percentage ? "نسبة مئوية" : "مبلغ ثابت",
+          "حساب محروس": inv.amount_of_mahros||0,
+          "حساب العلف": inv.amount_of_animal_feeds||0,
+          القديم: inv.debt || 0,
+          "سعر التوصيل": inv.delivery_price || 0,
+          الخصم: `${inv.discount || 0}${inv.discount_percentage ? "%" : ""}`,
+          "نوع الخصم": inv.discount_percentage ? "نسبة مئوية" : "مبلغ ثابت",
+        "صافي الفاتورة": netTotal||0,
+        "إجمالي التكلفة": totalCost||0,
+        "إجمالي الفاتورة": totalAfterDiscount+Number(inv.debt||0)+Number(inv.amount_of_mahros||0)+Number(inv.amount_of_animal_feeds||0),
+        "الربح": profit||0,
         المنتجات: productsList,
       };
     });
@@ -103,10 +104,10 @@ const exportInvoicesToExcel = async (invoices = []) => {
 
     // الأعمدة اللي هنحط فيها دوال الجمع
     const sumColumns = [
-      "صافي الفاتورة (المنتجات فقط)",
-      "إجمالي الفاتورة (بعد الخصم + التوصيل)",
+      "صافي الفاتورة",
+      "إجمالي الفاتورة",
       "إجمالي التكلفة",
-      "الربح (من المنتجات فقط)",
+      "الربح",
     ];
 
     // نحصل على خريطة الأعمدة بالأحرف (A, B, C...)
