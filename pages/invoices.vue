@@ -428,7 +428,12 @@ function formateHeaderTitle(title) {
 }
 async function deleteCustomer(id) {
   deleting.value = true;
-  await invoicesStore.deleteInvoice(id);
+  try {
+    await invoicesStore.deleteInvoice(id);
+  } catch (err) {
+    authStore.snackBarColor = "error";
+    authStore.snackBarText = err.toString();
+  }
   await loadInvoices();
   deleting.value = false;
 }
@@ -439,12 +444,13 @@ async function handleSuccess(isSuccess) {
       .exportInvoicesToExcel(filteredInvoices.value)
       .then((res) => {
         authStore.snackBarText = res;
+        authStore.snackBarColor = "success";
         exporting.value = false;
       })
       .catch((err) => {
         authStore.snackBarText = err;
         exporting.value = false;
-        authStore.snackBarText = err;
+        authStore.snackBarColor = "error";
       });
   }
 }

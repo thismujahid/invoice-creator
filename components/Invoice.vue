@@ -219,7 +219,6 @@ async function startPrint(saveOnly) {
   }
   printing.value = saveOnly ? false : true;
   delete props.invoiceData.order;
-  const useAuthStore = useAuth()
 
   if (!props.viewMode) {
     snackBarText.value = {

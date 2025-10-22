@@ -8,6 +8,26 @@
     <div class="bg-white rounded-lg pb-4 pt-4 px-4 text-center">
       <h4>{{ title || "أدخل كلمة المرور لتسجيل الدخول" }}</h4>
       <p v-if="title">أدخل كلمة المرور</p>
+      <v-autocomplete
+      v-if="isInLogin"
+        item-value="email"
+        v-model="account"
+        label="حدد المستخدم"
+        variant="outlined"
+        class="mt-4"
+        hide-details
+        item-title="title"
+        :items="[
+          {
+            title: 'المسؤل',
+            email: 'mohamed.mojahead@gmail.com',
+          },
+          {
+            title: 'طارق أبو قاسية',
+            email: 'imsalehjad@gmail.com',
+          },
+        ]"
+      ></v-autocomplete>
       <v-otp-input
         type="password"
         pattern="[0-9]*"
@@ -43,8 +63,8 @@ const { auth, signInWithEmailAndPassword } = useFirebase();
 const newPass = ref();
 const loading = ref(false);
 const authStore = useAuth();
-
-const props = defineProps(["title", "successText"]);
+const account = ref("mohamed.mojahead@gmail.com");
+const props = defineProps(["title", "successText","isInLogin"]);
 const emit = defineEmits(["success", "close"]);
 
 async function login() {
@@ -52,37 +72,21 @@ async function login() {
   try {
     await signInWithEmailAndPassword(
       auth,
-      "mohamed.mojahead@gmail.com",
-      props.title
-        ? newPass.value
-        : ["789885", "156354", "755955", "855127"].includes(newPass.value)
-        ? "789885"
-        : "a6sd45as64das6d4as6d4"
+      props.isInLogin?account.value:"mohamed.mojahead@gmail.com",
+      newPass.value
     );
-    switch (newPass.value) {
-      case "789885":
+    authStore.snackBarColor = "success";
+    switch (account.value) {
+      case "mohamed.mojahead@gmail.com":
         authStore.setUserKey("su");
         authStore.snackBarText =
           props.successText || "تم تسجيل الدخول كمسؤل بنجاح";
         break;
-      case "156354":
+      case "imsalehjad@gmail.com":
         authStore.setUserKey("c_tarek");
         authStore.snackBarText =
           props.successText || "تم تسجيل الدخول بنجاح... أهلا بيك ياريكو 😃";
         break;
-
-      case "755955":
-        authStore.setUserKey("c_saleh");
-        authStore.snackBarText =
-          props.successText || "تم تسجيل الدخول بنجاح... أهلا بيك ياصالح 😃";
-        break;
-
-      case "855127":
-        authStore.setUserKey("c_abanob");
-        authStore.snackBarText =
-          props.successText || "تم تسجيل الدخول بنجاح... أهلا بيك أبانوب 😃";
-        break;
-
       default:
         authStore.setUserKey(undefined);
         break;
@@ -91,6 +95,7 @@ async function login() {
     emit("close");
   } catch (e) {
     authStore.snackBarText = "كلمة المرور غير صحيحة";
+    authStore.snackBarColor = "error";
     emit("success", false);
   }
   loading.value = false;

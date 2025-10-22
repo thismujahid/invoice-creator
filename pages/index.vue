@@ -123,7 +123,19 @@
               >
               </v-text-field>
             </v-col>
-            <v-col cols="12" lg="4">
+                       <v-col cols="12" lg="4">
+              <v-text-field
+                variant="outlined"
+                v-model="invoiceData.delivery_price"
+                label="التوصيل"
+                placeholder="التوصيل"
+                type="number"
+                hide-details="auto"
+                class="mb-0"
+              >
+              </v-text-field>
+            </v-col>
+            <v-col cols="12" lg="2">
               <v-text-field
                 variant="outlined"
                 v-model="invoiceData.amount_of_animal_feeds"
@@ -136,18 +148,7 @@
               </v-text-field>
             </v-col>
 
-            <v-col cols="12" lg="2">
-              <v-text-field
-                variant="outlined"
-                v-model="invoiceData.delivery_price"
-                label="التوصيل"
-                placeholder="التوصيل"
-                type="number"
-                hide-details="auto"
-                class="mb-0"
-              >
-              </v-text-field>
-            </v-col>
+ 
             <v-col cols="12" lg="3">
               <v-text-field
                 variant="outlined"
@@ -480,6 +481,7 @@ function resetInvoice() {
     discount_for: null,
     debt: null,
     delivery_price: null,
+  created_by: authStore.currentUserKey || "su",
     products: [
       {
         product_name: "",
@@ -572,7 +574,7 @@ function updateProdsPrices() {
   invoiceData.value.products.forEach((item) => {
     const prod = productMap.get(item.product_id);
     if (prod) {
-      item.product_price = prod.price;
+      // item.product_price = prod.price;
       item.product_cost_price = prod.cost_price;
       item.product_name = prod.name;
     }

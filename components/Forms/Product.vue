@@ -37,14 +37,15 @@
             hide-details="auto"
           ></v-text-field>
           <v-alert
-          v-if="hideCost"
-            class="mb-3 "
+            v-if="hideCost"
+            class="mb-3"
             color="warning"
             variant="tonal"
             density="compact"
           >
             <small>
-              تم إخفاء حقل سعر التكلفة، إذا كنت تريد تعديل سعر التكلفة قم بعرض القيمة أولاً <br/><slot name="cost-input-place"></slot>
+              تم إخفاء حقل سعر التكلفة، إذا كنت تريد تعديل سعر التكلفة قم بعرض
+              القيمة أولاً <br /><slot name="cost-input-place"></slot>
             </small>
           </v-alert>
           <v-text-field
@@ -106,6 +107,7 @@ async function saveProduct(validator, isActive) {
     );
     if (isAdded && !productForm.value?.id) {
       auth.snackBarText = "تمت إضافة منتج بنفس الإسم من قبل";
+      authStore.snackBarColor = "error";
       return;
     }
     if (!res?.valid) return;

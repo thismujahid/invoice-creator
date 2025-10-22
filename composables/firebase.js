@@ -49,7 +49,7 @@ async function readFrom(module, filters = {}) {
           where("date", "<=", endTimestamp)
         );
       } else if (key === "created_by" && value) {
-          q = query(q, where("created_by", "==", value));
+        q = query(q, where("created_by", "==", value));
       } else if (value !== undefined && value !== null && value !== "") {
         q = query(q, where(key, "==", value));
       }
@@ -83,13 +83,8 @@ async function updateItem(module, itemId, data) {
   }
 }
 async function deleteItem(module, itemId) {
-  try {
     const productDoc = doc(db, module, itemId);
     return await deleteDoc(productDoc);
-  } catch (e) {
-    console.error(e);
-    return null;
-  }
 }
 async function onDocChange(collectionName, callback) {
   const collectionRef = collection(db, collectionName);

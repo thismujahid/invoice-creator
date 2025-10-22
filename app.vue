@@ -3,7 +3,7 @@
     <v-snackbar
       @update:model-value="(v) => (!v ? (authStore.snackBarText = '') : false)"
       location="top end"
-      color="success"
+      :color="authStore.snackBarColor || 'primary'"
       z-index="999999"
       :model-value="authStore.snackBarText ? true : false"
       :timeout="5000"
@@ -197,6 +197,7 @@ async function logout() {
   loading.value = true;
   await auth.signOut();
   authStore.snackBarText = "لقد تم إغلاق التطبيق بنجاح، إلى اللقاء";
+  authStore.snackBarColor = "success";
   loading.value = false;
 }
 </script>
