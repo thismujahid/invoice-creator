@@ -12,7 +12,7 @@
     </v-snackbar>
 
     <v-locale-provider rtl v-if="!initFirebase">
-      <FormsAuthScreen @success="(v) => (isAuthed = v)" v-if="!isAuthed" />
+      <FormsAuthScreen :is-in-login="true" @success="(v) => (isAuthed = v)" v-if="!isAuthed" />
       <div id="printableArea" class="printable-area invoice-creator-view"></div>
       <div class="invoice-creator-app" v-if="isAuthed">
         <v-app-bar absolute app color="light" flat border>

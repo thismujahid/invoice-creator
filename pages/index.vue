@@ -22,7 +22,6 @@
             >{{ viewCost ? "إخفاء القيمة" : "عرض القيمة" }}</v-btn
           >
           <FormsAuthScreen
-            is-in-login
             @close="() => (startView = false)"
             @success="(value) => (viewCost = value)"
             v-if="startView && isAdmin"
