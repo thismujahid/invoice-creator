@@ -22,6 +22,7 @@
             >{{ viewCost ? "إخفاء القيمة" : "عرض القيمة" }}</v-btn
           >
           <FormsAuthScreen
+            is-in-login
             @close="() => (startView = false)"
             @success="(value) => (viewCost = value)"
             v-if="startView && isAdmin"
@@ -97,7 +98,7 @@
               >
               </v-text-field>
             </v-col>
-                        <v-col cols="12" lg="4">
+            <v-col cols="12" lg="4">
               <v-autocomplete
                 hide-details="auto"
                 variant="outlined"
@@ -123,7 +124,7 @@
               >
               </v-text-field>
             </v-col>
-                       <v-col cols="12" lg="4">
+            <v-col cols="12" lg="4">
               <v-text-field
                 variant="outlined"
                 v-model="invoiceData.delivery_price"
@@ -148,7 +149,6 @@
               </v-text-field>
             </v-col>
 
- 
             <v-col cols="12" lg="3">
               <v-text-field
                 variant="outlined"
@@ -193,7 +193,6 @@
                 hide-details="auto"
                 label="الخصم متعلق بـ"
                 placeholder="الخصم متعلق بـ"
-                
               >
               </v-text-field>
             </v-col>
@@ -333,7 +332,7 @@
                   label="خيار معين"
                   placeholder="خيار معين"
                   :input-attrs="`prod-option-${index}`"
-                  >
+                >
                 </v-text-field>
               </v-col>
               <v-col cols="12" lg="1">
@@ -481,7 +480,7 @@ function resetInvoice() {
     discount_for: null,
     debt: null,
     delivery_price: null,
-  created_by: authStore.currentUserKey || "su",
+    created_by: authStore.currentUserKey || "su",
     products: [
       {
         product_name: "",
