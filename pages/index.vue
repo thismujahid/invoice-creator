@@ -354,6 +354,9 @@
                   placeholder="سعر المنتج"
                   hide-details="auto"
                   class="mb-0"
+                  :color="isCostGreaterThanPrice(form)?'error':'primary'"
+                  :base-color="isCostGreaterThanPrice(form)?'error':'primary'"
+                  :focused="isCostGreaterThanPrice(form)"
                 >
                   <template #append-inner>
                     <div
@@ -470,6 +473,9 @@ const invoiceData = ref({
   date: new Date(),
   time: new Date(),
 });
+function isCostGreaterThanPrice(product){
+  return isAdmin && Number(product.product_price)<Number(product.product_cost_price)
+}
 function resetInvoice() {
   invoiceData.value = {
     customer_name: null,

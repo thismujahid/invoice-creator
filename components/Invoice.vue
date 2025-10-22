@@ -40,11 +40,11 @@
         hide-default-footer
         :style="viewMode ? '' : `max-height: 60vh; overflow: auto;`"
       >
-      <template #item.البيان="data">
-        <span :id="`prod-option-${data.index}`">
-          {{ data.value }}
-        </span>
-      </template>
+        <template #item.البيان="data">
+          <span :id="`prod-option-${data.index}`">
+            {{ data.value }}
+          </span>
+        </template>
       </v-data-table>
       <div class="invoice-footer">
         <div class="footer">
@@ -148,7 +148,7 @@
 </template>
 
 <script setup>
-const props = defineProps(["invoiceData", "viewMode","isForAdmin"]);
+const props = defineProps(["invoiceData", "viewMode", "isForAdmin"]);
 const {
   formatDate,
   calcTotal,
@@ -217,8 +217,19 @@ async function startPrint(saveOnly) {
       props.invoiceData.time.split(":")[1]
     );
   }
-  printing.value = saveOnly ? false : true;
   delete props.invoiceData.order;
+  if (isAdmin) {
+    for (let index = 0; index < props.invoiceData.products.length; index++) {
+      const element = props.invoiceData.products[index];
+      if (Number(element.product_price) < Number(element.product_cost_price)) {
+        const isOk = confirm(
+          "توجد عناصر سعرها أقل من سعر التكلفة... هل تريد المتابعة على أية حال؟"
+        );
+        if (!isOk) return;
+      }
+    }
+  }
+  printing.value = saveOnly ? false : true;
 
   if (!props.viewMode) {
     snackBarText.value = {
@@ -251,7 +262,7 @@ async function startPrint(saveOnly) {
       printing.value = false;
     }, 100);
   }
-  if(!props.viewMode){
+  if (!props.viewMode) {
     snackBarText.value = {
       loading: false,
       text: "تم حفظ الفاتورة بنجاح",
