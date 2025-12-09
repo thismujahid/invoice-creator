@@ -578,7 +578,7 @@ function updateProdsPrices() {
   invoiceData.value.products.forEach((item) => {
     const prod = productMap.get(item.product_id);
     if (prod) {
-      // item.product_price = prod.price;
+      item.product_price = prod.price;
       item.product_cost_price = prod.cost_price;
       item.product_name = prod.name;
     }
