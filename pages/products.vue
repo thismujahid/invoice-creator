@@ -3,6 +3,9 @@
     <div class="d-flex align-center mb-4 justify-between">
       <h2>المنتجات</h2>
       <div class="d-flex items-center" style="gap: 10px">
+        <v-btn v-if="isAdmin" @click="exportToExcel" flat color="success"
+          ><v-icon icon="mdi-export" />تصدير المنتجات</v-btn
+        >
         <FormsProduct
           :hide-cost="!viewCost && productForm"
           @close="productForm = undefined"
@@ -10,7 +13,7 @@
           v-model="productFormState"
           :edit="productForm"
         >
-          <v-btn flat color="success" v-bind="props"
+          <v-btn flat color="success"
             ><v-icon icon="mdi-plus" />إضافة منتج جديد</v-btn
           >
           <template #cost-input-place>
@@ -247,6 +250,8 @@
 </template>
 
 <script setup>
+import * as XLSX from "xlsx";
+
 definePageMeta({
   title: "المنتجات",
   middleware: "admin-only",
@@ -269,6 +274,22 @@ const prodsList = computed(() => {
     } else return true;
   });
 });
+function exportToExcel() {
+  // Optionally, set column headers order
+  const headers = ["name", "cost_price", "price", "count"];
+  const orderedData = prodsList.value.map((item) => {
+    const obj = {};
+    headers.forEach((h) => (obj[h] = item[h] || ""));
+    return obj;
+  });
+
+  const finalSheet = XLSX.utils.json_to_sheet(orderedData, { header: headers });
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, finalSheet, "Sheet1");
+
+  XLSX.writeFile(workbook, "المنتجات.xlsx");
+}
 const paginateArray = computed(() => {
   // Calculate starting and ending indices
   const startIndex = (currentPage.value - 1) * currentPerPage.value;

@@ -1,18 +1,21 @@
 <template>
-  <div
-    class="bg-white px-4 py-4 rounded"
-  >
+  <div class="bg-white px-4 py-4 rounded">
     <div class="d-flex align-center mb-4 justify-between">
       <h2>العملاء</h2>
-      <forms-customer
-        v-model="customerFormState"
-        :edit="customerForm"
-        :refresher="loadCustomers"
-      >
-        <v-btn flat color="success" v-bind="props"
-          ><v-icon icon="mdi-plus" />إضافة عميل جديد</v-btn
+      <div class="d-flex" style="gap: 10px;">
+        <v-btn v-if="isAdmin" @click="exportToExcel" flat color="success"
+          ><v-icon icon="mdi-export" />تصدير العملاء</v-btn
         >
-      </forms-customer>
+        <forms-customer
+          v-model="customerFormState"
+          :edit="customerForm"
+          :refresher="loadCustomers"
+        >
+          <v-btn flat color="success" v-bind="props"
+            ><v-icon icon="mdi-plus" />إضافة عميل جديد</v-btn
+          >
+        </forms-customer>
+      </div>
     </div>
     <v-text-field
       max-width="350"
@@ -23,7 +26,7 @@
     <hr v-if="filteredItems.length > 0" />
     <v-data-table
       no-data-text="لا يوجد عملاء حتى الأن"
-      :items-length="filteredItems.length||0"
+      :items-length="filteredItems.length || 0"
       :hide-default-header="filteredItems.length === 0"
       :items-per-page="currentPerPage"
       :page="currentPage"
@@ -35,9 +38,7 @@
       <template v-slot:headers="{ columns, isSorted, getSortIcon, toggleSort }">
         <tr class="header-row">
           <template v-for="column in columns" :key="column.key">
-            <td
-              v-if="!['id'].includes(column.key)"
-            >
+            <td v-if="!['id'].includes(column.key)">
               <span
                 class="mr-2 cursor-pointer"
                 v-if="column.title"
@@ -63,7 +64,6 @@
           </template>
           <td class="pt-4 pb-4">
             <div class="d-flex ga-3">
-
               <v-btn
                 size="40"
                 @click="editCustomer(data.item)"
@@ -124,8 +124,7 @@
               class="main"
               color="gray"
               append-icon="mdi-chevron-down"
-                       :text="String(currentPerPage)"
-
+              :text="String(currentPerPage)"
               variant="tonal"
               v-bind="props"
             />
@@ -143,7 +142,7 @@
         size="30"
         total-visible="5"
         v-model="currentPage"
-        :length="(filteredItems.length / currentPerPage)||0"
+        :length="filteredItems.length / currentPerPage || 0"
         active-color="primary"
         :total-visible="7"
         variant="flat"
@@ -153,19 +152,40 @@
 </template>
 
 <script setup>
+import * as XLSX from "xlsx";
+
 definePageMeta({
   title: "العملاء",
 });
+function exportToExcel() {
+  // Optionally, set column headers order
+  const headers = ["name", "phone"];
+  const orderedData = customersStore.list.map((item) => {
+    const obj = {};
+    headers.forEach((h) => (obj[h] = item[h] || ""));
+    return obj;
+  });
+
+  const finalSheet = XLSX.utils.json_to_sheet(orderedData, { header: headers });
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, finalSheet, "Sheet1");
+
+  XLSX.writeFile(workbook, "العملاء.xlsx");
+}
 const customerFormState = ref(false);
 const customersStore = useCustomersStore();
-const filteredItems = computed(()=>{
- return customersStore.list.filter(customer=>{
-    if(searchText.value){
+const filteredItems = computed(() => {
+  return customersStore.list.filter((customer) => {
+    if (searchText.value) {
       currentPage.value = 1;
-      return customer.name?.includes(searchText.value)||customer.phone?.includes(searchText.value)
-    }else return true;
-  })
-})
+      return (
+        customer.name?.includes(searchText.value) ||
+        customer.phone?.includes(searchText.value)
+      );
+    } else return true;
+  });
+});
 const paginateArray = computed(() => {
   // Calculate starting and ending indices
   const startIndex = (currentPage.value - 1) * currentPerPage.value;
