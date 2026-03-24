@@ -156,9 +156,9 @@
             >
               {{ value }}
             </td>
-            <td v-else-if="['created_by'].includes(key)">
-              {{ formateActiveUserKey(value).name }}
-            </td>
+              <!-- <td v-else-if="['created_by'].includes(key)">
+                {{ formateActiveUserKey(value).name }}
+              </td> -->
           </template>
           <td class="pt-4 pb-4">
             <div class="d-flex ga-3">
@@ -387,7 +387,7 @@ const paginateArray = computed(() => {
     .map((invoice) => ({
       id: invoice.id,
       name: invoice.customer_name,
-      created_by: invoice.created_by,
+      // created_by: invoice.created_by,
       phone: invoice.customer_phone,
       products_count: invoice.products?.length || 0,
       total: formatePrice(calcTotal(invoice) - discountAmount(invoice)),
@@ -405,7 +405,7 @@ const deleting = ref(false);
 async function loadInvoices() {
   loading.value = true;
   await invoicesStore.fetchInvoices({
-    created_by: activeUser.value,
+    // created_by: activeUser.value,
     date: selectedDate.value,
   });
   loading.value = false;
@@ -420,7 +420,7 @@ function formateHeaderTitle(title) {
     .join(" ");
   if (text === "Name") return "الأسم";
   else if (text === "Phone") return "الهاتف";
-  else if (text === "Created By") return "منشئ الفاتورة";
+  // else if (text === "Created By") return "منشئ الفاتورة";
   else if (text === "Products Count") return "عدد المنتجات";
   else if (text === "Total") return "الإجمالي";
   else if (text === "Created At") return "تاريخ الإنشاء";
