@@ -8,7 +8,7 @@
     <div class="bg-white rounded-lg pb-4 pt-4 px-4 text-center">
       <h4>{{ title || "أدخل كلمة المرور لتسجيل الدخول" }}</h4>
       <p v-if="title">أدخل كلمة المرور</p>
-      <v-autocomplete
+      <!-- <v-autocomplete
       v-if="isInLogin"
         item-value="email"
         v-model="account"
@@ -27,7 +27,7 @@
             email: 'imsalehjad@gmail.com',
           },
         ]"
-      ></v-autocomplete>
+      ></v-autocomplete> -->
       <v-otp-input
         type="password"
         pattern="[0-9]*"
@@ -82,11 +82,11 @@ async function login() {
         authStore.snackBarText =
           props.successText || "تم تسجيل الدخول كمسؤل بنجاح";
         break;
-      case "imsalehjad@gmail.com":
-        authStore.setUserKey("c_tarek");
-        authStore.snackBarText =
-          props.successText || "تم تسجيل الدخول بنجاح... أهلا بيك ياريكو 😃";
-        break;
+      // case "imsalehjad@gmail.com":
+      //   authStore.setUserKey("c_tarek");
+      //   authStore.snackBarText =
+      //     props.successText || "تم تسجيل الدخول بنجاح... أهلا بيك ياريكو 😃";
+      //   break;
       default:
         authStore.setUserKey(undefined);
         break;

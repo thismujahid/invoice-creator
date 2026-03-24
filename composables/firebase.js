@@ -13,14 +13,14 @@ import {
   where,
 } from "firebase/firestore";
 
+
 const firebaseConfig = {
-  apiKey: "AIzaSyBowUX9eYetQ3ttf9AR1aIjuOE4xVvWpt0",
-  authDomain: "invoices-creator-3da41.firebaseapp.com",
-  projectId: "invoices-creator-3da41",
-  storageBucket: "invoices-creator-3da41.firebasestorage.app",
-  messagingSenderId: "386510344101",
-  appId: "1:386510344101:web:366393a055d573b0cee24c",
-  measurementId: "G-Y88NRM69K3",
+  apiKey: "AIzaSyCP03D1IH7JW0cjc766lmSYENQJ5XZa-Pw",
+  authDomain: "home-market-368b4.firebaseapp.com",
+  projectId: "home-market-368b4",
+  storageBucket: "home-market-368b4.firebasestorage.app",
+  messagingSenderId: "124365662957",
+  appId: "1:124365662957:web:1fb447e0cecfa87be23ae4"
 };
 
 const app = initializeApp(firebaseConfig);

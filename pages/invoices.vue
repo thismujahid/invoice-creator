@@ -16,7 +16,7 @@
           v-if="isAdmin"
           item-value="value"
           min-width="250"
-          label="منشئ الفواتير"
+          label="قريتي"
           variant="outlined"
           v-model="activeUser"
           :items="usersList"

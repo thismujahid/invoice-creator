@@ -94,7 +94,7 @@ async function useDownloadPDF(elementId, fileName) {
       window.print();
       printer.innerHTML = '';
       useSeoMeta({
-        title:"منشئ الفواتير"
+        title:"قريتي"
       })
     } catch (error) {
       console.error("Error generating PDF:", error);

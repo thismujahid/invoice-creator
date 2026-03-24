@@ -23,7 +23,7 @@
             >
               <v-icon icon="mdi-menu" />
             </v-btn>
-            منشئ الفواتير | {{ currentPageTitle }}</v-toolbar-title
+            قريتي | {{ currentPageTitle }}</v-toolbar-title
           >
           <div
             v-if="authStore.userInfo"
@@ -155,7 +155,7 @@
 </template>
 <script setup>
 useSeoMeta({
-  title: "منشئ الفواتير",
+  title: "قريتي",
 });
 useHead({
   link: [{ rel: "manifest", href: "/site.webmanifest" }],
