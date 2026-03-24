@@ -11,7 +11,7 @@
           variant="outlined"
           v-model="searchText"
         ></v-text-field>
-        <v-autocomplete
+        <!-- <v-autocomplete
           item-title="label"
           v-if="isAdmin"
           item-value="value"
@@ -21,7 +21,7 @@
           v-model="activeUser"
           :items="usersList"
           @update:model-value="loadInvoices"
-        ></v-autocomplete>
+        ></v-autocomplete> -->
         <v-menu
           ref="menu"
           v-model="dateMenu"

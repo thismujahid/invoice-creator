@@ -97,7 +97,7 @@
               >
               </v-text-field>
             </v-col>
-            <v-col cols="12" lg="4">
+            <!-- <v-col cols="12" lg="4">
               <v-autocomplete
                 hide-details="auto"
                 variant="outlined"
@@ -110,8 +110,8 @@
                 v-model="invoiceData.created_by"
               >
               </v-autocomplete>
-            </v-col>
-            <v-col cols="12" lg="4">
+            </v-col> -->
+            <!-- <v-col cols="12" lg="4">
               <v-text-field
                 variant="outlined"
                 v-model="invoiceData.amount_of_mahros"
@@ -122,8 +122,8 @@
                 type="number"
               >
               </v-text-field>
-            </v-col>
-            <v-col cols="12" lg="4">
+            </v-col> -->
+            <!-- <v-col cols="12" lg="4">
               <v-text-field
                 variant="outlined"
                 v-model="invoiceData.delivery_price"
@@ -146,7 +146,7 @@
                 type="number"
               >
               </v-text-field>
-            </v-col>
+            </v-col> -->
 
             <v-col cols="12" lg="3">
               <v-text-field
@@ -185,7 +185,7 @@
                 </template>
               </v-text-field>
             </v-col>
-            <v-col cols="12" lg="2">
+            <v-col cols="12" lg="3">
               <v-text-field
                 variant="outlined"
                 v-model="invoiceData.discount_for"
@@ -227,7 +227,7 @@
                 ></v-date-picker>
               </v-menu>
             </v-col>
-            <v-col cols="12" lg="2">
+            <v-col cols="12" lg="3">
               <v-menu :close-on-content-click="false">
                 <template #activator="{ props }">
                   <v-text-field
