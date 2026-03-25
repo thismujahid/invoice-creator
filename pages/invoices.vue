@@ -85,13 +85,15 @@
           formatePrice(
             filteredInvoices.reduce(
               (total, inv) => total + (calcTotal(inv) - discountAmount(inv)),
-              0
-            )
+              0,
+            ),
           )
         }}
         ج.م
       </strong>
       <strong v-else> *********** </strong>
+      <span v-if="!hideTotal"> وإجمالي الأرباح </span>
+      <strong v-if="!hideTotal"> {{ totalProfit }} ج.م </strong>
       <v-icon
         @click="!hideTotal ? (hideTotal = true) : (startViewTotal = true)"
         :icon="hideTotal ? 'mdi-eye-off' : 'mdi-eye'"
@@ -150,13 +152,13 @@
             <td
               v-if="
                 !['created_at_object', 'id', 'invoice', 'created_by'].includes(
-                  key
+                  key,
                 )
               "
             >
-              {{ key === 'profit'?startViewTotal?value:'****':value }}
+              {{ key === "profit" ? (!hideTotal ? value : "****") : value }}
             </td>
-              <!-- <td v-else-if="['created_by'].includes(key)">
+            <!-- <td v-else-if="['created_by'].includes(key)">
                 {{ formateActiveUserKey(value).name }}
               </td> -->
           </template>
@@ -367,14 +369,30 @@ function discountAmount(invoice) {
     return (calcTotal(invoice) * invoice.discount) / 100;
   } else return invoice.discount || 0;
 }
-const toNum = (num)=>{
-  return num&&typeof num !== 'number'?Number(num):0
-}
+const toNum = (num) => {
+  return num && typeof num !== "number" ? Number(num) : num || 0;
+};
+const calcInvTotal = (inv) =>
+  inv.products?.reduce(
+    (total, prod) =>
+      (total +=
+        (toNum(prod.product_price) - toNum(prod.product_cost_price)) *
+        toNum(prod.product_quantity)),
+    0,
+  );
+const totalProfit = computed(() => {
+  let total = 0;
+  for (let index = 0; index < invoicesStore.list.length; index++) {
+    const inv = invoicesStore.list[index];
+    total += calcInvTotal(inv);
+  }
+  return total;
+});
 const paginateArray = computed(() => {
   // Calculate starting and ending indices
   const startIndex = (currentPage.value - 1) * currentPerPage.value;
   const endIndex = startIndex + currentPerPage.value;
-    // Return the slice of the array for the current page
+  // Return the slice of the array for the current page
   return filteredInvoices.value
     .sort((a, b) => {
       if (a.date) {
@@ -385,17 +403,23 @@ const paginateArray = computed(() => {
       } else return false;
     })
     .slice(startIndex, endIndex)
-    .map((invoice) => ({
-      id: invoice.id,
-      name: invoice.customer_name,
-      phone: invoice.customer_phone,
-      products_count: invoice.products?.length || 0,
-      total: formatePrice(calcTotal(invoice) - discountAmount(invoice)),
-      profit: invoice.products?.reduce((total, prod)=> total+=(toNum(prod.product_price)-toNum(prod.product_cost_price))*toNum(prod.product_quantity),0),
-      created_at: formatTimestamp(invoice.date?.seconds),
-      invoice: invoice,
-      created_at_object: formatTimestamp(invoice.date?.seconds, true),
-    }));
+    .map((invoice) => {
+      const inData = {
+        id: invoice.id,
+        name: invoice.customer_name,
+        phone: invoice.customer_phone,
+        products_count: invoice.products?.length || 0,
+        total: formatePrice(calcTotal(invoice) - discountAmount(invoice)),
+        profit: calcInvTotal(invoice),
+        created_at: formatTimestamp(invoice.date?.seconds),
+        invoice: invoice,
+        created_at_object: formatTimestamp(invoice.date?.seconds, true),
+      };
+      if(hideTotal.value){
+        delete inData.profit
+      }
+      return inData
+    });
 });
 const searchText = ref();
 const currentPage = ref(1);
