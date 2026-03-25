@@ -318,9 +318,7 @@ definePageMeta({
 });
 const hideTotal = ref(true);
 const authStore = useAuth();
-const activeUser = ref(
-  authStore.currentUserKey === "su" ? undefined : authStore.currentUserKey
-);
+
 const dateMenu = ref(false);
 const startExport = ref(false);
 const selectedDate = ref(null);
@@ -369,11 +367,14 @@ function discountAmount(invoice) {
     return (calcTotal(invoice) * invoice.discount) / 100;
   } else return invoice.discount || 0;
 }
+const toNum = (num)=>{
+  return num&&typeof num !== 'number'?Number(num):0
+}
 const paginateArray = computed(() => {
   // Calculate starting and ending indices
   const startIndex = (currentPage.value - 1) * currentPerPage.value;
   const endIndex = startIndex + currentPerPage.value;
-  // Return the slice of the array for the current page
+    // Return the slice of the array for the current page
   return filteredInvoices.value
     .sort((a, b) => {
       if (a.date) {
@@ -387,10 +388,10 @@ const paginateArray = computed(() => {
     .map((invoice) => ({
       id: invoice.id,
       name: invoice.customer_name,
-      // created_by: invoice.created_by,
       phone: invoice.customer_phone,
       products_count: invoice.products?.length || 0,
       total: formatePrice(calcTotal(invoice) - discountAmount(invoice)),
+      profit: invoice.products?.reduce((total, prod)=> total+=(toNum(prod.product_price)-toNum(prod.product_cost_price))*toNum(prod.product_quantity),0),
       created_at: formatTimestamp(invoice.date?.seconds),
       invoice: invoice,
       created_at_object: formatTimestamp(invoice.date?.seconds, true),
@@ -420,7 +421,7 @@ function formateHeaderTitle(title) {
     .join(" ");
   if (text === "Name") return "الأسم";
   else if (text === "Phone") return "الهاتف";
-  // else if (text === "Created By") return "منشئ الفاتورة";
+  else if (text === "Profit") return "الربح";
   else if (text === "Products Count") return "عدد المنتجات";
   else if (text === "Total") return "الإجمالي";
   else if (text === "Created At") return "تاريخ الإنشاء";
