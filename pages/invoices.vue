@@ -154,7 +154,7 @@
                 )
               "
             >
-              {{ value }}
+              {{ key === 'profit'?startViewTotal?value:'****':value }}
             </td>
               <!-- <td v-else-if="['created_by'].includes(key)">
                 {{ formateActiveUserKey(value).name }}
