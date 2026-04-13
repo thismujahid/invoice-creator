@@ -52,7 +52,6 @@ async function readFrom(module, filters = {}) {
         q = query(q, where("created_by", "==", value));
       } else if (key === 'remaining' && value) {
         q = query(q, where(key, ">=", 0.1));
-        console.log("🚀 ~ readFrom ~ q:", q)
       }else if (value !== undefined && value !== null && value !== "") {
         q = query(q, where(key, "==", value));
       }
