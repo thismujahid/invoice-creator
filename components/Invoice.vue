@@ -242,7 +242,7 @@ async function startPrint(saveOnly) {
     }
   }
   printing.value = saveOnly ? false : true;
-
+  props.invoiceData.remaining = (calcTotal(props.invoiceData) - discountAmount.value) - props.invoiceData.paid_amount;
   if (!props.viewMode) {
     snackBarText.value = {
       loading: true,

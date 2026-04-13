@@ -11,17 +11,16 @@
           variant="outlined"
           v-model="searchText"
         ></v-text-field>
-        <!-- <v-autocomplete
+        <v-autocomplete
           item-title="label"
-          v-if="isAdmin"
           item-value="value"
           min-width="250"
-          label="قريتي"
+          label="الديون"
           variant="outlined"
-          v-model="activeUser"
-          :items="usersList"
+          v-model="paid_amount_filter"
+          :items="debtsFilterOptions"
           @update:model-value="loadInvoices"
-        ></v-autocomplete> -->
+        ></v-autocomplete>
         <v-menu
           ref="menu"
           v-model="dateMenu"
@@ -56,12 +55,21 @@
       </div>
       <div class="d-flex ga-3">
         <v-btn
+          prepend-icon="mdi-cash-check"
+          @click="payFull(isFilteredInvoicesContainsDebts)"
+          color="success"
+          v-if="isFilteredInvoicesContainsDebts"
+          :disabled="loading"
+          :loading="isPayingFull"
+          >سداد جميع الفواتير المعروضة</v-btn
+        >
+        <v-btn
           :prepend-icon="hideTotal ? 'mdi-eye-off' : 'mdi-eye'"
           @click="!hideTotal ? (hideTotal = true) : (startViewTotal = true)"
-          color="info"
+          color="error"
           v-if="isAdmin"
           :disabled="loading"
-          >عرض الإحصائيات</v-btn
+          >عرض الإجماليات</v-btn
         >
         <FormsAuthScreen
           @close="() => (startViewTotal = false)"
@@ -117,7 +125,7 @@
       <v-col cols="12" md="6" lg="3"
         ><v-card
           border
-          :title="hideTotal ? '***********' : totalDebts"
+          :title="totalDebts"
           subtitle="إجمالي الديون"
           flat
         >
@@ -128,7 +136,7 @@
       <v-col cols="12" md="6" lg="3"
         ><v-card
           border
-          :title="hideTotal ? '***********' : totalInvoices"
+          :title="totalInvoices"
           subtitle="إجمالي الفواتير"
           flat
         >
@@ -210,6 +218,16 @@
           </template>
           <td class="pt-4 pb-4">
             <div class="d-flex ga-3">
+              <v-btn
+                v-tooltip:top="'سداد الفاتورة بالكامل'"
+                variant="tonal"
+                flat
+                size="40"
+                @click="payFull([data.item.invoice])"
+                v-if="calcDebts(data.item.invoice)"
+                color="success"
+                ><v-icon size="30" icon="mdi-cash-check"
+              /></v-btn>
               <v-btn
                 v-tooltip:top="'نسخ الفاتورة'"
                 variant="tonal"
@@ -351,7 +369,7 @@
         size="30"
         total-visible="5"
         v-model="currentPage"
-        :length="filteredInvoices.length / currentPerPage || 0"
+        :length="Math.ceil((filteredInvoices.length / currentPerPage) || 0)"
         active-color="primary"
         :total-visible="7"
         variant="flat"
@@ -399,22 +417,15 @@ function formatTimestamp(seconds, returnObject) {
 }
 function calcDebts(inv){
   if('paid_amount' in inv){
-
-    if((calcTotal(inv) - discountAmount(inv)) != inv.paid_amount){
-      return (calcTotal(inv) - discountAmount(inv)) - toNum(inv.paid_amount)
-    }else null
-  }else return null
+    if((calcTotal(inv) - discountAmount(inv)) != toNum(inv.paid_amount)){
+      return ((calcTotal(inv) - discountAmount(inv)) - toNum(inv.paid_amount))||0
+    }else 0
+  }else return 0
 }
 const { formatePrice, calcTotal } = useHelpers();
 const invoicesStore = useInvoicesStore();
 const totalDebts = computed(() => {
-  return formatePrice(filteredInvoices.value.reduce((t, i) => {
-    let remaining = 0;
-    if ("paid_amount" in i) {
-      remaining = (calcTotal(i) - discountAmount(i)) - toNum(i.paid_amount);
-    }
-    return (t += remaining);
-  }, 0));
+  return formatePrice(filteredInvoices.value.reduce((t, i) => t += (i.remaining||0), 0));
 });
 const filteredInvoices = computed(() => {
   return invoicesStore.list.filter((invoice) => {
@@ -427,6 +438,11 @@ const filteredInvoices = computed(() => {
     } else return true;
   });
 });
+const isFilteredInvoicesContainsDebts = computed(()=>{
+  if(searchText.value){
+    return filteredInvoices.value.some((i) => toNum(i.remaining)> 0)?filteredInvoices.value:null;
+  }else return null
+})
 function discountAmount(invoice) {
   if (invoice.discount && invoice.discount_percentage) {
     return (calcTotal(invoice) * invoice.discount) / 100;
@@ -473,7 +489,7 @@ const paginateArray = computed(() => {
         phone: invoice.customer_phone,
         products_count: invoice.products?.length || 0,
         total: formatePrice(calcTotal(invoice) - discountAmount(invoice)),
-        debt: formatePrice(calcDebts(invoice)),
+        debt: invoice.remaining,
         profit: formatePrice(calcInvTotal(invoice)),
         created_at: formatTimestamp(invoice.date?.seconds),
         invoice: invoice,
@@ -491,6 +507,18 @@ const currentPerPage = ref(10);
 const loading = ref(false);
 const exporting = ref(false);
 const deleting = ref(false);
+const paid_amount_filter = ref(null)
+const debtsFilterOptions = [
+  {
+    label:'الكل',
+    value: null
+  },
+  {
+    label:' فواتير ذات ديون',
+    value: 1
+  }
+]
+const isPayingFull = ref(false);
 const totalPaidInvs = computed(() => {
   return formatePrice(
     filteredInvoices.value.reduce(
@@ -505,7 +533,7 @@ const totalInvoices = computed(() => {
 async function loadInvoices() {
   loading.value = true;
   await invoicesStore.fetchInvoices({
-    // created_by: activeUser.value,
+    remaining: paid_amount_filter.value,
     date: selectedDate.value,
   });
   loading.value = false;
@@ -526,6 +554,18 @@ function formateHeaderTitle(title) {
   else if (text === "Total") return "الإجمالي";
   else if (text === "Created At") return "تاريخ الإنشاء";
   else return "";
+}
+async function payFull(listInvs){
+  if(!listInvs||!listInvs.length) return;
+  isPayingFull.value = true;
+  for (let index = 0; index < listInvs.length; index++) {
+    const element = listInvs[index];
+    await invoicesStore.updateInvoice(element.id, {
+      paid_amount: calcTotal(element) - discountAmount(element)
+    });
+  }
+  await loadInvoices();
+  isPayingFull.value = false;
 }
 async function deleteCustomer(id) {
   deleting.value = true;

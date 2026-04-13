@@ -110,19 +110,19 @@
               >
                 <template #append-inner>
                   <v-btn
-                  icon
-                  
-                  color="success"
-                  v-tooltip="'تم السداد بالكامل'"
-                  @click="()=>{invoiceData.paid_amount = totalOfInvoice;blockUpdatePaidAmount=false}"
+                    icon
+                    color="success"
+                    v-tooltip="'تم السداد بالكامل'"
+                    @click="
+                      () => {
+                        invoiceData.paid_amount = totalOfInvoice;
+                        blockUpdatePaidAmount = false;
+                      }
+                    "
                   >
-                    <v-icon
-                    color="white"
-                    icon="mdi-check"
-                    size="20"
-                    />
+                    <v-icon color="white" icon="mdi-check" size="20" />
                   </v-btn>
-                  </template>
+                </template>
               </v-text-field>
             </v-col>
             <!-- <v-col cols="12" lg="4">
@@ -464,7 +464,7 @@
 definePageMeta({
   title: "إنشاء فاتورة",
 });
-const { formatDate, formatTime12Hour, formatePrice,calcTotal } = useHelpers();
+const { formatDate, formatTime12Hour, formatePrice, calcTotal } = useHelpers();
 const products = useProductsStore();
 const { onDocChange } = useFirebase();
 const invoices = useInvoicesStore();
@@ -490,6 +490,7 @@ const invoiceData = ref({
   amount_of_mahros: null,
   created_by: authStore.currentUserKey || "su",
   paid_amount: 0,
+  remaining: 0,
   products: [
     {
       product_name: "",
@@ -527,6 +528,7 @@ function resetInvoice() {
     discount_percentage: false,
     discount_for: null,
     paid_amount: 0,
+    remaining: 0,
     debt: null,
     delivery_price: null,
     created_by: authStore.currentUserKey || "su",
@@ -574,7 +576,13 @@ watch(
   { flush: "post" },
 );
 watch(
-  () => [invoiceData.value.products,invoiceData.value.discount,invoiceData.value.discount_for,invoiceData.value.discount_percentage, invoiceData.value.debt],
+  () => [
+    invoiceData.value.products,
+    invoiceData.value.discount,
+    invoiceData.value.discount_for,
+    invoiceData.value.discount_percentage,
+    invoiceData.value.debt,
+  ],
   () => {
     if (blockUpdatePaidAmount.value) return;
     invoiceData.value.paid_amount = totalOfInvoice.value;
@@ -657,23 +665,23 @@ const unSubCustomers = ref();
 const usSubProds = ref();
 onMounted(async () => {
   if (invoices.invoiceToEdit) {
-        blockUpdatePaidAmount.value = true;
+    blockUpdatePaidAmount.value = true;
     invoiceData.value = {
       ...invoices.invoiceToEdit,
       date:
-      invoices.invoiceToEdit.id && invoices.invoiceToEdit.date
-      ? new Date(invoices.invoiceToEdit.date.seconds * 1000)
-      : new Date(),
+        invoices.invoiceToEdit.id && invoices.invoiceToEdit.date
+          ? new Date(invoices.invoiceToEdit.date.seconds * 1000)
+          : new Date(),
       time:
-      invoices.invoiceToEdit.id && invoices.invoiceToEdit.date
-      ? new Date(invoices.invoiceToEdit.date.seconds * 1000)
-      : new Date(),
+        invoices.invoiceToEdit.id && invoices.invoiceToEdit.date
+          ? new Date(invoices.invoiceToEdit.date.seconds * 1000)
+          : new Date(),
     };
     invoices.invoiceToEdit = undefined;
     setTimeout(() => {
-      if(totalOfInvoice.value != invoiceData.value.paid_amount){ 
+      if (totalOfInvoice.value != invoiceData.value.paid_amount) {
         blockUpdatePaidAmount.value = true;
-      }else{
+      } else {
         blockUpdatePaidAmount.value = false;
       }
     }, 100);
