@@ -87,6 +87,18 @@
             >
             {{ formatePrice(calcTotal(invoiceData) - discountAmount) }}
           </div>
+                 <div v-if="invoiceData.paid_amount">
+            <strong
+              >المدفوع /</strong
+            >
+            {{ formatePrice(invoiceData.paid_amount) }}
+          </div>
+                 <div v-if="invoiceData.paid_amount">
+            <strong
+              >المتبقي /</strong
+            >
+            {{ formatePrice((calcTotal(invoiceData) - discountAmount) - Number(invoiceData.paid_amount)) }}
+          </div>
         </div>
       </div>
       <div

@@ -31,7 +31,7 @@
         </div>
         <v-form>
           <v-row>
-            <v-col cols="12" lg="4">
+            <v-col cols="12" lg="3">
               <v-autocomplete
                 hide-details="auto"
                 class="mb-0"
@@ -73,7 +73,7 @@
                 </template>
               </v-autocomplete>
             </v-col>
-            <v-col cols="12" lg="4">
+            <v-col cols="12" lg="3">
               <v-text-field
                 variant="outlined"
                 hide-details="auto"
@@ -85,7 +85,7 @@
               >
               </v-text-field>
             </v-col>
-            <v-col cols="12" lg="4">
+            <v-col cols="12" lg="3">
               <v-text-field
                 variant="outlined"
                 v-model="invoiceData.debt"
@@ -95,6 +95,34 @@
                 class="mb-0"
                 type="number"
               >
+              </v-text-field>
+            </v-col>
+            <v-col cols="12" lg="3">
+              <v-text-field
+                variant="outlined"
+                v-model="invoiceData.paid_amount"
+                label="المبلغ المدفوع"
+                placeholder="المبلغ المدفوع"
+                hide-details="auto"
+                class="mb-0"
+                @keyup="() => (blockUpdatePaidAmount = true)"
+                type="number"
+              >
+                <template #append-inner>
+                  <v-btn
+                  icon
+                  
+                  color="success"
+                  v-tooltip="'تم السداد بالكامل'"
+                  @click="()=>{invoiceData.paid_amount = totalOfInvoice;blockUpdatePaidAmount=false}"
+                  >
+                    <v-icon
+                    color="white"
+                    icon="mdi-check"
+                    size="20"
+                    />
+                  </v-btn>
+                  </template>
               </v-text-field>
             </v-col>
             <!-- <v-col cols="12" lg="4">
@@ -163,7 +191,6 @@
                 <template #append-inner>
                   <v-btn
                     icon
-                    flat
                     v-tooltip="'نوع الخصم (نسبة مئؤية % أم مبلغ ثابت)'"
                     color="primary"
                     @click="
@@ -354,8 +381,10 @@
                   placeholder="سعر المنتج"
                   hide-details="auto"
                   class="mb-0"
-                  :color="isCostGreaterThanPrice(form)?'error':'primary'"
-                  :base-color="isCostGreaterThanPrice(form)?'error':'primary'"
+                  :color="isCostGreaterThanPrice(form) ? 'error' : 'primary'"
+                  :base-color="
+                    isCostGreaterThanPrice(form) ? 'error' : 'primary'
+                  "
                   :focused="isCostGreaterThanPrice(form)"
                 >
                   <template #append-inner>
@@ -435,7 +464,7 @@
 definePageMeta({
   title: "إنشاء فاتورة",
 });
-const { formatDate, formatTime12Hour, formatePrice } = useHelpers();
+const { formatDate, formatTime12Hour, formatePrice,calcTotal } = useHelpers();
 const products = useProductsStore();
 const { onDocChange } = useFirebase();
 const invoices = useInvoicesStore();
@@ -443,6 +472,7 @@ const customers = useCustomersStore();
 const authStore = useAuth();
 const isForAdmin = ref(false);
 const updating = ref(false);
+const blockUpdatePaidAmount = ref(false);
 const loadingCustomers = ref(false);
 const loadingProds = ref(false);
 const containerRef = ref();
@@ -459,6 +489,7 @@ const invoiceData = ref({
   amount_of_animal_feeds: null,
   amount_of_mahros: null,
   created_by: authStore.currentUserKey || "su",
+  paid_amount: 0,
   products: [
     {
       product_name: "",
@@ -473,8 +504,20 @@ const invoiceData = ref({
   date: new Date(),
   time: new Date(),
 });
-function isCostGreaterThanPrice(product){
-  return isAdmin && Number(product.product_price)<Number(product.product_cost_price)
+
+const discountAmount = computed(() => {
+  if (invoiceData.value.discount && invoiceData.value.discount_percentage) {
+    return (calcTotal(invoiceData.value) * invoiceData.value.discount) / 100;
+  } else return invoiceData.value.discount || 0;
+});
+const totalOfInvoice = computed(() => {
+  return calcTotal(invoiceData.value) - discountAmount.value;
+});
+function isCostGreaterThanPrice(product) {
+  return (
+    isAdmin &&
+    Number(product.product_price) < Number(product.product_cost_price)
+  );
 }
 function resetInvoice() {
   invoiceData.value = {
@@ -483,6 +526,7 @@ function resetInvoice() {
     discount: null,
     discount_percentage: false,
     discount_for: null,
+    paid_amount: 0,
     debt: null,
     delivery_price: null,
     created_by: authStore.currentUserKey || "su",
@@ -527,7 +571,15 @@ const scrollToBottom = () => {
 watch(
   () => invoiceData.value.products.length,
   (n, o) => (o > n ? null : nextTick(scrollToBottom)),
-  { flush: "post" }
+  { flush: "post" },
+);
+watch(
+  () => [invoiceData.value.products,invoiceData.value.discount,invoiceData.value.discount_for,invoiceData.value.discount_percentage, invoiceData.value.debt],
+  () => {
+    if (blockUpdatePaidAmount.value) return;
+    invoiceData.value.paid_amount = totalOfInvoice.value;
+  },
+  { deep: true },
 );
 function moveIndexToNewValue(from, to) {
   if (typeof from !== "number") return;
@@ -536,7 +588,7 @@ function moveIndexToNewValue(from, to) {
     return;
   }
   const product = invoiceData.value.products.find(
-    (_el, index) => index == from
+    (_el, index) => index == from,
   );
   if (product) {
     invoiceData.value.products.splice(from, 1);
@@ -558,7 +610,7 @@ function addNewForm() {
     });
   } else {
     alert(
-      "عذرًا، يجب أن تُضيف منتجًا في الصف الأخير أولًا حتى تتمكّن من إضافة منتج جديد للفاتورة."
+      "عذرًا، يجب أن تُضيف منتجًا في الصف الأخير أولًا حتى تتمكّن من إضافة منتج جديد للفاتورة.",
     );
   }
 }
@@ -566,7 +618,7 @@ const reBuild = ref(false);
 function removeElementIndex(index) {
   reBuild.value = true;
   invoiceData.value.products = invoiceData.value.products.filter(
-    (p, i) => i !== index
+    (p, i) => i !== index,
   );
   setTimeout(() => {
     reBuild.value = false;
@@ -605,18 +657,26 @@ const unSubCustomers = ref();
 const usSubProds = ref();
 onMounted(async () => {
   if (invoices.invoiceToEdit) {
+        blockUpdatePaidAmount.value = true;
     invoiceData.value = {
       ...invoices.invoiceToEdit,
       date:
-        invoices.invoiceToEdit.id && invoices.invoiceToEdit.date
-          ? new Date(invoices.invoiceToEdit.date.seconds * 1000)
-          : new Date(),
+      invoices.invoiceToEdit.id && invoices.invoiceToEdit.date
+      ? new Date(invoices.invoiceToEdit.date.seconds * 1000)
+      : new Date(),
       time:
-        invoices.invoiceToEdit.id && invoices.invoiceToEdit.date
-          ? new Date(invoices.invoiceToEdit.date.seconds * 1000)
-          : new Date(),
+      invoices.invoiceToEdit.id && invoices.invoiceToEdit.date
+      ? new Date(invoices.invoiceToEdit.date.seconds * 1000)
+      : new Date(),
     };
     invoices.invoiceToEdit = undefined;
+    setTimeout(() => {
+      if(totalOfInvoice.value != invoiceData.value.paid_amount){ 
+        blockUpdatePaidAmount.value = true;
+      }else{
+        blockUpdatePaidAmount.value = false;
+      }
+    }, 100);
   }
   await Promise.all([loadCustomers(), loadProds()]);
   unSubCustomers.value = await onDocChange("customers", loadCustomers);

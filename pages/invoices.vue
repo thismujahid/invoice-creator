@@ -54,7 +54,25 @@
           </v-card>
         </v-menu>
       </div>
-      <div>
+      <div class="d-flex ga-3">
+        <v-btn
+          :prepend-icon="hideTotal ? 'mdi-eye-off' : 'mdi-eye'"
+          @click="!hideTotal ? (hideTotal = true) : (startViewTotal = true)"
+          color="info"
+          v-if="isAdmin"
+          :disabled="loading"
+          >عرض الإحصائيات</v-btn
+        >
+        <FormsAuthScreen
+          @close="() => (startViewTotal = false)"
+          @success="
+            (val) =>
+              val ? ((hideTotal = !hideTotal), (startViewTotal = false)) : false
+          "
+          v-if="startViewTotal && isAdmin"
+          success-text="تم التحقق من الهوية بنجاح... تم عرض إجماليات الفواتير المعروضة بنجاح"
+          title="برجاء تأكيد هويتك لتتمكن من عرض إجماليات  الفواتير المعروضة"
+        />
         <v-btn
           prepend-icon="mdi-export-variant"
           @click="startExport = true"
@@ -73,7 +91,54 @@
         />
       </div>
     </div>
-    <v-alert
+    <v-row>
+      <v-col cols="12" md="6" lg="3"
+        ><v-card
+          border
+          :title="hideTotal ? '***********' : totalPaidInvs"
+          subtitle="إجمالي المبيعات"
+          flat
+        >
+          <template #append>
+            <v-icon icon="mdi-cash-check" size="55" color="info"> </v-icon>
+          </template> </v-card
+      ></v-col>
+      <v-col cols="12" md="6" lg="3"
+        ><v-card
+          border
+          :title="hideTotal ? '***********' : totalProfit"
+          subtitle="إجمالي الأرباح"
+          flat
+        >
+          <template #append>
+            <v-icon icon="mdi-cash-plus" size="55" color="success"> </v-icon>
+          </template> </v-card
+      ></v-col>
+      <v-col cols="12" md="6" lg="3"
+        ><v-card
+          border
+          :title="hideTotal ? '***********' : totalDebts"
+          subtitle="إجمالي الديون"
+          flat
+        >
+          <template #append>
+            <v-icon icon="mdi-cash-minus" size="55" color="error"> </v-icon>
+          </template> </v-card
+      ></v-col>
+      <v-col cols="12" md="6" lg="3"
+        ><v-card
+          border
+          :title="hideTotal ? '***********' : totalInvoices"
+          subtitle="إجمالي الفواتير"
+          flat
+        >
+          <template #append>
+            <v-icon icon="mdi-file-document-multiple" size="50" color="success"> </v-icon>
+          </template> </v-card
+      ></v-col>
+    </v-row>
+
+    <!-- <v-alert
       color="success"
       variant="tonal"
       v-if="isAdmin"
@@ -82,34 +147,15 @@
       إجمالي مبيعات الفواتير المعروضة:
       <strong v-if="!hideTotal">
         {{
-          formatePrice(
-            filteredInvoices.reduce(
-              (total, inv) => total + (calcTotal(inv) - discountAmount(inv)),
-              0,
-            ),
-          )
+          totalPaidInvs
         }}
         ج.م
       </strong>
       <strong v-else> *********** </strong>
       <span v-if="!hideTotal"> وإجمالي الأرباح </span>
       <strong v-if="!hideTotal"> {{ totalProfit }} ج.م </strong>
-      <v-icon
-        @click="!hideTotal ? (hideTotal = true) : (startViewTotal = true)"
-        :icon="hideTotal ? 'mdi-eye-off' : 'mdi-eye'"
-      />
-      <FormsAuthScreen
-        @close="() => (startViewTotal = false)"
-        @success="
-          (val) =>
-            val ? ((hideTotal = !hideTotal), (startViewTotal = false)) : false
-        "
-        v-if="startViewTotal && isAdmin"
-        success-text="تم التحقق من الهوية بنجاح... تم عرض إجمالي مبيعات الفواتير المعروضة بنجاح"
-        title="برجاء تأكيد هويتك لتتمكن من عرض إجمالي مبيعات الفواتير المعروضة"
-      />
-    </v-alert>
-    <hr v-if="filteredInvoices.length > 0" />
+    </v-alert> -->
+    <hr v-if="filteredInvoices.length > 0" class="mt-6" />
     <v-data-table
       no-data-text=" لا يوجد فواتير مسجلة بالمستخدم الحالي حتى الأن"
       :items-length="filteredInvoices.length || 0"
@@ -318,7 +364,7 @@
 definePageMeta({
   title: "الفواتير",
 });
-const hideTotal = ref(true);
+const hideTotal = ref(false);
 const authStore = useAuth();
 
 const dateMenu = ref(false);
@@ -351,8 +397,25 @@ function formatTimestamp(seconds, returnObject) {
   });
   return `${formattedDate} ${formattedTime}`;
 }
+function calcDebts(inv){
+  if('paid_amount' in inv){
+
+    if((calcTotal(inv) - discountAmount(inv)) != inv.paid_amount){
+      return (calcTotal(inv) - discountAmount(inv)) - toNum(inv.paid_amount)
+    }else null
+  }else return null
+}
 const { formatePrice, calcTotal } = useHelpers();
 const invoicesStore = useInvoicesStore();
+const totalDebts = computed(() => {
+  return formatePrice(filteredInvoices.value.reduce((t, i) => {
+    let remaining = 0;
+    if ("paid_amount" in i) {
+      remaining = (calcTotal(i) - discountAmount(i)) - toNum(i.paid_amount);
+    }
+    return (t += remaining);
+  }, 0));
+});
 const filteredInvoices = computed(() => {
   return invoicesStore.list.filter((invoice) => {
     if (searchText.value) {
@@ -382,11 +445,11 @@ const calcInvTotal = (inv) =>
   );
 const totalProfit = computed(() => {
   let total = 0;
-  for (let index = 0; index < invoicesStore.list.length; index++) {
-    const inv = invoicesStore.list[index];
+  for (let index = 0; index < filteredInvoices.value.length; index++) {
+    const inv = filteredInvoices.value[index];
     total += calcInvTotal(inv);
   }
-  return total;
+  return formatePrice(total);
 });
 const paginateArray = computed(() => {
   // Calculate starting and ending indices
@@ -410,15 +473,16 @@ const paginateArray = computed(() => {
         phone: invoice.customer_phone,
         products_count: invoice.products?.length || 0,
         total: formatePrice(calcTotal(invoice) - discountAmount(invoice)),
-        profit: calcInvTotal(invoice),
+        debt: formatePrice(calcDebts(invoice)),
+        profit: formatePrice(calcInvTotal(invoice)),
         created_at: formatTimestamp(invoice.date?.seconds),
         invoice: invoice,
         created_at_object: formatTimestamp(invoice.date?.seconds, true),
       };
-      if(hideTotal.value){
-        delete inData.profit
+      if (hideTotal.value) {
+        delete inData.profit;
       }
-      return inData
+      return inData;
     });
 });
 const searchText = ref();
@@ -427,6 +491,17 @@ const currentPerPage = ref(10);
 const loading = ref(false);
 const exporting = ref(false);
 const deleting = ref(false);
+const totalPaidInvs = computed(() => {
+  return formatePrice(
+    filteredInvoices.value.reduce(
+      (total, inv) => total + (calcTotal(inv) - discountAmount(inv)),
+      0,
+    ),
+  );
+});
+const totalInvoices = computed(() => {
+  return filteredInvoices.value.length;
+});
 async function loadInvoices() {
   loading.value = true;
   await invoicesStore.fetchInvoices({
@@ -447,6 +522,7 @@ function formateHeaderTitle(title) {
   else if (text === "Phone") return "الهاتف";
   else if (text === "Profit") return "الربح";
   else if (text === "Products Count") return "عدد المنتجات";
+  else if (text === "Debt") return "المتبقى";
   else if (text === "Total") return "الإجمالي";
   else if (text === "Created At") return "تاريخ الإنشاء";
   else return "";
