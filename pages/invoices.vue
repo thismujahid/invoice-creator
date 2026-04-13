@@ -561,7 +561,8 @@ async function payFull(listInvs){
   for (let index = 0; index < listInvs.length; index++) {
     const element = listInvs[index];
     await invoicesStore.updateInvoice(element.id, {
-      paid_amount: calcTotal(element) - discountAmount(element)
+      paid_amount: calcTotal(element) - discountAmount(element),
+      remaining: 0
     });
   }
   await loadInvoices();
