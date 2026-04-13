@@ -364,7 +364,7 @@
 definePageMeta({
   title: "الفواتير",
 });
-const hideTotal = ref(false);
+const hideTotal = ref(true);
 const authStore = useAuth();
 
 const dateMenu = ref(false);
