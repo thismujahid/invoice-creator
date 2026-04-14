@@ -3,8 +3,8 @@
     <div class="d-flex align-center mb-4 justify-between">
       <h2>الفواتير</h2>
     </div>
-    <div class="d-flex items-center justify-between">
-      <div class="d-flex" style="gap: 10px">
+    <div class="d-block d-md-flex items-center justify-between">
+      <div class="block d-md-flex" style="gap: 10px">
         <v-text-field
           min-width="250"
           label="بحث"
@@ -53,7 +53,7 @@
           </v-card>
         </v-menu>
       </div>
-      <div class="d-flex ga-3">
+      <div class="d-flex mb-4 ga-3">
         <v-btn
           prepend-icon="mdi-cash-check"
           @click="payFull(isFilteredInvoicesContainsDebts)"
@@ -343,7 +343,7 @@
         </tr>
       </template>
     </v-data-table>
-    <div class="d-flex align-items" style="justify-content: space-between">
+    <div class="d-block d-md-flex align-items" style="justify-content: space-between">
       <div class="app-table__footer__per-page">
         <v-menu :disabled="loading">
           <template v-slot:activator="{ props }">

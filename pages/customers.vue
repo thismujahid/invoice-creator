@@ -116,7 +116,7 @@
         </tr>
       </template>
     </v-data-table>
-    <div class="d-flex align-items" style="justify-content: space-between">
+    <div class="d-md-flex d-block align-items" style="justify-content: space-between">
       <div class="app-table__footer__per-page">
         <v-menu :disabled="loading">
           <template v-slot:activator="{ props }">
