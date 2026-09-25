@@ -281,7 +281,7 @@
             <div class="flex shrink-0 gap-1.5" @click.stop>
               <UButton
                 v-if="calcDebts(row.invoice)"
-                icon="i-lucide-cash-check"
+                icon="mdi-cash-check"
                 color="success"
                 variant="soft"
                 size="xs"

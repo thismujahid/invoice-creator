@@ -40,7 +40,7 @@
 
     <!-- Body: fixed vertical nav rail (right in RTL) + page -->
     <div
-      class="mx-auto flex w-full max-w-6xl min-w-0 flex-1 items-start gap-3 px-3 py-4 md:px-4"
+      class="mx-auto flex w-full max-w-6xl pb-20 md:pb-4 min-w-0 flex-1 items-start gap-3 px-3 py-4 md:px-4"
     >
       <aside
         class="fixed md:sticky z-20 inset-x-0 top-none md:top-18 bottom-0 md:bottom-none w-full p-2 flex-row flex md:w-32 shrink-0 md:flex-col items-center md:rounded-2xl border border-gray-200 bg-white py-3 shadow-sm"
