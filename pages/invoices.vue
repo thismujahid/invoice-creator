@@ -6,7 +6,7 @@
       <div class="flex flex-wrap gap-2">
         <UButton
           v-if="isFilteredInvoicesContainsDebts"
-          icon="i-lucide-cash-check"
+          icon="i-lucide-hand-coins"
           color="success"
           :disabled="loading"
           :loading="isPayingFull"
@@ -100,7 +100,7 @@
             <div class="text-xs text-gray-500">إجمالي المبيعات</div>
           </div>
           <UIcon
-            name="i-lucide-cash-check"
+            name="i-lucide-banknote"
             class="size-8 shrink-0 text-blue-500"
           />
         </div>
@@ -114,7 +114,7 @@
             <div class="text-xs text-gray-500">إجمالي الأرباح</div>
           </div>
           <UIcon
-            name="i-lucide-cash-plus"
+            name="i-lucide-trending-up"
             class="size-8 shrink-0 text-emerald-500"
           />
         </div>
@@ -128,7 +128,7 @@
             <div class="text-xs text-gray-500">إجمالي الديون</div>
           </div>
           <UIcon
-            name="i-lucide-cash-minus"
+            name="i-lucide-trending-down"
             class="size-8 shrink-0 text-red-500"
           />
         </div>
@@ -142,7 +142,7 @@
             <div class="text-xs text-gray-500">إجمالي الفواتير</div>
           </div>
           <UIcon
-            name="i-lucide-file-stack"
+            name="i-lucide-files"
             class="size-8 shrink-0 text-emerald-600"
           />
         </div>
@@ -193,10 +193,10 @@
               <td class="p-2">
                 <div class="flex gap-1.5">
                   <UTooltip
-                    v-if="calcDebts(row.invoice)"
+                    v-if="debtOf(row.invoice) > 0"
                     text="سداد الفاتورة بالكامل"
                     ><UButton
-                      icon="mdi-cash-check"
+                      icon="i-lucide-hand-coins"
                       color="success"
                       variant="soft"
                       size="xs"
@@ -280,8 +280,8 @@
             </div>
             <div class="flex shrink-0 gap-1.5" @click.stop>
               <UButton
-                v-if="calcDebts(row.invoice)"
-                icon="mdi-cash-check"
+                v-if="debtOf(row.invoice) > 0"
+                icon="i-lucide-hand-coins"
                 color="success"
                 variant="soft"
                 size="xs"
@@ -472,10 +472,10 @@ const toNum = (num: unknown): number => {
   return num && typeof num !== "number" ? Number(num) : (num as number) || 0;
 };
 function calcDebts(inv: Invoice): number {
-  // Missing paid_amount (invoices created before the debts feature) means
-  // nothing was paid yet — otherwise the pay button would never appear.
+  // No paid_amount field (pre-feature invoices) = treated as PAID, not debt.
+  if (!("paid_amount" in inv) || inv.paid_amount === null || inv.paid_amount === undefined) return 0;
   const total = calcTotal(inv) - discountAmount(inv);
-  const paid = toNum((inv as Invoice).paid_amount);
+  const paid = toNum(inv.paid_amount);
   const diff = total - paid;
   return Number.isFinite(diff) && diff > 0 ? diff : 0;
 }
