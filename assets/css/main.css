@@ -1,0 +1,26 @@
+@import "tailwindcss";
+@import "@nuxt/ui";
+
+/* Design tokens shared by Vuetify (legacy) + Nuxt UI (target).
+   Mobile-first: 16px inputs stop iOS zoom; 44px min touch targets. */
+
+@theme {
+  --font-sans: "Baloo Bhaijaan 2", ui-sans-serif, system-ui, sans-serif;
+  --color-ink: #09090a;
+  --color-mint: #50cd89;
+  --color-crimson: #ff233e;
+}
+
+:root {
+  --app-font: "Baloo Bhaijaan 2", serif;
+  --app-touch-min: 44px;
+}
+
+html {
+  font-family: var(--app-font);
+}
+
+/* Keep Vuetify print bridge working while both libs coexist */
+#printableArea {
+  display: none;
+}

@@ -1,37 +1,36 @@
 <template>
-  <div class="bg-white px-4 py-4 rounded">
-    <div class="d-flex align-center mb-4 justify-between">
-      <h2>المنتجات</h2>
-      <div class="d-flex items-center" style="gap: 10px">
+  <div class="rounded-xl bg-white p-3 shadow-sm sm:p-4">
+    <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <h2 class="text-lg font-bold text-gray-900">المنتجات</h2>
+      <div class="flex flex-wrap items-center gap-2">
+        <!-- HOME delta: no products export (as in home branch). -->
         <FormsProduct
-          :hide-cost="!viewCost && productForm"
+          :hide-cost="!viewCost"
           @close="productForm = undefined"
           :refresher="loadProds"
           v-model="productFormState"
           :edit="productForm"
         >
-          <v-btn flat color="success" v-bind="props"
-            ><v-icon icon="mdi-plus" />إضافة منتج جديد</v-btn
+          <UButton icon="i-lucide-plus" color="success"
+            >إضافة منتج جديد</UButton
           >
           <template #cost-input-place>
-            <v-btn
-              flat
-              density="compact"
-              size="small"
-              class="!h-[25px]"
-              color="primary"
+            <UButton
+              size="xs"
+              color="neutral"
+              variant="soft"
+              :icon="viewCost ? 'i-lucide-eye-off' : 'i-lucide-eye'"
               @click="handleViewCostClick"
-              :prepend-icon="`mdi-eye${viewCost ? '-off-' : '-'}outline`"
-              >{{ viewCost ? "إخفاء القيمة" : "عرض القيمة" }}</v-btn
+              >{{ viewCost ? "إخفاء القيمة" : "عرض القيمة" }}</UButton
             >
           </template>
         </FormsProduct>
-        <v-btn
-          flat
+        <UButton
           color="success"
+          variant="soft"
+          :icon="viewCost ? 'i-lucide-eye-off' : 'i-lucide-eye'"
           @click="handleViewCostClick"
-          :prepend-icon="`mdi-eye${viewCost ? '-off-' : '-'}outline`"
-          >{{ viewCost ? "إخفاء القيمة" : "عرض القيمة" }}</v-btn
+          >{{ viewCost ? "إخفاء القيمة" : "عرض القيمة" }}</UButton
         >
         <FormsAuthScreen
           @close="() => (startView = false)"
@@ -39,219 +38,226 @@
           v-if="startView"
           success-text="تم التحقق من الهوية بنجاح... تم عرض القيمة بنجاح"
           title="برجاء تأكيد هويتك لتتمكن من عرض القيمة"
-        />
+          />
       </div>
     </div>
-    <div class="d-flex justify-between">
-      <v-text-field
-        max-width="350"
-        label="بحث"
-        variant="outlined"
+    <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <UInput
         v-model="searchText"
-      ></v-text-field>
-      <div v-if="selectProducts.length > 0" class="d-flex ga-4">
-        <v-btn @click="createInvoiceFromSelectedProducts" flat color="success"
-          ><v-icon icon="mdi-file-plus" />إنشاء فاتورة بالمنتجات المحددة ({{
-            selectProducts.length
-          }})</v-btn
+        placeholder="بحث"
+        icon="i-lucide-search"
+        size="lg"
+        class="w-full sm:max-w-xs"
+        />
+      <div v-if="selectProducts.length > 0" class="flex flex-wrap gap-2">
+        <UButton
+          icon="i-lucide-file-plus"
+          color="success"
+          @click="createInvoiceFromSelectedProducts"
+          >إنشاء فاتورة بالمنتجات المحددة ({{ selectProducts.length }})</UButton
         >
-        <v-dialog :loading="fillingProducts" max-width="400" persistent>
-          <template #activator="{ props }">
-            <v-btn v-bind="props" flat color="error"
-              ><v-icon icon="mdi-close" />إلغاء تحديد الكل</v-btn
-            >
+        <UButton
+          icon="i-lucide-x"
+          color="error"
+          variant="soft"
+          @click="clearConfirm = true"
+          >إلغاء تحديد الكل</UButton
+        >
+        <UiAppDialog v-model:open="clearConfirm" title="إلغاء التحديد">
+          <p class="py-2 text-gray-600">
+            أنت علي وشك إلغاء المنتجات المحددة، هل أنت متاكد؟
+          </p>
+          <template #footer>
+            <div class="flex w-full justify-center gap-2">
+              <UButton
+                color="error"
+                @click="
+                  selectProducts = [];
+                  clearConfirm = false;
+                "
+                >تاكيد</UButton
+              >
+              <UButton
+                color="neutral"
+                variant="outline"
+                @click="clearConfirm = false"
+                >إلغاء</UButton
+              >
+            </div>
           </template>
-          <template #default="{ isActive }">
-            <div class="bg-white rounded py-4 px-4 text-center">
-              <p class="py-2">
-                أنت علي وشك إلغاء المنتجات المحددة، هل أنت متاكد؟
-              </p>
-              <div class="d-flex ga-4 justify-center">
-                <v-btn
-                  color="error"
-                  @click="
-                    selectProducts = [];
-                    isActive.value = true;
-                  "
-                  flat
-                  >تاكيد</v-btn
-                >
-                <v-btn
-                  color="black"
-                  @click="isActive.value = false"
-                  variant="outlined"
-                  flat
-                  >إلغاء</v-btn
-                >
+        </UiAppDialog>
+      </div>
+    </div>
+    <USkeleton v-if="loading" class="h-24 w-full" />
+    <template v-else>
+      <!-- Desktop table -->
+      <div class="hidden overflow-x-auto md:block">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-gray-200 text-gray-500">
+              <th class="w-10 p-2"></th>
+              <th class="p-2 text-start font-medium">الاسم</th>
+              <th class="p-2 text-start font-medium">سعر البيع</th>
+              <th v-if="viewCost" class="p-2 text-start font-medium">
+                سعر التكلفة
+              </th>
+              <th class="p-2 text-start font-medium">العدد</th>
+              <th class="p-2 text-start font-medium">الأدوات</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="p in paginateArray"
+              :key="p.id"
+              class="cursor-pointer border-b border-gray-100 last:border-0 hover:bg-gray-50"
+              :class="p.id && isSelected({ id: p.id }) ? 'bg-emerald-50' : ''"
+              @click="p.id && toggleSelect({ id: p.id })"
+            >
+              <td class="p-2" @click.stop>
+                <UCheckbox
+                  :model-value="p.id ? isSelected({ id: p.id }) : false"
+                  @update:model-value="p.id && toggleSelect({ id: p.id })"
+                  />
+              </td>
+              <td class="p-2 font-medium">{{ p.name }}</td>
+              <td class="p-2">{{ p.price }}</td>
+              <td v-if="viewCost" class="p-2 text-gray-600">
+                {{ p.cost_price }}
+              </td>
+              <td class="p-2">{{ p.count }}</td>
+              <td class="p-2" @click.stop>
+                <div class="flex gap-2">
+                  <UButton
+                    icon="i-lucide-pencil"
+                    color="success"
+                    variant="soft"
+                    size="xs"
+                    aria-label="تعديل"
+                    @click="editProduct({ id: p.id })"
+                    class="flex items-center justify-center"
+                    />
+                  <UButton
+                    icon="i-lucide-trash-2"
+                    color="error"
+                    variant="soft"
+                    size="xs"
+                    aria-label="حذف"
+                    @click="confirmDelete = p"
+                    class="flex items-center justify-center"
+                    />
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <UEmpty
+          v-if="!paginateArray.length"
+          icon="i-lucide-layout-grid"
+          title="لا توجد منتجات حتى الأن"
+          />
+      </div>
+      <!-- Mobile cards -->
+      <div class="grid gap-2 md:hidden">
+        <UCard
+          v-for="p in paginateArray"
+          :key="p.id"
+          variant="outline"
+          :class="p.id && isSelected({ id: p.id }) ? '!border-emerald-500' : ''"
+          @click="p.id && toggleSelect({ id: p.id })"
+        >
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex min-w-0 items-center gap-2">
+              <UCheckbox
+                :model-value="p.id ? isSelected({ id: p.id }) : false"
+                @click.stop
+                @update:model-value="p.id && toggleSelect({ id: p.id })"
+                />
+              <div class="min-w-0">
+                <div class="truncate font-bold">{{ p.name }}</div>
+                <div class="text-sm text-gray-500">
+                  بيع: {{ p.price }}
+                  <span v-if="viewCost">| تكلفة: {{ p.cost_price }}</span>
+                </div>
               </div>
             </div>
-          </template>
-        </v-dialog>
-      </div>
-    </div>
-    <hr v-if="productsStore.list.length > 0" />
-    <v-data-table
-      :loading="loading"
-      no-data-text="لا توجد منتجات حتى الأن"
-      :items-length="prodsList.length || 0"
-      :hide-default-header="prodsList.length === 0"
-      :items-per-page="currentPerPage"
-      :page="currentPage"
-      hide-default-footer
-      :items="paginateArray"
-      hover
-    >
-      <template v-slot:headers="{ columns, isSorted, getSortIcon, toggleSort }">
-        <tr class="header-row">
-          <template
-            v-for="column in columns.filter(
-              (el) => !['id', !viewCost ? 'cost_price' : ''].includes(el.key)
-            )"
-            :key="column.key"
-          >
-            <td>
-              <span
-                class="mr-2 cursor-pointer"
-                v-if="column.title"
-                @click="() => toggleSort(column)"
-                >{{ formateHeaderTitle(column.title) }}</span
-              >
-              <template v-if="isSorted(column)">
-                <v-icon :icon="getSortIcon(column)"></v-icon>
-              </template>
-            </td>
-          </template>
-          <td>
-            <span> الأدوات </span>
-          </td>
-        </tr>
-      </template>
-
-      <template v-slot:item="data">
-        <tr class="cursor-pointer">
-          <template v-for="(value, key, i) of data.item">
-            <td
-              @click="
-                () => {
-                  data.item.select = !isSelected(data.item);
-                  toggleSelect(data.item);
-                }
-              "
-              v-if="
-                !['id', 'select', !viewCost ? 'cost_price' : ''].includes(key)
-              "
-            >
-              {{ value }}
-            </td>
-            <td
-              @click="
-                () => {
-                  data.item.select = !isSelected(data.item);
-                  toggleSelect(data.item);
-                }
-              "
-              v-else-if="key == 'select'"
-            >
-              <v-checkbox
-                hide-details
-                :model-value="isSelected(data.item)"
-                readonly
-              />
-            </td>
-          </template>
-          <td>
-            <div class="d-flex ga-3">
-              <v-btn
-                size="30"
-                @click="editProduct(data.item)"
-                flat
-                variant="tonal"
+            <div class="flex shrink-0 gap-2" @click.stop>
+              <UButton
+                icon="i-lucide-pencil"
                 color="success"
-                ><v-icon icon="mdi-pencil" size="25"
-              /></v-btn>
-              <v-dialog persistent max-width="300px">
-                <template #activator="{ props }">
-                  <v-btn
-                    flat
-                    size="30"
-                    v-bind="props"
-                    variant="tonal"
-                    color="error"
-                    ><v-icon icon="mdi-delete-outline" size="30"
-                  /></v-btn>
-                </template>
-                <template #default="{ isActive }">
-                  <div class="bg-white py-4 px-4 rounded">
-                    <h4>هل أنت متأكد</h4>
-                    <p class="mb-4">
-                      أنت علي وشك حذف المنتج {{ data.item.name }}
-                    </p>
-                    <v-btn
-                      @click="deleteProd(data.item.id)"
-                      block
-                      :loading="deleting"
-                      color="error"
-                      flat
-                      >حذف</v-btn
-                    >
-                    <v-btn
-                      :disabled="deleting"
-                      block
-                      @click="isActive.value = false"
-                      color="black"
-                      variant="plain"
-                      flat
-                      >إلغاء</v-btn
-                    >
-                  </div>
-                </template>
-              </v-dialog>
+                variant="soft"
+                size="xs"
+                aria-label="تعديل"
+                @click="editProduct({ id: p.id })"
+                class="flex items-center justify-center"
+                />
+              <UButton
+                icon="i-lucide-trash-2"
+                color="error"
+                variant="soft"
+                size="xs"
+                aria-label="حذف"
+                @click="confirmDelete = p"
+                class="flex items-center justify-center"
+                />
             </div>
-          </td>
-        </tr>
-      </template>
-    </v-data-table>
-    <div class="d-md-flex align-items d-block" style="justify-content: space-between">
-      <div class="app-table__footer__per-page">
-        <v-menu :disabled="loading">
-          <template v-slot:activator="{ props }">
-            <v-btn
-              class="main"
-              color="gray"
-              append-icon="mdi-chevron-down"
-              :text="String(currentPerPage)"
-              variant="tonal"
-              v-bind="props"
-            />
-          </template>
-          <v-list>
-            <v-list-item
-              v-for="item in [10, 25, 50, 100, 150]"
-              @click="currentPerPage = item"
-              >{{ item }}</v-list-item
-            >
-          </v-list>
-        </v-menu>
+          </div>
+        </UCard>
+        <UEmpty
+          v-if="!paginateArray.length"
+          icon="i-lucide-layout-grid"
+          title="لا توجد منتجات حتى الأن"
+          />
       </div>
-      <v-pagination
-        size="30"
-        total-visible="5"
-        v-model="currentPage"
-        :length="Math.ceil(prodsList.length / currentPerPage) || 0"
-        active-color="primary"
-        :total-visible="7"
-        variant="flat"
-      ></v-pagination>
+    </template>
+    <div class="mt-3 flex items-center justify-between gap-2">
+      <USelect
+        v-model="currentPerPage"
+        :items="[10, 25, 50, 100, 150]"
+        size="sm"
+        class="w-24"
+        />
+      <UPagination
+        dir="ltr"
+        v-model:page="currentPage"
+        :total="prodsList.length"
+        :items-per-page="currentPerPage"
+        :sibling-count="1"
+        size="sm"
+        />
     </div>
+    <UiAppDialog v-model:open="deleteOpen" title="هل أنت متأكد">
+      <p class="mb-4 text-gray-600">
+        أنت علي وشك حذف المنتج {{ confirmDelete?.name }}
+      </p>
+      <template #footer>
+        <div class="flex w-full flex-col gap-2">
+          <UButton
+            color="error"
+            block
+            :loading="deleting"
+            @click="deleteConfirmed"
+            >حذف</UButton
+          >
+          <UButton
+            color="neutral"
+            variant="ghost"
+            block
+            :disabled="deleting"
+            @click="confirmDelete = null"
+            >إلغاء</UButton
+          >
+        </div>
+      </template>
+    </UiAppDialog>
   </div>
 </template>
 
-<script setup>
-definePageMeta({
-  title: "المنتجات",
-  middleware: "admin-only",
-});
-const searchText = ref();
+<script setup lang="ts">
+import type { Invoice, Product } from "~/types";
+import { toDateSafe } from "~/types";
+
+definePageMeta({ title: "المنتجات", middleware: "admin-only" });
+const searchText = ref<string>("");
 const { formatePrice } = useHelpers();
 const productFormState = ref(false);
 const productsStore = useProductsStore();
@@ -259,32 +265,33 @@ const startView = ref(false);
 const viewCost = ref(false);
 const loading = ref(false);
 const deleting = ref(false);
-const prodsList = computed(() => {
-  return productsStore.list.filter((prod) => {
-    if (searchText.value) {
-      currentPage.value = 1;
-      if (prod.name.toLowerCase().includes(searchText.value.toLowerCase()))
-        return true;
-      else return false;
-    } else return true;
-  });
+const currentPage = ref(1);
+const currentPerPage = ref(10);
+const productForm = ref<Product | undefined>(undefined);
+const selectProducts = ref<string[]>([]);
+const invoiceStore = useInvoicesStore();
+
+// FLAG [B4-FIXED]: no mutation inside computed; watcher resets page.
+watch(searchText, () => {
+  currentPage.value = 1;
+});
+
+const prodsList = computed<Product[]>(() => {
+  const q = searchText.value?.trim().toLowerCase();
+  if (!q) return [...productsStore.list];
+  return productsStore.list.filter((prod) =>
+    prod.name?.toLowerCase().includes(q),
+  );
 });
 const paginateArray = computed(() => {
-  // Calculate starting and ending indices
   const startIndex = (currentPage.value - 1) * currentPerPage.value;
-  const endIndex = startIndex + currentPerPage.value;
-
-  // Return the slice of the array for the current page
-  return prodsList.value
-    .sort((a, b) => {
-      if (a.date) {
-        return (
-          new Date((b.date?.seconds || 0) * 1000) -
-          new Date((a.date?.seconds || 0) * 1000)
-        );
-      } else return false;
-    })
-    .slice(startIndex, endIndex)
+  return [...prodsList.value]
+    .sort(
+      (a, b) =>
+        (toDateSafe(b.date)?.getTime() ?? 0) -
+        (toDateSafe(a.date)?.getTime() ?? 0),
+    )
+    .slice(startIndex, startIndex + currentPerPage.value)
     .map((prod) => ({
       id: prod.id,
       select: false,
@@ -294,13 +301,8 @@ const paginateArray = computed(() => {
       count: prod.count,
     }));
 });
-const productForm = ref();
-const currentPage = ref(1);
-const currentPerPage = ref(10);
-const selectProducts = ref([]);
-const invoiceStore = useInvoicesStore();
-function isSelected(item) {
-  return selectProducts.value.includes(item.id);
+function isSelected(item: { id?: string }): boolean {
+  return !!item.id && selectProducts.value.includes(item.id);
 }
 function handleViewCostClick() {
   if (viewCost.value) {
@@ -310,52 +312,68 @@ function handleViewCostClick() {
     startView.value = true;
   }
 }
-function toggleSelect(item) {
+function toggleSelect(item: { id?: string }): void {
+  if (!item.id) return;
   const index = selectProducts.value.indexOf(item.id);
-  if (index > -1) {
-    selectProducts.value.splice(index, 1);
-  } else {
-    selectProducts.value.push(item.id);
-  }
+  if (index > -1) selectProducts.value.splice(index, 1);
+  else selectProducts.value.push(item.id);
 }
-function editProduct(product) {
-  const prod = prodsList.value.find((el) => el.id == product.id);
-  if (prod) {
-    productForm.value = {
-      ...prod,
-    };
-  }
+function editProduct(product: { id?: string }): void {
+  const prod = prodsList.value.find((el) => el.id === product.id);
+  if (prod) productForm.value = { ...prod };
   productFormState.value = true;
 }
-function formateHeaderTitle(title) {
-  const text = title
-    .split("_")
-    .map((word) => {
-      const string = word.charAt(0).toUpperCase() + word.slice(1);
-      return string;
-    })
-    .join(" ");
-  if (text === "Name") return "الاسم";
-  else if (text === "Price") return "سعر البيع";
-  else if (text === "Cost Price") return "سعر التكلفة";
-  else if (text === "Count") return "العدد";
-  else if (text === "Select") return "تحديد";
-  else return "";
+const clearConfirm = ref(false);
+interface ProductRow {
+  id?: string;
+  name: string;
+  price: string;
+  cost_price: string;
+  count?: number | null;
 }
-async function loadProds() {
+const confirmDelete = ref<ProductRow | null>(null);
+const deleteOpen = computed({
+  get: () => confirmDelete.value !== null,
+  set: (v: boolean) => {
+    if (!v) confirmDelete.value = null;
+  },
+});
+async function loadProds(): Promise<void> {
   loading.value = true;
-  setTimeout(async () => {
+  try {
     await productsStore.fetchProducts();
+  } finally {
     loading.value = false;
-  }, 100);
+  }
 }
-async function deleteProd(id) {
+async function deleteConfirmed(): Promise<void> {
+  const id = confirmDelete.value?.id;
+  if (!id) return;
   deleting.value = true;
-  await productsStore.deleteProduct(id);
-  await loadProds();
-  deleting.value = false;
+  try {
+    await productsStore.deleteProduct(id);
+    await loadProds();
+  } finally {
+    deleting.value = false;
+    confirmDelete.value = null;
+  }
 }
-function createInvoiceFromSelectedProducts() {
+function createInvoiceFromSelectedProducts(): void {
+  const products = selectProducts.value.flatMap((id) => {
+    const product = prodsList.value.find((prod) => prod.id === id);
+    if (!product) return [];
+    return [
+      {
+        product_name: product.name,
+        product_price: Number(product.price ?? 0),
+        product_cost_price: Number(product.cost_price ?? 0),
+        product_quantity: 1,
+        total: 0,
+        option: "",
+        product_id: product.id,
+      },
+    ];
+  });
   invoiceStore.invoiceToEdit = {
     customer_name: null,
     customer_phone: null,
@@ -366,20 +384,9 @@ function createInvoiceFromSelectedProducts() {
     discount_for: null,
     amount_of_animal_feeds: null,
     amount_of_mahros: null,
-    products: selectProducts.value.map((id) => {
-      const product = prodsList.value.find((prod) => prod.id == id);
-      return {
-        product_name: product.name,
-        product_price: product.price,
-        product_cost_price: product.cost_price,
-        product_quantity: 1,
-        total: 0,
-        option: "",
-        product_id: product.id,
-      };
-    }),
-  };
-  navigateTo("/");
+    products,
+  } as Invoice;
+  void navigateTo("/");
 }
-loadProds();
+void loadProds();
 </script>
