@@ -1,0 +1,39 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // FLAG [S2]: least-privilege baseline. Wire Firebase Custom Claims:
+    //   admin -> request.auth.token.role == 'admin'
+    //   cashier -> request.auth.token.role in ['admin','cashier']
+    // Deploy with: firebase deploy --only firestore:rules
+    function signedIn() { return request.auth != null; }
+    function isAdmin() { return signedIn() && request.auth.token.role == 'admin'; }
+    function isStaff() { return signedIn() && request.auth.token.role in ['admin', 'cashier']; }
+
+    function validInvoice() {
+      return request.resource.data.customer_name is string
+        && request.resource.data.products is list
+        && request.resource.data.products.size() > 0;
+    }
+
+    match /invoices/{id} {
+      allow read: if isStaff();
+      allow create: if isStaff() && validInvoice();
+      allow update: if isStaff() && validInvoice();
+      // deletes admin-only; bulk deleteOldInvoices must run server-side
+      allow delete: if isAdmin();
+    }
+    match /products/{id} {
+      allow read: if isStaff();
+      allow create, update: if isStaff();
+      allow delete: if isAdmin();
+    }
+    match /customers/{id} {
+      allow read: if isStaff();
+      allow create, update: if isStaff();
+      allow delete: if isAdmin();
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

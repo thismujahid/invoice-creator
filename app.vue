@@ -1,205 +1,72 @@
 <template>
-  <v-app>
-    <v-snackbar
-      @update:model-value="(v) => (!v ? (authStore.snackBarText = '') : false)"
-      location="top end"
-      :color="authStore.snackBarColor || 'primary'"
-      z-index="999999"
-      :model-value="authStore.snackBarText ? true : false"
-      :timeout="5000"
-    >
-      {{ authStore.snackBarText }}
-    </v-snackbar>
-
-    <v-locale-provider rtl v-if="!initFirebase">
+  <UApp>
+    <UToaster />
+    <div v-if="!initFirebase" dir="rtl">
       <FormsAuthScreen :is-in-login="true" @success="(v) => (isAuthed = v)" v-if="!isAuthed" />
-      <div id="printableArea" class="printable-area invoice-creator-view"></div>
-      <div class="invoice-creator-app" v-if="isAuthed">
-        <v-app-bar absolute app color="light" flat border>
-          <v-toolbar-title>
-            <v-btn
-              class="small-padding small-btn"
-              @click="sideMenu = !sideMenu"
-            >
-              <v-icon icon="mdi-menu" />
-            </v-btn>
-            قريتي | {{ currentPageTitle }}</v-toolbar-title
-          >
-          <div
-            v-if="authStore.userInfo"
-            class="px-2 d-flex align-center ga-3"
-            style="cursor: pointer"
-          >
-            <v-menu offset="12" location="bottom right" v-if="userDetails">
-              <template #activator="{ props }">
-                <div v-bind="props" class="d-flex align-center ga-1">
-                  <v-avatar
-                    :size="$vuetify.display.smAndDown ? '30' : '40'"
-                    color="success"
-                    >{{ userDetails.avatar_text }}</v-avatar
-                  >
-                  <div style="line-height: 1">
-                    <div>
-                      {{ userDetails.name }}
-                    </div>
-                    <small>
-                      {{ userDetails.position }}
-                    </small>
-                  </div>
-                </div>
-              </template>
-              <div class="bg-white">
-                <v-dialog max-width="300px">
-                  <template #activator="{ props }">
-                    <v-btn
-                      flat
-                      color="error"
-                      v-bind="props"
-                      variant="tonal"
-                      density="compact"
-                    >
-                      <v-icon icon="mdi-logout" size="25" />
-                      تسجيل الخروج
-                    </v-btn>
-                  </template>
-                  <template #default="{ isActive }">
-                    <div class="bg-white py-4 px-4 rounded">
-                      <h4>هل أنت متأكد</h4>
-                      <p class="mb-4">
-                        أنت علي وشك تسجيل الخروج وإغلاق التطبيق
-                      </p>
-                      <v-btn
-                        @click="logout"
-                        :loading="loading"
-                        block
-                        color="error"
-                        flat
-                        >تأكيد الإغلاق</v-btn
-                      >
-                      <v-btn
-                        block
-                        @click="isActive.value = false"
-                        color="black"
-                        variant="plain"
-                        flat
-                        >إلغاء</v-btn
-                      >
-                    </div>
-                  </template>
-                </v-dialog>
-              </div>
-            </v-menu>
-          </div>
-        </v-app-bar>
-        <v-navigation-drawer app mobile temporary v-model="sideMenu">
-          <v-list>
-            <v-list-item color="success" to="/" prepend-icon="mdi-file-plus">
-              <v-list-item-title>إنشاء فاتورة</v-list-item-title>
-            </v-list-item>
-            <v-list-item
-              color="success"
-              to="/products"
-              v-if="isAdmin"
-              prepend-icon="mdi-grid-large"
-            >
-              <v-list-item-title>المنتجات</v-list-item-title>
-            </v-list-item>
-            <v-list-item
-              color="success"
-              to="/customers"
-              prepend-icon="mdi-account-multiple"
-            >
-              <v-list-item-title>العملاء</v-list-item-title>
-            </v-list-item>
-            <v-list-item
-              to="/invoices"
-              color="success"
-              prepend-icon="mdi-file-multiple"
-            >
-              <v-list-item-title>الفواتير</v-list-item-title>
-            </v-list-item>
-          </v-list>
-        </v-navigation-drawer>
-        <v-main>
-          <NuxtRouteAnnouncer />
-          <div style="min-height: 90vh">
-            <NuxtPage />
-          </div>
-          <v-footer color="primary">
-            <div class="text-center w-100" style="font-size: 18px">
-              برمجة وتطوير:
-              <NuxtLink
-                target="_blank"
-                class="text-white"
-                href="https://thismujahid.github.io"
-                >محمد إبراهيم مجاهد</NuxtLink
-              >
-              <div>جميع الحقوق محفوظة @ {{ new Date().getFullYear() }}</div>
-            </div>
-          </v-footer>
-        </v-main>
-      </div>
-    </v-locale-provider>
-    <div
-      class="d-flex align-center justify-center ga-3 w-100"
-      style="height: 100vh"
-      v-else-if="initFirebase"
-    >
+      <div id="printableArea" class="printable-area"></div>
+      <NuxtLayout v-if="isAuthed">
+        <NuxtRouteAnnouncer />
+        <NuxtPage />
+      </NuxtLayout>
+    </div>
+    <div v-else class="flex h-screen w-full items-center justify-center gap-3">
       جاري التحميل...
-      <v-progress-circular indeterminate size="20" width="2" />
+      <UIcon name="i-lucide-loader-circle" class="size-5 animate-spin" />
       <div v-show="false">
         <NuxtPage />
       </div>
     </div>
-  </v-app>
+  </UApp>
 </template>
-<script setup>
-useSeoMeta({
-  title: "قريتي",
-});
+<script setup lang="ts">
+import type { User } from "firebase/auth";
+
+useSeoMeta({ title: "قريتي" });
 useHead({
+  htmlAttrs: { dir: "rtl", lang: "ar" },
   link: [{ rel: "manifest", href: "/site.webmanifest" }],
 });
 const authStore = useAuth();
 const { auth } = useFirebase();
+const toast = useToast();
 auth.languageCode = "ar";
 const initFirebase = ref(true);
-const sideMenu = ref(false);
-const loading = ref(false);
-const isAuthed = ref(auth.currentUser ? true : false);
-const route = useRoute();
+const isAuthed = ref<boolean>(!!auth.currentUser);
+// Single toast render path: writers set snackBarText, we show + consume.
+watch(
+  () => authStore.snackBarText,
+  (t) => {
+    if (!t) return;
+    toast.add({
+      title: t,
+      color: authStore.snackBarColor === "error" ? "error" : authStore.snackBarColor === "primary" ? "primary" : "success",
+    });
+    authStore.snackBarText = "";
+  }
+);
 auth.onAuthStateChanged(
-  (user) => {
+  (user: User | null) => {
     setTimeout(() => {
-      isAuthed.value = user ? true : false;
+      isAuthed.value = !!user;
       initFirebase.value = false;
       if (user) {
         authStore.userData = {
           name: user.displayName,
           email: user.email,
-          phone: user.phone,
+          phone: user.phoneNumber,
           avatar: user.photoURL,
           id: user.uid,
         };
+      } else {
+        authStore.userData = null;
       }
     }, 100);
   },
-  (err) => {
+  (err: unknown) => {
     initFirebase.value = false;
     console.error(err);
   }
 );
-const currentPageTitle = computed(() => {
-  return route.meta.title || "";
-});
-
-async function logout() {
-  loading.value = true;
-  await auth.signOut();
-  authStore.snackBarText = "لقد تم إغلاق التطبيق بنجاح، إلى اللقاء";
-  authStore.snackBarColor = "success";
-  loading.value = false;
-}
 </script>
 <style>
 @import url("https://fonts.googleapis.com/css2?family=Baloo+Bhaijaan+2:wght@400..800&display=swap");
@@ -231,217 +98,35 @@ body {
   font-family: "Baloo Bhaijaan 2", serif;
 }
 
-.v-toolbar {
-  position: sticky !important;
-}
-.v-main {
-  padding-top: 0 !important;
-}
-.v-btn--flat {
-  height: 35px !important;
-  padding-inline: 25px !important;
-}
 .printable-area {
   display: none;
 }
+/* Same mechanism as home branch: hide the whole app shell in print and
+   show only #printableArea (filled by useDownloadPDF before window.print).
+   Mapped from Vuetify originals:
+   .invoice-creator-app -> #app-shell | .v-btn -> .no-print
+   .v-alert -> .no-print | .v-overlay-container -> [role=dialog] + [data-slot=overlay/viewport] */
 @media print {
   html,
   body {
     font-size: 16px !important;
   }
 
-  .v-alert {
+  #app-shell,
+  .no-print,
+  [role="dialog"],
+  [data-slot="overlay"],
+  [data-slot="viewport"] {
     display: none !important;
   }
-  .v-overlay-container {
-    display: none;
-  }
   .printable-area {
-    display: block;
+    display: block !important;
     padding: 20px;
   }
   .printable-area * {
     font-weight: 400;
     color: rgba(0, 0, 0, 0.781);
   }
-  .printable-area .footer {
-    border-bottom: thin solid rgba(0, 0, 0, 1);
-    border-right: thin solid rgba(0, 0, 0, 1);
-    border-left: thin solid rgba(0, 0, 0, 1);
-    padding: 5px 5px 5px 5px;
-  }
-  .printable-area .footer div {
-    display: flex;
-    padding-block: 5px;
-    align-items: center;
-    justify-content: space-between;
-    line-height: 1;
-  }
-  .printable-area .footer div:not(:last-of-type) {
-    border-bottom: 1px dashed rgba(128, 128, 128, 0.163);
-  }
-  .v-btn {
-    display: none;
-  }
-  .invoice-creator-app {
-    display: none;
-  }
-  .v-data-table {
-    max-height: unset !important;
-  }
-}
-.justify-between {
-  justify-content: space-between;
-}
-.invoice-creator-view .app {
-  padding: 30px;
-  min-height: 90vh;
-  gap: 1.875rem;
-  display: flex;
-}
-.invoice-creator-view.in-popup {
-  min-width: 650px;
-}
-
-.invoice-creator-view .app .invoice {
-  border-radius: 5px;
-  border: 1px solid gray;
-  padding: 10px;
-  width: 540px !important;
-  overflow: auto;
-}
-.invoice-creator-view .app .invoice * {
-  font-weight: 400;
-  color: rgba(0, 0, 0, 0.781);
-}
-#invoice-data .v-btn * {
-  color: #fff !important;
-}
-.invoice-creator-view .app .invoice .v-alert,
-.invoice-creator-view .app .invoice .v-alert * {
-  color: #ffae00e1 !important;
-}
-.invoice-creator-view .invoice.printing {
-  border: unset;
-}
-.invoice-creator-view .invoice.printing .v-btn {
-  display: none;
-}
-.invoice-creator-view #invoice-data {
-  width: 500px !important;
-  max-width: 500px !important;
-}
-.invoice-creator-view .v-data-table {
-  border-radius: unset !important;
-  margin-top: 5px !important;
-}
-.invoice-creator-view .v-data-table thead tr th {
-  border-top: thin solid rgba(0, 0, 0, 1) !important;
-}
-
-.invoice-creator-view .v-data-table thead tr th,
-.invoice-creator-view .v-data-table tbody tr td {
-  border-bottom: thin solid rgba(0, 0, 0, 1) !important;
-  text-align: center;
-}
-.invoice-creator-view .v-data-table tbody tr:first-of-type td {
-  border-top: unset !important;
-}
-.invoice-creator-view .v-data-table thead tr th:first-of-type,
-.invoice-creator-view .v-data-table tbody tr td:first-of-type {
-  border-right: thin solid rgba(0, 0, 0, 1) !important;
-}
-.invoice-creator-view .v-data-table thead tr th:last-of-type,
-.invoice-creator-view .v-data-table tbody tr td:last-of-type {
-  border-left: thin solid rgba(0, 0, 0, 1) !important;
-}
-.invoice-creator-view .v-data-table thead tr th:nth-child(1),
-.invoice-creator-view .v-data-table tbody tr td:nth-child(1) {
-  border-left: thin solid rgba(0, 0, 0, 1) !important;
-}
-.invoice-creator-view .v-data-table thead tr th:nth-child(2),
-.invoice-creator-view .v-data-table tbody tr td:nth-child(2) {
-  border-left: thin solid rgba(0, 0, 0, 1) !important;
-}
-.invoice-creator-view .v-data-table thead tr th:nth-child(3),
-.invoice-creator-view .v-data-table tbody tr td:nth-child(3) {
-  border-left: thin solid rgba(0, 0, 0, 1) !important;
-}
-.v-data-table-header__content {
-  justify-content: center !important;
-}
-.invoice-creator-view .v-data-table thead tr th:nth-child(4),
-.invoice-creator-view .v-data-table tbody tr td:nth-child(4) {
-  border-left: thin solid rgba(0, 0, 0, 1) !important;
-}
-.invoice-creator-view .v-data-table thead tr th:nth-child(5),
-.invoice-creator-view .v-data-table tbody tr td:nth-child(5) {
-  border-left: thin solid rgba(0, 0, 0, 1) !important;
-}
-.invoice-creator-view .v-data-table__td {
-  padding: 0 5px !important;
-  height: 30px !important;
-}
-.invoice-creator-view .v-data-table__td div {
-  text-align: center !important;
-  padding: 0 !important;
-}
-.invoice-creator-view .invoice .footer {
-  border-bottom: thin solid rgba(0, 0, 0, 1);
-  border-right: thin solid rgba(0, 0, 0, 1);
-  border-left: thin solid rgba(0, 0, 0, 1);
-  padding: 5px;
-}
-.invoice thead {
-  position: sticky;
-  top: 0;
-  background-color: #fff;
-}
-.v-input {
-  margin-bottom: 15px;
-}
-.v-input:has(.v-input__details) {
-  margin-bottom: 8px;
-}
-.invoice-creator-view .invoice .footer div {
-  display: flex;
-  padding-block: 5px;
-  align-items: center;
-  padding-inline-end: 10px;
-  justify-content: space-between;
-  line-height: 1;
-}
-.invoice-creator-view .invoice .footer div:not(:last-of-type) {
-  border-bottom: 1px dashed rgba(128, 128, 128, 0.163);
-}
-.invoice-creator-view .app .form {
-  border-radius: 5px;
-  border: 1px solid gray;
-  padding: 30px;
-  width: calc(100% - 530px);
-}
-@media (max-width: 62rem) {
-  .invoice-creator-view .app {
-    flex-wrap: wrap;
-  }
-  .invoice-creator-view .app .form {
-    width: 100%;
-  }
-}
-.v-navigation-drawer {
-  max-height: 100vh !important;
-}
-.invoice-creator-view .invoice-header {
-  position: sticky !important;
-  top: 0px !important;
-  background-color: #fff;
-  z-index: 999;
-}
-.invoice-footer {
-  position: sticky !important;
-  bottom: 0px !important;
-  z-index: 999;
-  background-color: #fff;
 }
 .custom-scrollbar {
   scrollbar-width: thin; /* For Firefox */
@@ -465,56 +150,6 @@ body {
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background-color: #555; /* Thumb color on hover */
-}
-.v-btn--icon.v-btn--density-default {
-  width: 40px !important;
-  height: 40px !important;
-  display: flex;
-  min-width: unset !important;
-}
-.v-btn--icon.v-btn--density-default .mdi {
-  font-size: 30px !important;
-}
-@media (max-width: 600px) {
-  html,
-  body {
-    font-size: 11px;
-  }
-
-  table tr td {
-    text-wrap: nowrap !important;
-  }
-  .invoice-creator-view .app {
-    padding: 15px !important;
-  }
-  .invoice-creator-view .app .form {
-    border: unset !important;
-    padding: 0 !important;
-  }
-  .v-input__details {
-    display: none !important;
-  }
-  .v-input__details:has(.v-messages__message) {
-    display: block !important;
-  }
-  .v-text-field input {
-    padding: 7px !important;
-  }
-  .v-input--density-default {
-    --v-input-control-height: 48px !important;
-  }
-  .v-field__input {
-    padding-bottom: unset !important;
-    padding-top: unset !important;
-  }
-  .small-padding {
-    padding: 7px !important;
-  }
-  .small-padding.small-btn {
-    min-width: unset !important;
-    width: 30px !important;
-    font-size: 16px !important;
-  }
 }
 input,
 textarea {

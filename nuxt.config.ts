@@ -1,11 +1,27 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
-import { transformAssetUrls } from 'vite-plugin-vuetify'
-
-import { ar } from 'vuetify/locale';
 export default defineNuxtConfig({
   compatibilityDate: "2024-11-01",
   devtools: { enabled: false },
-  modules: ["vuetify-nuxt-module", "@pinia/nuxt", "@vite-pwa/nuxt"],
+  typescript: {
+    strict: true,
+    typeCheck: false,
+  },
+  runtimeConfig: {
+    public: {
+      firebaseApiKey: "",
+      firebaseAuthDomain: "",
+      firebaseProjectId: "",
+      firebaseStorageBucket: "",
+      firebaseMessagingSenderId: "",
+      firebaseAppId: "",
+      firebaseMeasurementId: "",
+    },
+  },
+  modules: ["@pinia/nuxt", "@vite-pwa/nuxt", "@nuxt/ui"],
+  css: ["~/assets/css/main.css"],
+  ui: {
+    colorMode: false,
+  },
   nitro: {
     prerender: {
       autoSubfolderIndex: true,
@@ -13,36 +29,10 @@ export default defineNuxtConfig({
     }
   },
   vite: {
-    vue: {
-      template: {
-        transformAssetUrls,
-      },
-    },
     build: {
       cssMinify: true,
       cssCodeSplit: true,
       minify: 'terser'
-    }
-  },
-  vuetify:{
-    vuetifyOptions:{
-      labComponents: true,
-      theme:{
-        themes:{
-          light:{
-            colors:{
-              primary:"#09090A",
-              error:"#FF233E",
-              success:"#50CD89",
-              "on-success":"#fff"
-            }
-          }
-        }
-      },
-      locale: {
-        locale: 'ar',
-        messages: {ar}
-      },
     }
   }
 });

@@ -1,238 +1,248 @@
 <template>
-  <div
-    class="bg-white px-4 py-4 rounded"
-  >
-    <div class="d-flex align-center mb-4 justify-between">
-      <h2>العملاء</h2>
-      <forms-customer
-        v-model="customerFormState"
-        :edit="customerForm"
-        :refresher="loadCustomers"
-      >
-        <v-btn flat color="success" v-bind="props"
-          ><v-icon icon="mdi-plus" />إضافة عميل جديد</v-btn
+  <div class="rounded-xl bg-white p-3 shadow-sm sm:p-4">
+    <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <h2 class="text-lg font-bold text-gray-900">العملاء</h2>
+      <div class="flex flex-wrap gap-2">
+        <!-- HOME delta: no customers export (as in home branch). -->
+        <FormsCustomer
+          v-model="customerFormState"
+          :edit="customerForm"
+          :refresher="loadCustomers"
         >
-      </forms-customer>
-    </div>
-    <v-text-field
-      max-width="350"
-      label="بحث"
-      variant="outlined"
-      v-model="searchText"
-    ></v-text-field>
-    <hr v-if="filteredItems.length > 0" />
-    <v-data-table
-      no-data-text="لا يوجد عملاء حتى الأن"
-      :items-length="filteredItems.length||0"
-      :hide-default-header="filteredItems.length === 0"
-      :items-per-page="currentPerPage"
-      :page="currentPage"
-      hide-default-footer
-      :items="paginateArray"
-      :loading="loading"
-      hover
-    >
-      <template v-slot:headers="{ columns, isSorted, getSortIcon, toggleSort }">
-        <tr class="header-row">
-          <template v-for="column in columns" :key="column.key">
-            <td
-              v-if="!['id'].includes(column.key)"
-            >
-              <span
-                class="mr-2 cursor-pointer"
-                v-if="column.title"
-                @click="() => toggleSort(column)"
-                >{{ formateHeaderTitle(column.title) }}</span
-              >
-              <template v-if="isSorted(column)">
-                <v-icon :icon="getSortIcon(column)"></v-icon>
-              </template>
-            </td>
-          </template>
-          <td>
-            <span> الأدوات </span>
-          </td>
-        </tr>
-      </template>
-      <template v-slot:item="data">
-        <tr>
-          <template v-for="(value, key, i) of data.item">
-            <td v-if="key !== 'id'">
-              {{ value }}
-            </td>
-          </template>
-          <td class="pt-4 pb-4">
-            <div class="d-flex ga-3">
-
-              <v-btn
-                size="40"
-                @click="editCustomer(data.item)"
-                variant="tonal"
-                flat
-                color="success"
-                v-tooltip:top="'تعديل'"
-                ><v-icon size="30" icon="mdi-pencil"
-              /></v-btn>
-              <v-dialog v-if="isAdmin" persistent max-width="300px">
-                <template #activator="{ props }">
-                  <v-btn
-                    v-tooltip:top="'حذف'"
-                    variant="tonal"
-                    flat
-                    size="40"
-                    v-bind="props"
-                    color="error"
-                    ><v-icon size="30" icon="mdi-delete-outline"
-                  /></v-btn>
-                </template>
-                <template #default="{ isActive }">
-                  <div class="bg-white py-4 px-4 rounded">
-                    <h4>هل أنت متأكد</h4>
-                    <p class="mb-4">
-                      أنت علي وشك حذف العميل {{ data.item.name }}
-                    </p>
-                    <v-btn
-                      @click="deleteCustomer(data.item.id)"
-                      block
-                      color="error"
-                      :loading="deleting"
-                      flat
-                      >حذف</v-btn
-                    >
-                    <v-btn
-                      block
-                      :disabled="deleting"
-                      @click="isActive.value = false"
-                      color="black"
-                      variant="plain"
-                      flat
-                      >إلغاء</v-btn
-                    >
-                  </div>
-                </template>
-              </v-dialog>
-            </div>
-          </td>
-        </tr>
-      </template>
-    </v-data-table>
-    <div class="d-md-flex d-block align-items" style="justify-content: space-between">
-      <div class="app-table__footer__per-page">
-        <v-menu :disabled="loading">
-          <template v-slot:activator="{ props }">
-            <v-btn
-              class="main"
-              color="gray"
-              append-icon="mdi-chevron-down"
-                       :text="String(currentPerPage)"
-
-              variant="tonal"
-              v-bind="props"
-            />
-          </template>
-          <v-list>
-            <v-list-item
-              v-for="item in [10, 25, 50, 100, 150]"
-              @click="currentPerPage = item"
-              >{{ item }}</v-list-item
-            >
-          </v-list>
-        </v-menu>
+          <UButton icon="i-lucide-plus" color="success"
+            >إضافة عميل جديد</UButton
+          >
+        </FormsCustomer>
       </div>
-      <v-pagination
-        size="30"
-        total-visible="5"
-        v-model="currentPage"
-        :length="(filteredItems.length / currentPerPage)||0"
-        active-color="primary"
-        :total-visible="7"
-        variant="flat"
-      ></v-pagination>
     </div>
+    <UInput
+      v-model="searchText"
+      placeholder="بحث"
+      icon="i-lucide-search"
+      size="lg"
+      class="mb-3 w-full sm:max-w-xs"
+      />
+    <USkeleton v-if="loading" class="h-24 w-full" />
+    <template v-else>
+      <!-- Desktop table -->
+      <div class="hidden overflow-x-auto md:block">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-gray-200 text-gray-500">
+              <th class="p-2 text-start font-medium">الأسم</th>
+              <th class="p-2 text-start font-medium">الهاتف</th>
+              <th class="p-2 text-start font-medium">الأدوات</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="c in paginateArray"
+              :key="c.id ?? String(c.phone ?? '')"
+              class="border-b border-gray-100 last:border-0 hover:bg-gray-50"
+            >
+              <td class="p-2 font-medium">{{ c.name }}</td>
+              <td class="p-2 text-gray-600" dir="ltr">{{ c.phone }}</td>
+              <td class="p-2">
+                <div class="flex gap-2">
+                  <UButton
+                    icon="i-lucide-pencil"
+                    color="success"
+                    variant="soft"
+                    size="xs"
+                    aria-label="تعديل"
+                    @click="editCustomer(c)"
+                    class="flex items-center justify-center"
+                    />
+                  <UButton
+                    v-if="isAdmin"
+                    icon="i-lucide-trash-2"
+                    color="error"
+                    variant="soft"
+                    size="xs"
+                    aria-label="حذف"
+                    @click="confirmDelete = c"
+                    class="flex items-center justify-center"
+                    />
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <UEmpty
+          v-if="!paginateArray.length"
+          icon="i-lucide-users"
+          title="لا يوجد عملاء حتى الأن"
+          />
+      </div>
+      <!-- Mobile cards -->
+      <div class="grid gap-2 md:hidden">
+        <UCard
+          v-for="c in paginateArray"
+          :key="c.id ?? String(c.phone ?? '')"
+          variant="outline"
+        >
+          <div class="flex items-center justify-between gap-2">
+            <div class="min-w-0">
+              <div class="truncate font-bold">{{ c.name }}</div>
+              <div class="text-sm text-gray-500" dir="ltr">{{ c.phone }}</div>
+            </div>
+            <div class="flex shrink-0 gap-2">
+              <UButton
+                icon="i-lucide-pencil"
+                color="success"
+                variant="soft"
+                size="xs"
+                aria-label="تعديل"
+                @click="editCustomer(c)"
+                class="flex items-center justify-center"
+                />
+              <UButton
+                v-if="isAdmin"
+                icon="i-lucide-trash-2"
+                color="error"
+                variant="soft"
+                size="xs"
+                aria-label="حذف"
+                @click="confirmDelete = c"
+                class="flex items-center justify-center"
+                />
+            </div>
+          </div>
+        </UCard>
+        <UEmpty
+          v-if="!paginateArray.length"
+          icon="i-lucide-users"
+          title="لا يوجد عملاء حتى الأن"
+          />
+      </div>
+    </template>
+    <div class="mt-3 flex items-center justify-between gap-2">
+      <USelect
+        v-model="currentPerPage"
+        :items="[10, 25, 50, 100, 150]"
+        size="sm"
+        class="w-24"
+        />
+      <UPagination
+        dir="ltr"
+        v-model:page="currentPage"
+        :total="filteredItems.length"
+        :items-per-page="currentPerPage"
+        :sibling-count="1"
+        size="sm"
+        />
+    </div>
+    <UiAppDialog v-model:open="deleteOpen" title="هل أنت متأكد">
+      <p class="mb-4 text-gray-600">
+        أنت علي وشك حذف العميل {{ confirmDelete?.name }}
+      </p>
+      <template #footer>
+        <div class="flex w-full flex-col gap-2">
+          <UButton
+            color="error"
+            block
+            :loading="deleting"
+            @click="deleteConfirmed"
+            >حذف</UButton
+          >
+          <UButton
+            color="neutral"
+            variant="ghost"
+            block
+            :disabled="deleting"
+            @click="confirmDelete = null"
+            >إلغاء</UButton
+          >
+        </div>
+      </template>
+    </UiAppDialog>
   </div>
 </template>
 
-<script setup>
-definePageMeta({
-  title: "العملاء",
-});
+<script setup lang="ts">
+import type { Customer } from "~/types";
+
+definePageMeta({ title: "العملاء" });
 const customerFormState = ref(false);
 const customersStore = useCustomersStore();
-const filteredItems = computed(()=>{
- return customersStore.list.filter(customer=>{
-    if(searchText.value){
-      currentPage.value = 1;
-      return customer.name?.includes(searchText.value)||customer.phone?.includes(searchText.value)
-    }else return true;
-  })
-})
-const paginateArray = computed(() => {
-  // Calculate starting and ending indices
-  const startIndex = (currentPage.value - 1) * currentPerPage.value;
-  const endIndex = startIndex + currentPerPage.value;
-
-  // Return the slice of the array for the current page
-  return filteredItems.value.slice(startIndex, endIndex).map((customer) => ({
-    id: customer.id,
-    name: customer.name,
-    phone: customer.phone,
-  }));
-});
-const searchText = ref();
-const customerForm = ref({
-  name: "",
-  phone: null,
-});
+const searchText = ref<string>("");
+const customerForm = ref<Customer>({ name: "", phone: null });
 const currentPage = ref(1);
 const currentPerPage = ref(10);
 const saving = ref(false);
 const loading = ref(false);
 const deleting = ref(false);
-async function saveProduct(isActive) {
+
+// FLAG [B4-FIXED]: watcher instead of side-effect in computed.
+watch(searchText, () => {
+  currentPage.value = 1;
+});
+
+const filteredItems = computed<Customer[]>(() => {
+  const q = searchText.value?.trim();
+  if (!q) return [...customersStore.list];
+  return customersStore.list.filter(
+    (customer) =>
+      customer.name?.includes(q) || String(customer.phone ?? "").includes(q),
+  );
+});
+const paginateArray = computed(() => {
+  const startIndex = (currentPage.value - 1) * currentPerPage.value;
+  return filteredItems.value
+    .slice(startIndex, startIndex + currentPerPage.value)
+    .map((customer) => ({
+      id: customer.id,
+      name: customer.name,
+      phone: customer.phone,
+    }));
+});
+async function saveProduct(isActive: { value: boolean }) {
   saving.value = true;
-  if (customerForm.value.id) {
-    await customersStore.updateCustomer(customerForm.value.id, {
-      ...customerForm.value,
-    });
-  } else {
-    await customersStore.addCustomer({ ...customerForm.value });
+  try {
+    if (customerForm.value.id) {
+      await customersStore.updateCustomer(customerForm.value.id, {
+        ...customerForm.value,
+      });
+    } else {
+      await customersStore.addCustomer({ ...customerForm.value });
+    }
+    await loadCustomers();
+    customerForm.value = { name: "", phone: null };
+    isActive.value = false;
+  } finally {
+    saving.value = false;
   }
-  await loadCustomers();
-  customerForm.value = {
-    name: "",
-    phone: null,
-  };
-  saving.value = false;
-  isActive.value = false;
 }
-async function loadCustomers() {
+async function loadCustomers(): Promise<void> {
   loading.value = true;
-  await customersStore.fetchCustomers();
-  loading.value = false;
+  try {
+    await customersStore.fetchCustomers();
+  } finally {
+    loading.value = false;
+  }
 }
-function editCustomer(customer) {
-  customerForm.value = {
-    ...customer,
-  };
+function editCustomer(customer: Customer): void {
+  customerForm.value = { ...customer };
   customerFormState.value = true;
 }
-function formateHeaderTitle(title) {
-  const text = title
-    .split("_")
-    .map((word) => {
-      const string = word.charAt(0).toUpperCase() + word.slice(1);
-      return string;
-    })
-    .join(" ");
-  if (text === "Name") return "الأسم";
-  else if (text === "Phone") return "الهاتف";
-  else return "";
-}
-async function deleteCustomer(id) {
+const confirmDelete = ref<Customer | null>(null);
+const deleteOpen = computed({
+  get: () => confirmDelete.value !== null,
+  set: (v: boolean) => {
+    if (!v) confirmDelete.value = null;
+  },
+});
+async function deleteConfirmed(): Promise<void> {
+  const id = confirmDelete.value?.id;
+  if (!id) return;
   deleting.value = true;
-  await customersStore.deleteCustomer(id);
-  await loadCustomers();
-  deleting.value = false;
+  try {
+    await customersStore.deleteCustomer(id);
+    await loadCustomers();
+  } finally {
+    deleting.value = false;
+    confirmDelete.value = null;
+  }
 }
-loadCustomers();
+void loadCustomers();
 </script>
