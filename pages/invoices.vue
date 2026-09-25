@@ -181,7 +181,10 @@
               :key="row.id"
               class="border-b border-gray-100 last:border-0 hover:bg-gray-50"
             >
-              <td class="p-2 font-medium">{{ row.name }}</td>
+              <td class="p-2 font-medium">
+                {{ row.name }}
+                <UBadge v-if="row.returnBadge" color="warning" variant="soft" size="xs" class="ms-1">{{ row.returnBadge }}</UBadge>
+              </td>
               <td class="p-2 text-gray-600" dir="ltr">{{ row.phone }}</td>
               <td class="p-2">{{ row.products_count }}</td>
               <td class="p-2 font-semibold">{{ row.total }}</td>
@@ -233,7 +236,17 @@
                       aria-label="عرض الفاتورة"
                       @click="viewRow = row"
                       class="flex items-center justify-center"
-                  /></UTooltip>
+                    /></UTooltip>
+                  <UTooltip text="إنشاء مرتجع"
+                    ><UButton
+                      icon="i-lucide-undo-2"
+                      color="warning"
+                      variant="soft"
+                      size="xs"
+                      aria-label="إنشاء مرتجع"
+                      @click="openReturn(row.invoice)"
+                      class="flex items-center justify-center"
+                    /></UTooltip>
                   <UTooltip v-if="isAdmin" text="حذف"
                     ><UButton
                       icon="i-lucide-trash-2"
@@ -266,6 +279,7 @@
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0">
               <div class="truncate font-bold">{{ row.name }}</div>
+              <UBadge v-if="row.returnBadge" color="warning" variant="soft" size="xs" class="mt-0.5">{{ row.returnBadge }}</UBadge>
               <div class="text-xs text-gray-500" dir="ltr">{{ row.phone }}</div>
               <div class="mt-1 text-xs text-gray-500">
                 {{ row.created_at }} • {{ row.products_count }} منتجات
@@ -308,6 +322,15 @@
                 size="xs"
                 aria-label="تعديل"
                 @click="copyInvoiceForEdit(row.invoice, false)"
+                class="flex items-center justify-center"
+              />
+              <UButton
+                icon="i-lucide-undo-2"
+                color="warning"
+                variant="soft"
+                size="xs"
+                aria-label="مرتجع"
+                @click="openReturn(row.invoice)"
                 class="flex items-center justify-center"
               />
               <UButton
@@ -389,12 +412,42 @@
         </div>
       </template>
     </UiAppDialog>
+    <!-- Create return -->
+    <UiAppDialog v-model:open="returnOpen" title="إنشاء مرتجع">
+      <div v-if="returnInvoice" class="space-y-3">
+        <p class="text-sm text-gray-500">
+          الفاتورة: <strong>{{ returnInvoice.customer_name }}</strong>
+          — المتبقي الحالي: <strong>{{ formatePrice(debtOf(returnInvoice)) }}</strong>
+        </p>
+        <div v-for="r in returnRows" :key="r.key" class="rounded-lg border border-gray-200 p-2.5">
+          <div class="mb-1.5 flex items-center justify-between gap-2">
+            <div class="min-w-0 text-sm font-bold">{{ r.product_name }}</div>
+            <div class="shrink-0 text-xs text-gray-500">سعر البيع: {{ formatePrice(r.unit_price) }} • المتاح: {{ r.maxQty }}</div>
+          </div>
+          <UInputNumber v-model="r.qty" :min="0" :max="r.maxQty" :step="1" size="lg" class="w-full" />
+          <div class="mt-1 text-xs text-gray-500">قيمة الاسترداد: {{ formatePrice(previewRefund(r)) }}</div>
+        </div>
+        <UEmpty v-if="!returnRows.length" icon="i-lucide-undo-2" title="لا توجد أصناف قابلة للإرجاع" />
+        <UFormField label="ملاحظة">
+          <UInput v-model="returnNote" placeholder="اختياري" size="lg" class="w-full" />
+        </UFormField>
+        <UAlert color="info" variant="soft" :title="`الإجمالي المسترد: ${formatePrice(returnPreviewTotal)} — تخفيض الدين: ${formatePrice(returnPreviewSplit.debtReduction)} — نقدي: ${formatePrice(returnPreviewSplit.cashRefund)}`" />
+        <p v-if="returnError" class="text-sm font-semibold text-red-600">{{ returnError }}</p>
+      </div>
+      <template #footer>
+        <div class="flex w-full gap-2">
+          <UButton color="warning" class="min-h-11 flex-1" :loading="returnBusy" :disabled="!returnRows.length" icon="i-lucide-undo-2" @click="submitReturn">تأكيد المرتجع</UButton>
+          <UButton color="neutral" variant="soft" class="min-h-11 flex-1" :disabled="returnBusy" @click="returnOpen = false">إلغاء</UButton>
+        </div>
+      </template>
+    </UiAppDialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import type { Invoice } from "~/types";
 import { toDateSafe } from "~/types";
+import type { ReturnRow } from "~/composables/useInvoiceReturns";
 
 definePageMeta({ title: "الفواتير" });
 const hideTotal = ref(true);
@@ -429,16 +482,41 @@ watch(searchText, () => {
 
 // HOME delta: settle debts in full (single or bulk) — preserved from home.
 async function payFull(listInvs: Invoice[] | null | undefined) {
-  if (!listInvs || !listInvs.length) return;
+  // Same UX as before, now atomic + ledger-logged via debt payments (F18/F19).
+  const list = (listInvs ?? []).filter((inv) => inv.id && debtOf(inv) > 0);
+  if (!list.length) return;
   isPayingFull.value = true;
   try {
-    for (const element of listInvs) {
-      await invoicesStore.updateInvoice(element.id as string, {
-        paid_amount: calcTotal(element) - discountAmount(element),
-        remaining: 0,
+    const groups = new Map<string, Invoice[]>();
+    for (const inv of list) {
+      const key = debtsApi.customerKeyOf({
+        customer_id: inv.customer_id,
+        customer_phone: inv.customer_phone,
+        customer_name: inv.customer_name,
       });
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(inv);
     }
-    await loadInvoices();
+    for (const [, invs] of groups) {
+      const first = invs[0];
+      if (!first) continue;
+      const customer_id =
+        first.customer_id || String(first.customer_phone ?? first.customer_name ?? "");
+      const res = await debtsApi.payDebts({
+        customer_id,
+        allocations: invs.map((inv) => ({
+          type: "invoice" as const,
+          reference_id: inv.id as string,
+          amount: debtOf(inv),
+        })),
+      });
+      if (!res.ok) {
+        notifyToast(res.error, "error");
+        return;
+      }
+    }
+    notifyToast("تم تسجيل السداد وتحديث الخزنة.", "success");
+    await Promise.all([loadInvoices(), loadReturnsMap()]);
   } finally {
     isPayingFull.value = false;
   }
@@ -469,7 +547,11 @@ function formatTimestamp(
   return `${formattedDate} ${formattedTime}`;
 }
 const { formatePrice, calcTotal } = useHelpers();
+const { round2, lineRefundValue, netRatioOf, splitRefund } = useFinance();
 const invoicesStore = useInvoicesStore();
+const returnsApi = useInvoiceReturns();
+const debtsApi = useDebts();
+const { notify: notifyToast } = useAppToast();
 // HOME delta: debts/profit math (preserved from home branch).
 const toNum = (num: unknown): number => {
   return num && typeof num !== "number" ? Number(num) : (num as number) || 0;
@@ -562,6 +644,7 @@ const paginateArray = computed(() => {
       // HOME delta: debt + profit columns replace the creator column.
       debt: debtOf(invoice),
       profit: formatePrice(calcInvTotal(invoice)),
+      returnBadge: returnBadgeFor(invoice),
       created_at: formatTimestamp(
         (invoice.date as { seconds?: number })?.seconds,
       ),
@@ -609,10 +692,29 @@ type InvoiceRow = {
   total: string;
   debt: string | number | null;
   profit: string;
+  returnBadge: string;
   created_at: string;
   invoice: Invoice;
   created_at_object: Date;
 };
+// Derived return state per invoice (from invoice_returns, never mutating lines).
+const returnsByInvoice = ref(new Map<string, number>());
+async function loadReturnsMap(): Promise<void> {
+  const all = await returnsApi.fetchRecentReturns(500);
+  const m = new Map<string, number>();
+  for (const r of all) {
+    const sum = (r.items ?? []).reduce((s, it) => s + toNum(it.quantity), 0);
+    m.set(r.invoice_id, round2((m.get(r.invoice_id) ?? 0) + sum));
+  }
+  returnsByInvoice.value = m;
+}
+function returnBadgeFor(inv: Invoice): string {
+  if (!inv.id) return "";
+  const returned = returnsByInvoice.value.get(inv.id) ?? 0;
+  if (returned <= 0) return "";
+  const sold = (inv.products ?? []).reduce((s, l) => s + toNum(l.product_quantity), 0);
+  return returned + 1e-9 >= sold ? "مرتجع كلي" : "مرتجع جزئي";
+}
 const viewRow = ref<InvoiceRow | null>(null);
 const viewOpen = computed({
   get: () => viewRow.value !== null,
@@ -632,14 +734,15 @@ async function deleteConfirmed() {
   if (!id) return;
   deleting.value = true;
   try {
-    await invoicesStore.deleteInvoice(id);
+    const res = await invoicesStore.deleteInvoice(id);
+    if (res.blocked) return; // guard message already shown; keep dialog open
+    confirmDelete.value = null;
   } catch (err) {
     authStore.snackBarColor = "error";
     authStore.snackBarText = String(err);
   } finally {
     await loadInvoices();
     deleting.value = false;
-    confirmDelete.value = null;
   }
 }
 async function handleSuccess(isSuccess: boolean) {
@@ -662,5 +765,66 @@ async function handleSuccess(isSuccess: boolean) {
     startExport.value = false;
   }
 }
+// Return dialog state (F11).
+const returnInvoice = ref<Invoice | null>(null);
+const returnRows = ref<ReturnRow[]>([]);
+const returnNote = ref("");
+const returnError = ref("");
+const returnBusy = ref(false);
+const returnOpen = computed({
+  get: () => returnInvoice.value !== null,
+  set: (v: boolean) => {
+    if (!v) returnInvoice.value = null;
+  },
+});
+async function openReturn(inv: Invoice): Promise<void> {
+  returnError.value = "";
+  returnNote.value = "";
+  returnInvoice.value = inv;
+  returnRows.value = [];
+  const prev = await returnsApi.fetchReturnsForInvoice(inv.id as string);
+  returnRows.value = returnsApi.buildReturnRows(inv, prev);
+}
+function previewRefund(r: ReturnRow): number {
+  if (!returnInvoice.value) return 0;
+  return lineRefundValue(r.unit_price, Math.min(toNum(r.qty), r.maxQty), netRatioOf(returnInvoice.value));
+}
+const returnPreviewSplit = computed(() => {
+  if (!returnInvoice.value) return { debtReduction: 0, cashRefund: 0, total: 0 };
+  const ratio = netRatioOf(returnInvoice.value);
+  const total = round2(
+    returnRows.value.reduce((s, r) => s + lineRefundValue(r.unit_price, Math.min(toNum(r.qty), r.maxQty), ratio), 0),
+  );
+  const split = splitRefund(total, debtOf(returnInvoice.value));
+  return { ...split, total };
+});
+const returnPreviewTotal = computed(() => returnPreviewSplit.value.total);
+async function submitReturn(): Promise<void> {
+  if (!returnInvoice.value) return;
+  returnError.value = "";
+  returnBusy.value = true;
+  try {
+    const res = await returnsApi.createReturn(
+      returnInvoice.value,
+      returnRows.value
+        .map((r) => ({ product_id: r.product_id, quantity: Math.min(round2(toNum(r.qty)), r.maxQty) }))
+        .filter((i) => i.quantity > 0),
+      returnNote.value.trim() || null,
+    );
+    if (!res.ok) {
+      returnError.value = res.error;
+      return;
+    }
+    notifyToast(
+      `تم تسجيل المرتجع — تخفيض الدين: ${formatePrice(res.debtReduction)}، نقدي: ${formatePrice(res.cashRefund)}.`,
+      "success",
+    );
+    returnInvoice.value = null;
+    await Promise.all([loadInvoices(), loadReturnsMap()]);
+  } finally {
+    returnBusy.value = false;
+  }
+}
 void loadInvoices();
+void loadReturnsMap();
 </script>

@@ -214,12 +214,32 @@ async function doSave(saveOnly?: boolean) {
     const filled = (props.invoiceData.products ?? []).filter((l) => l.product_id);
     // HOME delta: persist computed remaining (debts feature).
     const remaining = (calcTotal(props.invoiceData) - discountAmount.value) - Number(props.invoiceData.paid_amount || 0);
-    const payload = { ...data, products: filled, remaining } as Record<string, unknown>;
+    const payload = { ...data, products: filled, remaining } as Omit<Invoice, "id">;
     if (id) {
-      await updateItem("invoices", id, payload);
+      // Atomic edit: stock + paid deltas with corrective logs (F10).
+      const invoicesStore = useInvoicesStore();
+      const res = await invoicesStore.updateInvoiceWithAccounting(id, payload);
+      if (!res.ok) {
+        printing.value = false;
+        notify(res.error, "error");
+        return;
+      }
+      if (res.cashSkipped) {
+        notify("تم الحفظ بدون حركة نقدية — الخزنة غير مهيأة بعد.", "error");
+      }
     } else {
-      const response = (await saveDataTo("invoices", payload)) as { id?: string } | null;
-      if (response?.id) emit("saved", response.id);
+      // Atomic create: invoice + stock + inventory logs + cashbox (F9).
+      const invoicesStore = useInvoicesStore();
+      const res = await invoicesStore.createInvoiceWithAccounting(payload);
+      if (!res.ok) {
+        printing.value = false;
+        notify(res.error, "error");
+        return;
+      }
+      if (res.cashSkipped) {
+        notify("تم الحفظ بدون حركة نقدية — الخزنة غير مهيأة بعد.", "error");
+      }
+      emit("saved", res.id);
     }
   }
   if (!saveOnly) {

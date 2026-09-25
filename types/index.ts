@@ -48,6 +48,13 @@ export interface Invoice {
   // HOME delta: paid/remaining (debts feature).
   paid_amount?: number | string | null;
   remaining?: number | string | null;
+  // Financial/inventory accounting (optional for legacy docs).
+  customer_id?: string | null;
+  legacy?: boolean;
+  inventory_applied?: boolean;
+  cashbox_applied?: boolean;
+  // Returned quantities per product (maintained transactionally by returns flow).
+  returned?: Record<string, number> | null;
   created_by?: UserKey | null;
   products: InvoiceProductLine[];
   date?: InvoiceDate;

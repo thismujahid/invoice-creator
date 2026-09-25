@@ -32,6 +32,39 @@ service cloud.firestore {
       allow create, update: if isStaff();
       allow delete: if isAdmin();
     }
+    // Financial / accounting collections (F37). Audit records are
+    // append-mostly: staff may read and create; only admin may correct
+    // via compensating docs, never silent rewrites (delete = admin).
+    match /cashbox/{id} {
+      allow read: if isStaff();
+      allow create, update: if isStaff();
+      allow delete: if isAdmin();
+    }
+    match /cash_transactions/{id} {
+      allow read: if isStaff();
+      allow create: if isStaff();
+      allow update, delete: if isAdmin();
+    }
+    match /inventory_transactions/{id} {
+      allow read: if isStaff();
+      allow create: if isStaff();
+      allow update, delete: if isAdmin();
+    }
+    match /invoice_returns/{id} {
+      allow read: if isStaff();
+      allow create: if isStaff();
+      allow update, delete: if isAdmin();
+    }
+    match /customer_loans/{id} {
+      allow read: if isStaff();
+      allow create, update: if isStaff();
+      allow delete: if isAdmin();
+    }
+    match /debt_payments/{id} {
+      allow read: if isStaff();
+      allow create: if isStaff();
+      allow update, delete: if isAdmin();
+    }
     match /{document=**} {
       allow read, write: if false;
     }

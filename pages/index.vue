@@ -455,6 +455,7 @@ function emptyInvoice(): Invoice {
   return {
     customer_name: null,
     customer_phone: null,
+    customer_id: null,
     debt: null,
     delivery_price: null,
     discount_percentage: false,
@@ -560,6 +561,8 @@ function onPickCustomer(cus: Customer | null | undefined): void {
   }
   invoiceData.value.customer_phone = cus?.phone ?? null;
   invoiceData.value.customer_name = cus?.name ?? null;
+  // F16: reliable link for debt aggregation (snapshots preserved).
+  invoiceData.value.customer_id = cus?.id ?? null;
 }
 function selectedProd(form: InvoiceProductLine): Product | undefined {
   if (!form.product_id) return undefined;

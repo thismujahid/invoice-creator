@@ -1,9 +1,15 @@
 import * as XLSX from "xlsx/dist/xlsx.full.min.js";
+import { collection, doc, getDocs, limit as fsLimit, query, where } from "firebase/firestore";
 import type { Invoice } from "~/types";
 import { toDateSafe } from "~/types";
+import { round2, stockDeltaForEdit, toNum } from "~/composables/finance";
+
+const STOCK_EPS = 1e-9;
 
 export const useInvoicesStore = defineStore("invoices", () => {
-  const { readFrom, saveDataTo, updateItem, deleteItem } = useFirebase();
+  const { readFrom, saveDataTo, updateItem, deleteItem, db, serverTimestamp, getDoc } = useFirebase();
+  const authStore = useAuth();
+  const { notify } = useAppToast();
   const list = ref<Invoice[]>([]);
   const invoiceToEdit = ref<Invoice | undefined>(undefined);
 
@@ -20,10 +26,214 @@ export const useInvoicesStore = defineStore("invoices", () => {
     return await updateItem("invoices", id, updatedFields as Record<string, unknown>);
   };
 
-  const deleteInvoice = async (id: string): Promise<boolean> => {
+  /** Atomic invoice creation (F9/F29): invoice + stock decrement +
+   *  inventory logs + cashbox (paid only). Flags the doc applied. */
+  async function createInvoiceWithAccounting(
+    payload: Omit<Invoice, "id">,
+  ): Promise<{ ok: true; id: string; cashSkipped: boolean } | { ok: false; error: string }> {
+    const lines = (payload.products ?? []).filter((l) => l.product_id);
+    if (!lines.length) return { ok: false, error: "لا يمكن حفظ فاتورة فارغة." };
+    const paid = round2(toNum(payload.paid_amount));
+    try {
+      let invoiceId = "";
+      let cashSkipped = false;
+      await runTx(async (tx) => {
+        // 1. Read stock + validate aggregated need per product.
+        const ids = [...new Set(lines.map((l) => l.product_id as string))];
+        const stocks = new Map<string, { count: number; name: string }>();
+        for (const pid of ids) {
+          const snap = await tx.get(doc(db, "products", pid));
+          if (!snap.exists()) throw new Error("VALIDATION:منتج غير موجود بالمخزون.");
+          stocks.set(pid, { count: toNum(snap.data().count), name: String(snap.data().name || "") });
+        }
+        const needByProduct = new Map<string, number>();
+        for (const l of lines) {
+          const pid = l.product_id as string;
+          needByProduct.set(pid, round2((needByProduct.get(pid) ?? 0) + toNum(l.product_quantity)));
+        }
+        for (const [pid, need] of needByProduct) {
+          const st = stocks.get(pid)!;
+          if (need - st.count > STOCK_EPS) {
+            throw new Error(`VALIDATION:الكمية المطلوبة (${need}) تتجاوز المخزون المتاح (${st.count}) لمنتج ${st.name}.`);
+          }
+          st.count = round2(st.count - need);
+        }
+        // 2. Cashbox state (missing doc = not onboarded → skip cash, flag it).
+        const cashRef = doc(db, "cashbox", "current");
+        const cashSnap = await tx.get(cashRef);
+        const cashReady = cashSnap.exists();
+        const cashBal = cashReady ? round2(Number(cashSnap.data()?.balance || 0)) : 0;
+        cashSkipped = paid > 0 && !cashReady;
+        // 3. Invoice doc (id known upfront for log references).
+        const invRef = doc(collection(db, "invoices"));
+        invoiceId = invRef.id;
+        const now = serverTimestamp();
+        tx.set(invRef, {
+          ...(payload as Record<string, unknown>),
+          products: lines,
+          inventory_applied: true,
+          cashbox_applied: !(paid > 0 && !cashReady),
+        });
+        // 4. Stock (final balances from step 1) + per-line inventory logs.
+        for (const l of lines) {
+          const pid = l.product_id as string;
+          const st = stocks.get(pid)!;
+          tx.update(doc(db, "products", pid), { count: st.count });
+          tx.set(doc(collection(db, "inventory_transactions")), {
+            type: "sale",
+            product_id: pid,
+            product_name: l.product_name || st.name,
+            quantity: round2(toNum(l.product_quantity)),
+            direction: "out",
+            unit_cost: round2(toNum(l.product_cost_price)),
+            invoice_id: invoiceId,
+            note: null,
+            created_by: (authStore.currentUserKey as string) || null,
+            created_at: now,
+          });
+        }
+        // 5. Cash (paid only, never zero-value txns).
+        if (paid > 0 && cashReady) {
+          tx.set(cashRef, { balance: round2(cashBal + paid), updated_at: now }, { merge: true });
+          tx.set(doc(collection(db, "cash_transactions")), {
+            type: "invoice_sale",
+            direction: "in",
+            amount: paid,
+            customer_id: (payload.customer_id as string) || null,
+            invoice_id: invoiceId,
+            note: null,
+            created_by: (authStore.currentUserKey as string) || null,
+            created_at: now,
+          });
+        }
+      });
+      return { ok: true, id: invoiceId, cashSkipped };
+    } catch (e) {
+      if (e instanceof Error && e.message.startsWith("VALIDATION:")) {
+        return { ok: false, error: e.message.slice("VALIDATION:".length) };
+      }
+      console.error(e);
+      return { ok: false, error: "تعذر حفظ العملية، لم يتم تعديل الخزنة أو المخزون." };
+    }
+  }
+
+  /** Atomic invoice edit (F10/F29): reads the persisted original, applies
+   *  stock quantity deltas + paid-amount delta with corrective logs. */
+  async function updateInvoiceWithAccounting(
+    id: string,
+    payload: Omit<Invoice, "id">,
+  ): Promise<{ ok: true; cashSkipped: boolean } | { ok: false; error: string }> {
+    const lines = (payload.products ?? []).filter((l) => l.product_id);
+    if (!lines.length) return { ok: false, error: "لا يمكن حفظ فاتورة فارغة." };
+    try {
+      let cashSkipped = false;
+      await runTx(async (tx) => {
+        // 1. Persisted original — never diff against stale UI state.
+        const invRef = doc(db, "invoices", id);
+        const invSnap = await tx.get(invRef);
+        if (!invSnap.exists()) throw new Error("VALIDATION:الفاتورة غير موجودة.");
+        const orig = invSnap.data() as Record<string, unknown>;
+        const oldLines = (Array.isArray(orig.products) ? orig.products : []) as Invoice["products"];
+        const oldPaid = round2(toNum(orig.paid_amount));
+        const newPaid = round2(toNum(payload.paid_amount));
+        const paidDelta = round2(newPaid - oldPaid);
+        // 2. Stock deltas (positive = back to stock).
+        const deltas = stockDeltaForEdit(oldLines, lines);
+        const stocks = new Map<string, number>();
+        for (const d of deltas) {
+          const pRef = doc(db, "products", d.product_id);
+          const pSnap = await tx.get(pRef);
+          if (!pSnap.exists()) throw new Error(`VALIDATION:المنتج ${d.product_name} غير موجود بالمخزون.`);
+          stocks.set(d.product_id, toNum(pSnap.data().count));
+        }
+        for (const d of deltas) {
+          if (-d.delta - (stocks.get(d.product_id) ?? 0) > STOCK_EPS) {
+            throw new Error(`VALIDATION:الكمية المطلوبة تتجاوز المخزون المتاح لمنتج ${d.product_name}.`);
+          }
+        }
+        // 3. Cashbox state.
+        const cashRef = doc(db, "cashbox", "current");
+        const cashSnap = await tx.get(cashRef);
+        const cashReady = cashSnap.exists();
+        const cashBal = cashReady ? round2(Number(cashSnap.data()?.balance || 0)) : 0;
+        cashSkipped = paidDelta !== 0 && !cashReady;
+        const now = serverTimestamp();
+        const by = (authStore.currentUserKey as string) || null;
+        // 4. Invoice doc.
+        tx.update(invRef, {
+          ...(payload as Record<string, unknown>),
+          products: lines,
+          inventory_applied: true,
+          cashbox_applied: !(paidDelta !== 0 && !cashReady),
+        });
+        // 5. Stock + logs.
+        for (const d of deltas) {
+          const cur = stocks.get(d.product_id) ?? 0;
+          tx.update(doc(db, "products", d.product_id), { count: round2(cur + d.delta) });
+          tx.set(doc(collection(db, "inventory_transactions")), {
+            type: "sale",
+            product_id: d.product_id,
+            product_name: d.product_name,
+            quantity: Math.abs(d.delta),
+            direction: d.delta > 0 ? "in" : "out",
+            unit_cost: round2(d.unit_cost),
+            invoice_id: id,
+            note: "تعديل فاتورة",
+            created_by: by,
+            created_at: now,
+          });
+        }
+        // 6. Cash delta (corrective dir + matching log).
+        if (paidDelta !== 0 && cashReady) {
+          const dir = paidDelta > 0 ? "in" : "out";
+          tx.set(cashRef, { balance: round2(cashBal + paidDelta), updated_at: now }, { merge: true });
+          tx.set(doc(collection(db, "cash_transactions")), {
+            type: paidDelta > 0 ? "invoice_sale" : "invoice_refund",
+            direction: dir,
+            amount: Math.abs(paidDelta),
+            invoice_id: id,
+            note: "فرق تعديل فاتورة",
+            created_by: by,
+            created_at: now,
+          });
+        }
+      });
+      return { ok: true, cashSkipped };
+    } catch (e) {
+      if (e instanceof Error && e.message.startsWith("VALIDATION:")) {
+        return { ok: false, error: e.message.slice("VALIDATION:".length) };
+      }
+      console.error(e);
+      return { ok: false, error: "تعذر حفظ العملية، لم يتم تعديل الخزنة أو المخزون." };
+    }
+  }
+
+  const deleteInvoice = async (id: string): Promise<{ ok: boolean; blocked?: boolean }> => {
+    // F26: never silently erase financial history — block when the invoice
+    // has applied effects or linked audit records.
+    try {
+      const snap = await getDoc(doc(db, "invoices", id));
+      const data = snap.exists() ? (snap.data() as Record<string, unknown>) : {};
+      const hasEffects = data.inventory_applied === true || data.cashbox_applied === true;
+      let linked = false;
+      if (!hasEffects) {
+        const [ret, cash] = await Promise.all([
+          getDocs(query(collection(db, "invoice_returns"), where("invoice_id", "==", id), fsLimit(1))),
+          getDocs(query(collection(db, "cash_transactions"), where("invoice_id", "==", id), fsLimit(1))),
+        ]);
+        linked = !ret.empty || !cash.empty;
+      }
+      if (hasEffects || linked) {
+        notify("لا يمكن حذف فاتورة لها حركات مخزنية أو نقدية — استخدم المرتجع بدلاً من الحذف.", "error");
+        return { ok: false, blocked: true };
+      }
+    } catch (e) {
+      console.error(e);
+      return { ok: false };
+    }
     const ok = await deleteItem("invoices", id);
     if (ok) list.value = list.value.filter((inv) => inv.id !== id);
-    return ok;
+    return { ok };
   };
 
   const exportInvoicesToExcel = async (invoices: Invoice[] = []): Promise<string> => {
@@ -125,8 +335,8 @@ export const useInvoicesStore = defineStore("invoices", () => {
     for (const inv of allInvoices) {
       const invDate = toDateSafe(inv.date);
       if (invDate && invDate < firstDayOfMonth && inv.id) {
-        const ok = await deleteInvoice(inv.id);
-        if (ok) deletedCount++;
+        const res = await deleteInvoice(inv.id);
+        if (res.ok) deletedCount++;
       }
     }
     return deletedCount;
@@ -138,6 +348,8 @@ export const useInvoicesStore = defineStore("invoices", () => {
     fetchInvoices,
     addInvoice,
     updateInvoice,
+    createInvoiceWithAccounting,
+    updateInvoiceWithAccounting,
     deleteInvoice,
     deleteOldInvoices,
     exportInvoicesToExcel,

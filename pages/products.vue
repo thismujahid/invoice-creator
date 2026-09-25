@@ -136,6 +136,26 @@
                     @click="editProduct({ id: p.id })"
                     class="flex items-center justify-center"
                     />
+                  <UTooltip text="شراء / إضافة مخزون">
+                    <UButton
+                      icon="i-lucide-package-plus"
+                      color="info"
+                      variant="soft"
+                      size="xs"
+                      aria-label="شراء مخزون"
+                      @click="openPurchase(p.id)"
+                      class="flex items-center justify-center"
+                    /></UTooltip>
+                  <UTooltip text="تعديل مخزون يدوي">
+                    <UButton
+                      icon="i-lucide-clipboard-list"
+                      color="neutral"
+                      variant="soft"
+                      size="xs"
+                      aria-label="تعديل المخزون"
+                      @click="openAdjust(p.id)"
+                      class="flex items-center justify-center"
+                    /></UTooltip>
                   <UButton
                     icon="i-lucide-trash-2"
                     color="error"
@@ -180,7 +200,7 @@
                 </div>
               </div>
             </div>
-            <div class="flex shrink-0 gap-2" @click.stop>
+            <div class="flex shrink-0 gap-1.5" @click.stop>
               <UButton
                 icon="i-lucide-pencil"
                 color="success"
@@ -188,6 +208,24 @@
                 size="xs"
                 aria-label="تعديل"
                 @click="editProduct({ id: p.id })"
+                class="flex items-center justify-center"
+                />
+              <UButton
+                icon="i-lucide-package-plus"
+                color="info"
+                variant="soft"
+                size="xs"
+                aria-label="شراء مخزون"
+                @click="openPurchase(p.id)"
+                class="flex items-center justify-center"
+                />
+              <UButton
+                icon="i-lucide-clipboard-list"
+                color="neutral"
+                variant="soft"
+                size="xs"
+                aria-label="تعديل المخزون"
+                @click="openAdjust(p.id)"
                 class="flex items-center justify-center"
                 />
               <UButton
@@ -246,6 +284,53 @@
             @click="confirmDelete = null"
             >إلغاء</UButton
           >
+        </div>
+      </template>
+    </UiAppDialog>
+    <!-- Stock purchase -->
+    <UiAppDialog v-model:open="purchaseOpen" :title="`شراء مخزون — ${purchaseName}`">
+      <div class="space-y-3">
+        <UAlert color="info" variant="soft" :title="`المخزون الحالي: ${purchaseCount}`" />
+        <UFormField label="الكمية المشتراة" required :error="stockFormError">
+          <UInputNumber v-model="purchaseQty" :min="0" :step="1" size="lg" class="w-full" />
+        </UFormField>
+        <UFormField label="سعر تكلفة الوحدة" required>
+          <UInputNumber v-model="purchaseCost" :min="0" size="lg" class="w-full" />
+        </UFormField>
+        <div class="text-sm font-bold">الإجمالي: {{ formatePrice((purchaseQty || 0) * (purchaseCost || 0)) }} (يُخصم من الخزنة)</div>
+        <UCheckbox v-model="purchaseUpdatePrice" label="تحديث سعر البيع الحالي بهذا السعر" />
+        <UFormField v-if="purchaseUpdatePrice" label="سعر البيع الجديد" required>
+          <UInputNumber v-model="purchasePrice" :min="0" size="lg" class="w-full" />
+        </UFormField>
+        <UFormField label="ملاحظة">
+          <UInput v-model="purchaseNote" placeholder="مثال: فاتورة مورد" size="lg" class="w-full" />
+        </UFormField>
+      </div>
+      <template #footer>
+        <div class="flex w-full gap-2">
+          <UButton color="success" class="min-h-11 flex-1" :loading="stockBusy" icon="i-lucide-package-plus" @click="doPurchase">تأكيد الشراء</UButton>
+          <UButton color="neutral" variant="soft" class="min-h-11 flex-1" :disabled="stockBusy" @click="purchaseOpen = false">إلغاء</UButton>
+        </div>
+      </template>
+    </UiAppDialog>
+    <!-- Manual stock adjustment (no cash) -->
+    <UiAppDialog v-model:open="adjustOpen" :title="`تعديل مخزون — ${adjustName}`">
+      <div class="space-y-3">
+        <UAlert color="warning" variant="soft" title="تعديل يدوي بدون حركة نقدية. للمشتريات الحقيقية استخدم شراء مخزون." />
+        <UFormField label="الكمية الحالية">
+          <UInput :model-value="String(adjustCount)" readonly size="lg" class="w-full" />
+        </UFormField>
+        <UFormField label="الكمية الجديدة" required :error="stockFormError">
+          <UInputNumber v-model="adjustNew" :min="0" :step="1" size="lg" class="w-full" />
+        </UFormField>
+        <UFormField label="سبب التعديل" required>
+          <UInput v-model="adjustReason" placeholder="مثال: جرد فعلي" size="lg" class="w-full" />
+        </UFormField>
+      </div>
+      <template #footer>
+        <div class="flex w-full gap-2">
+          <UButton color="success" class="min-h-11 flex-1" :loading="stockBusy" @click="doAdjust">حفظ التعديل</UButton>
+          <UButton color="neutral" variant="soft" class="min-h-11 flex-1" :disabled="stockBusy" @click="adjustOpen = false">إلغاء</UButton>
         </div>
       </template>
     </UiAppDialog>
@@ -322,6 +407,89 @@ function editProduct(product: { id?: string }): void {
   const prod = prodsList.value.find((el) => el.id === product.id);
   if (prod) productForm.value = { ...prod };
   productFormState.value = true;
+}
+// Stock purchase / manual adjustment (F8/F34) — audited flows via useInventory.
+const inventory = useInventory();
+const { notify: notifyToast } = useAppToast();
+const stockBusy = ref(false);
+const stockFormError = ref("");
+const purchaseOpen = ref(false);
+const purchaseId = ref<string | null>(null);
+const purchaseQty = ref<number | undefined>(undefined);
+const purchaseCost = ref<number | undefined>(undefined);
+const purchaseUpdatePrice = ref(false);
+const purchasePrice = ref<number | undefined>(undefined);
+const purchaseNote = ref("");
+const purchaseName = computed(() => prodsList.value.find((p) => p.id === purchaseId.value)?.name ?? "");
+const purchaseCount = computed(() => prodsList.value.find((p) => p.id === purchaseId.value)?.count ?? 0);
+const adjustOpen = ref(false);
+const adjustId = ref<string | null>(null);
+const adjustNew = ref<number | undefined>(undefined);
+const adjustReason = ref("");
+const adjustName = computed(() => prodsList.value.find((p) => p.id === adjustId.value)?.name ?? "");
+const adjustCount = computed(() => prodsList.value.find((p) => p.id === adjustId.value)?.count ?? 0);
+function openPurchase(id?: string): void {
+  if (!id) return;
+  const p = prodsList.value.find((x) => x.id === id);
+  purchaseId.value = id;
+  purchaseQty.value = undefined;
+  purchaseCost.value = p?.cost_price ?? undefined;
+  purchaseUpdatePrice.value = false;
+  purchasePrice.value = undefined;
+  purchaseNote.value = "";
+  stockFormError.value = "";
+  purchaseOpen.value = true;
+}
+function openAdjust(id?: string): void {
+  if (!id) return;
+  adjustId.value = id;
+  adjustNew.value = undefined;
+  adjustReason.value = "";
+  stockFormError.value = "";
+  adjustOpen.value = true;
+}
+async function doPurchase(): Promise<void> {
+  stockFormError.value = "";
+  if (!purchaseId.value) return;
+  stockBusy.value = true;
+  try {
+    const res = await inventory.purchaseStock({
+      product_id: purchaseId.value,
+      quantity: purchaseQty.value ?? 0,
+      unit_cost: purchaseCost.value ?? 0,
+      update_price: purchaseUpdatePrice.value,
+      new_price: purchaseUpdatePrice.value ? (purchasePrice.value ?? null) : null,
+      note: purchaseNote.value.trim() || null,
+    });
+    if (!res.ok) {
+      stockFormError.value = res.error;
+      return;
+    }
+    notifyToast("تم تسجيل عملية الشراء وخصم قيمتها من الخزنة.", "success");
+    purchaseOpen.value = false;
+  } finally {
+    stockBusy.value = false;
+  }
+}
+async function doAdjust(): Promise<void> {
+  stockFormError.value = "";
+  if (!adjustId.value) return;
+  stockBusy.value = true;
+  try {
+    const res = await inventory.adjustStock({
+      product_id: adjustId.value,
+      new_count: adjustNew.value ?? -1,
+      note: adjustReason.value,
+    });
+    if (!res.ok) {
+      stockFormError.value = res.error;
+      return;
+    }
+    notifyToast("تم تعديل المخزون بنجاح.", "success");
+    adjustOpen.value = false;
+  } finally {
+    stockBusy.value = false;
+  }
 }
 const clearConfirm = ref(false);
 interface ProductRow {

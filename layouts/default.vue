@@ -127,6 +127,8 @@ const tabItems = computed(() => [
     : []),
   { label: "العملاء", icon: "i-lucide-users", to: "/customers" },
   { label: "الفواتير", icon: "i-lucide-files", to: "/invoices" },
+  { label: "الخزنة", icon: "i-lucide-vault", to: "/cashbox" },
+  { label: "دفتر الديون", icon: "i-lucide-notebook-text", to: "/debts" },
 ]);
 
 function isActiveTab(to: string): boolean {

@@ -5,6 +5,8 @@ import {
   onSnapshot,
   collection,
   getDocs,
+  getDoc,
+  setDoc,
   doc,
   updateDoc,
   deleteDoc,
@@ -12,10 +14,17 @@ import {
   query,
   Timestamp,
   where,
+  orderBy,
+  limit,
+  serverTimestamp,
+  increment,
+  runTransaction,
+  writeBatch,
   type Firestore,
   type Query,
   type CollectionReference,
   type DocumentReference,
+  type Transaction,
 } from "firebase/firestore";
 
 let app: FirebaseApp | undefined;
@@ -132,5 +141,23 @@ export const useFirebase = () => {
     saveDataTo,
     updateItem,
     deleteItem,
+    // Transactional primitives for financial/stock flows (F29).
+    runTransaction,
+    writeBatch,
+    getDoc,
+    setDoc,
+    serverTimestamp,
+    increment,
+    orderBy,
+    limit,
+    docRef: (path: string, id: string) => doc(db, path, id),
+    colRef: (path: string) => collection(db, path),
   };
 };
+
+/** Run a Firestore transaction with the shared db instance.
+ *  All financial/stock operations MUST go through this (F29). */
+export async function runTx<T>(updateFn: (tx: Transaction) => Promise<T>): Promise<T> {
+  const { db } = getFirebase();
+  return runTransaction(db, updateFn);
+}
