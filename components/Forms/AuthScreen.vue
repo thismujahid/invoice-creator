@@ -1,5 +1,10 @@
 <template>
-  <UModal :open="true" :dismissible="!!title" :title="title || 'تسجيل الدخول'" @update:open="(v) => !v && emit('close')">
+  <UModal
+    :open="true"
+    :dismissible="!!title"
+    :title="title || 'تسجيل الدخول'"
+    @update:open="(v) => !v && emit('close')"
+  >
     <template #body>
       <div class="space-y-4 text-center" dir="rtl">
         <p v-if="title" class="text-sm text-gray-500">أدخل كلمة المرور</p>
@@ -18,7 +23,12 @@
         <UAlert v-if="error" color="error" variant="soft" :title="error" />
         <div v-if="!title" class="w-full text-center text-sm">
           برمجة وتطوير:
-          <NuxtLink target="_blank" class="text-emerald-600 underline" href="https://thismujahid.github.io">محمد إبراهيم مجاهد</NuxtLink>
+          <NuxtLink
+            target="_blank"
+            class="text-emerald-600 underline"
+            href="https://mejo.dev"
+            >محمد إبراهيم مجاهد</NuxtLink
+          >
         </div>
       </div>
     </template>
@@ -34,7 +44,11 @@ const { auth, signInWithEmailAndPassword } = useFirebase();
 const pin = ref<number[]>([]);
 const loading = ref(false);
 const authStore = useAuth();
-const props = defineProps<{ title?: string; successText?: string; isInLogin?: boolean }>();
+const props = defineProps<{
+  title?: string;
+  successText?: string;
+  isInLogin?: boolean;
+}>();
 const emit = defineEmits(["success", "close"]);
 
 async function login() {

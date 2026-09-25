@@ -71,7 +71,7 @@
         <NuxtLink
           target="_blank"
           class="text-gray-300 no-underline hover:underline"
-          href="https://thismujahid.github.io"
+          href="https://mejo.dev"
           >محمد إبراهيم مجاهد</NuxtLink
         >
         <span class="mx-1 text-gray-600">•</span>
