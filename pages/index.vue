@@ -1,25 +1,31 @@
 <template>
   <div class="invoice-creator-view" id="editor-area">
-    <div class="app">
-      <div class="form">
-        <div class="invoice-actions mb-2 d-flex justify-end ga-4">
-          <v-btn
-            color="success"
+    <div class="flex flex-col gap-4 xl:flex-row xl:items-start">
+      <UCard variant="outline" class="min-w-0 flex-1">
+        <div class="mb-3 flex flex-wrap justify-end gap-2">
+          <UButton
             v-if="invoiceData.id"
+            color="success"
+            icon="i-lucide-refresh-ccw"
             :loading="updating"
-            prepend-icon="mdi-update"
-            flat
             @click="updateInvoiceData"
           >
             تحديث الفاتورة
-          </v-btn>
-          <v-btn
-            flat
+          </UButton>
+          <UButton
             v-if="isAdmin"
             color="success"
+            variant="soft"
+            :icon="viewCost ? 'i-lucide-eye-off' : 'i-lucide-eye'"
             @click="handleViewCostClick"
-            :prepend-icon="`mdi-eye${viewCost ? '-off-' : '-'}outline`"
-            >{{ viewCost ? "إخفاء القيمة" : "عرض القيمة" }}</v-btn
+            >{{ viewCost ? "إخفاء القيمة" : "عرض القيمة" }}</UButton
+          >
+          <UButton
+            color="neutral"
+            variant="soft"
+            icon="i-lucide-refresh-cw"
+            @click="invoiceData.time = new Date()"
+            >تحديث الوقت</UButton
           >
           <FormsAuthScreen
             @close="() => (startView = false)"
@@ -29,562 +35,684 @@
             title="برجاء تأكيد هويتك لتتمكن من عرض القيمة"
           />
         </div>
-        <v-form>
-          <v-row>
-            <v-col cols="12" lg="4">
-              <v-autocomplete
-                hide-details="auto"
-                class="mb-0"
-                item-title="name"
-                variant="outlined"
-                return-object
-                :items="customers.list"
-                label="اسم العميل"
-                placeholder="اسم العميل"
-                :loading="loadingCustomers"
-                clearable
-                @update:model-value="
-                  (cus) => {
-                    invoiceData.customer_phone = cus?.phone;
-                    invoiceData.customer_name = cus?.name;
-                  }
-                "
-                :model-value="
-                  invoiceData.customer_phone
-                    ? {
-                        phone: invoiceData.customer_phone,
-                        name: invoiceData.customer_name,
-                      }
-                    : undefined
-                "
-              >
-                <template #prepend-inner>
-                  <FormsCustomer
-                    :refresher="loadCustomers"
-                    @done="
-                      (cus) => {
-                        invoiceData.customer_name = cus?.name;
-                        invoiceData.customer_phone = cus?.phone;
-                      }
-                    "
-                  >
-                    <v-icon v-ripple class="cursor-pointer" icon="mdi-plus" />
-                  </FormsCustomer>
-                </template>
-              </v-autocomplete>
-            </v-col>
-            <v-col cols="12" lg="4">
-              <v-text-field
-                variant="outlined"
-                hide-details="auto"
-                class="mb-0"
-                v-model="invoiceData.customer_phone"
-                label="رقم هاتف العميل"
-                placeholder="رقم هاتف العميل"
-                type="number"
-              >
-              </v-text-field>
-            </v-col>
-            <v-col cols="12" lg="4">
-              <v-text-field
-                variant="outlined"
-                v-model="invoiceData.debt"
-                label="القديم"
-                placeholder="القديم"
-                hide-details="auto"
-                class="mb-0"
-                type="number"
-              >
-              </v-text-field>
-            </v-col>
-            <v-col cols="12" lg="4">
-              <v-autocomplete
-                hide-details="auto"
-                variant="outlined"
-                item-title="label"
-                class="mb-0"
-                item-value="value"
-                :items="usersList.slice(1)"
-                label="منشئ الفاتورة"
-                placeholder="منشئ الفاتورة"
-                v-model="invoiceData.created_by"
-              >
-              </v-autocomplete>
-            </v-col>
-            <v-col cols="12" lg="4">
-              <v-text-field
-                variant="outlined"
-                v-model="invoiceData.amount_of_mahros"
-                label="محروس"
-                hide-details="auto"
-                class="mb-0"
-                placeholder="محروس"
-                type="number"
-              >
-              </v-text-field>
-            </v-col>
-            <v-col cols="12" lg="4">
-              <v-text-field
-                variant="outlined"
-                v-model="invoiceData.delivery_price"
-                label="التوصيل"
-                placeholder="التوصيل"
-                type="number"
-                hide-details="auto"
-                class="mb-0"
-              >
-              </v-text-field>
-            </v-col>
-            <v-col cols="12" lg="2">
-              <v-text-field
-                variant="outlined"
-                v-model="invoiceData.amount_of_animal_feeds"
-                label="العلف"
-                hide-details="auto"
-                class="mb-0"
-                placeholder="العلف"
-                type="number"
-              >
-              </v-text-field>
-            </v-col>
 
-            <v-col cols="12" lg="3">
-              <v-text-field
-                variant="outlined"
-                v-model="invoiceData.discount"
-                hide-details="auto"
-                class="mb-0"
-                :label="`الخصم (${
-                  invoiceData.discount_percentage ? 'نسبة مئوية' : 'مبلغ ثابت'
-                })`"
-                placeholder="الخصم"
-                type="number"
-              >
-                <template #append-inner>
-                  <v-btn
-                    icon
-                    flat
-                    v-tooltip="'نوع الخصم (نسبة مئؤية % أم مبلغ ثابت)'"
-                    color="primary"
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <p
+            class="text-xs font-bold text-gray-400 sm:col-span-2 lg:col-span-3"
+          >
+            بيانات العميل
+          </p>
+          <UFormField label="اسم العميل" class="min-w-0 col-span-2">
+            <USelectMenu
+              :model-value="selectedCustomer()"
+              :items="customerMenuItems"
+              label-key="name"
+              by="id"
+              v-model:search-term="customerSearch"
+              :search-input="{
+                placeholder: 'بحث عن عميل...',
+                icon: 'i-lucide-search',
+              }"
+              :ignore-filter="true"
+              placeholder="اسم العميل"
+              :loading="loadingCustomers"
+              class="w-full"
+              @update:model-value="onPickCustomer"
+            />
+            <FormsCustomer
+              v-model="showCustomerModal"
+              :refresher="loadCustomers"
+              @done="onPickCustomer"
+            />
+          </UFormField>
+          <UFormField label="رقم هاتف العميل" class="col-span-1">
+            <UInput
+              :model-value="String(invoiceData.customer_phone ?? '')"
+              placeholder="رقم هاتف العميل"
+              inputmode="tel"
+              dir="ltr"
+              class="w-full"
+              @update:model-value="(v) => (invoiceData.customer_phone = v)"
+            />
+          </UFormField>
+          <p
+            class="mt-1 border-t border-gray-100 pt-3 text-xs font-bold text-gray-400 sm:col-span-2 lg:col-span-3"
+          >
+            تفاصيل الفاتورة
+          </p>
+          <UFormField label="منشئ الفاتورة">
+            <USelect
+              v-model="invoiceData.created_by"
+              :items="creatorOptions"
+              value-key="value"
+              class="w-full"
+            />
+          </UFormField>
+          <UFormField label="التاريخ">
+            <div class="flex gap-1.5">
+              <UiAppDateField
+                v-model="dateModel"
+                @click-trilling=""
+                label="التاريخ"
+                class="min-w-0 flex-1"
+              />
+            </div>
+          </UFormField>
+          <UFormField label="الوقت">
+            <UInput v-model="timeInput" type="time" class="w-full" dir="ltr" />
+            <template #hint>
+              <span class="text-xs text-gray-500">{{
+                formatTime12Hour(invoiceData.time)
+              }}</span>
+            </template>
+          </UFormField>
+          <p
+            class="mt-1 border-t border-gray-100 pt-3 text-xs font-bold text-gray-400 sm:col-span-2 lg:col-span-3"
+          >
+            المبالغ والخصومات
+          </p>
+          <UFormField label="القديم">
+            <UInputNumber
+              :model-value="numOrUndef(invoiceData.debt)"
+              placeholder="القديم"
+              :min="0"
+              class="w-full"
+              @update:model-value="(v) => (invoiceData.debt = v ?? null)"
+            />
+          </UFormField>
+          <UFormField label="محروس">
+            <UInputNumber
+              :model-value="numOrUndef(invoiceData.amount_of_mahros)"
+              placeholder="محروس"
+              :min="0"
+              class="w-full"
+              @update:model-value="
+                (v) => (invoiceData.amount_of_mahros = v ?? null)
+              "
+            />
+          </UFormField>
+          <UFormField label="التوصيل">
+            <UInputNumber
+              :model-value="numOrUndef(invoiceData.delivery_price)"
+              placeholder="التوصيل"
+              :min="0"
+              class="w-full"
+              @update:model-value="
+                (v) => (invoiceData.delivery_price = v ?? null)
+              "
+            />
+          </UFormField>
+          <UFormField label="العلف">
+            <UInputNumber
+              :model-value="numOrUndef(invoiceData.amount_of_animal_feeds)"
+              placeholder="العلف"
+              :min="0"
+              class="w-full"
+              @update:model-value="
+                (v) => (invoiceData.amount_of_animal_feeds = v ?? null)
+              "
+            />
+          </UFormField>
+          <UFormField
+            :label="`الخصم (${invoiceData.discount_percentage ? 'نسبة مئوية' : 'مبلغ ثابت'})`"
+          >
+            <UInput
+              :model-value="discountInput"
+              type="number"
+              placeholder="الخصم"
+              :min="0"
+              inputmode="decimal"
+              class="w-full"
+              @update:model-value="
+                (v) => (invoiceData.discount = v === '' ? null : Number(v))
+              "
+            >
+              <template #trailing>
+                <UTooltip text="نوع الخصم (نسبة مئوية % أم مبلغ ثابت)">
+                  <UButton
+                    :icon="
+                      invoiceData.discount_percentage
+                        ? 'i-lucide-percent'
+                        : 'i-lucide-banknote'
+                    "
+                    color="neutral"
+                    variant="ghost"
+                    class="flex items-center justify-center"
+                    aria-label="نوع الخصم"
                     @click="
                       invoiceData.discount_percentage =
                         !invoiceData.discount_percentage
                     "
-                  >
-                    <v-icon
-                      icon="mdi-percent"
-                      size="20"
-                      v-if="invoiceData.discount_percentage"
-                    />
-                    <v-icon
-                      icon="mdi-cash"
-                      size="40"
-                      v-if="!invoiceData.discount_percentage"
-                    />
-                  </v-btn>
-                </template>
-              </v-text-field>
-            </v-col>
-            <v-col cols="12" lg="2">
-              <v-text-field
-                variant="outlined"
-                v-model="invoiceData.discount_for"
-                hide-details="auto"
-                label="الخصم متعلق بـ"
-                placeholder="الخصم متعلق بـ"
-              >
-              </v-text-field>
-            </v-col>
-            <v-col cols="12" lg="3">
-              <v-menu :close-on-content-click="false">
-                <template #activator="{ props }">
-                  <v-text-field
-                    v-bind="props"
-                    readonly
-                    :model-value="formatDate(invoiceData.date)"
-                    variant="outlined"
-                    hide-details="auto"
-                    class="mb-0"
-                    label="التاريخ"
-                  >
-                    <template #append-inner>
-                      <v-btn
-                        size="30"
-                        @click="invoiceData.date = new Date()"
-                        flat
-                      >
-                        <v-icon icon="mdi-restore" />
-                      </v-btn>
-                    </template>
-                  </v-text-field>
-                </template>
-                <v-date-picker
-                  variant="outlined"
-                  hide-header
-                  lang="ar"
-                  v-model="invoiceData.date"
-                  label="التاريخ"
-                ></v-date-picker>
-              </v-menu>
-            </v-col>
-            <v-col cols="12" lg="2">
-              <v-menu :close-on-content-click="false">
-                <template #activator="{ props }">
-                  <v-text-field
-                    v-bind="props"
-                    readonly
-                    :model-value="formatTime12Hour(invoiceData.time)"
-                    variant="outlined"
-                    label="الوقت"
-                    hide-details="auto"
-                    class="mb-0"
-                  >
-                    <template #append-inner>
-                      <v-btn
-                        size="30"
-                        @click="invoiceData.time = new Date()"
-                        flat
-                      >
-                        <v-icon icon="mdi-restore" />
-                      </v-btn>
-                    </template>
-                  </v-text-field>
-                </template>
-                <v-time-picker
-                  variant="outlined"
-                  scrollable
-                  ampm-in-title
-                  lang="ar"
-                  v-model="invoiceData.time"
-                ></v-time-picker>
-              </v-menu>
-            </v-col>
-          </v-row>
-          <div
-            ref="containerRef"
-            class="py-4 px-3"
-            style="
-              max-height: 50vh !important;
-              overflow-y: auto;
-              overflow-x: hidden;
-            "
-            v-if="!loadingProds"
-          >
-            <v-row
-              v-for="(form, index) in invoiceData.products"
-              :key="'product-line-' + index"
-            >
-              <v-col cols="12" lg="3">
-                <v-autocomplete
-                  item-title="name"
-                  variant="outlined"
-                  return-object
-                  :items="products.list"
-                  :loading="loadingProds"
-                  hide-details="auto"
-                  class="mb-0"
-                  :model-value="
-                    form.product_id
-                      ? {
-                          id: form.product_id,
-                          name: form.product_name,
-                          price: form.product_price,
-                          cost_price: form.product_cost_price,
-                        }
-                      : undefined
-                  "
-                  @update:model-value="
-                    (prod) => {
-                      form.product_price = prod?.price;
-                      form.product_id = prod?.id;
-                      form.product_cost_price = prod?.cost_price;
-                      form.product_name = prod?.name;
-                    }
-                  "
-                  label="المنتج"
-                  clearable
-                  placeholder=" المنتج"
-                >
-                  <template #prepend-inner>
-                    <FormsProduct
-                      :refresher="loadProds"
-                      @done="
-                        (prod) => {
-                          form.product_name = prod?.name;
-                          form.product_price = prod?.price;
-                          form.product_cost_price = prod?.cost_price;
-                          form.product_id = prod?.id;
-                        }
-                      "
-                    >
-                      <v-icon v-ripple class="cursor-pointer" icon="mdi-plus" />
-                    </FormsProduct>
-                  </template>
-                </v-autocomplete>
-              </v-col>
-              <v-col cols="12" lg="3">
-                <v-text-field
-                  variant="outlined"
-                  v-model="form.option"
-                  hide-details="auto"
-                  class="mb-0"
-                  label="خيار معين"
-                  placeholder="خيار معين"
-                  :input-attrs="`prod-option-${index}`"
-                >
-                </v-text-field>
-              </v-col>
-              <v-col cols="12" lg="1">
-                <v-text-field
-                  variant="outlined"
-                  v-model="form.product_quantity"
-                  label="كمية المنتج"
-                  placeholder="كمية المنتج"
-                  hide-details="auto"
-                  class="mb-0"
-                >
-                </v-text-field>
-              </v-col>
+                  />
+                </UTooltip>
+              </template>
+            </UInput>
+          </UFormField>
+          <UFormField label="الخصم متعلق بـ">
+            <UInput
+              :model-value="invoiceData.discount_for ?? ''"
+              placeholder="الخصم متعلق بـ"
+              class="w-full"
+              @update:model-value="
+                (v) => (invoiceData.discount_for = String(v ?? ''))
+              "
+            />
+          </UFormField>
+        </div>
 
-              <v-col cols="12" lg="2">
-                <v-text-field
-                  variant="outlined"
-                  v-model="form.product_price"
-                  label="سعر المنتج"
-                  placeholder="سعر المنتج"
-                  hide-details="auto"
-                  class="mb-0"
-                  :color="isCostGreaterThanPrice(form)?'error':'primary'"
-                  :base-color="isCostGreaterThanPrice(form)?'error':'primary'"
-                  :focused="isCostGreaterThanPrice(form)"
+        <div
+          class="mb-2 mt-4 flex items-center justify-between border-t border-gray-100 pt-3"
+        >
+          <p class="text-xs font-bold text-gray-400">
+            المنتجات ({{ invoiceData.products.length }})
+          </p>
+          <UButton
+            color="success"
+            variant="soft"
+            size="sm"
+            icon="i-lucide-plus"
+            @click="addNewForm"
+            >إضافة منتج آخر</UButton
+          >
+        </div>
+        <FormsProduct
+          v-model="showProductModal"
+          :refresher="loadProds"
+          @done="onProductModalDone"
+        />
+        <div
+          ref="containerRef"
+          class="max-h-[55vh] space-y-3 overflow-y-auto p-0.5"
+          v-if="!loadingProds"
+        >
+          <div
+            v-for="(form, index) in invoiceData.products"
+            :key="'product-line-' + index"
+            class="rounded-lg border border-gray-200 p-3"
+            :class="isCostGreaterThanPrice(form) ? '!border-red-400' : ''"
+          >
+            <!-- Compact read-only view once a product is picked -->
+            <div
+              v-if="!isExpanded(form)"
+              class="flex items-center justify-between gap-2"
+            >
+              <div class="min-w-0">
+                <div class="truncate text-sm font-bold text-gray-900">
+                  {{ form.product_name || "—" }}
+                  <span v-if="form.option" class="font-normal text-gray-500"
+                    >({{ form.option }})</span
+                  >
+                </div>
+                <div
+                  class="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-gray-500"
                 >
-                  <template #append-inner>
-                    <div
-                      v-if="form.product_cost_price && viewCost"
-                      style="text-wrap: nowrap"
+                  <span class="flex items-center gap-1">
+                    <UButton
+                      size="xs"
+                      color="neutral"
+                      variant="soft"
+                      icon="i-lucide-minus"
+                      aria-label="تقليل الكمية"
+                      class="flex items-center justify-center"
+                      @click="changeQty(form, -1)"
+                    />
+                    <span
+                      dir="ltr"
+                      class="min-w-8 text-center font-bold text-gray-800"
+                      >{{ formatePrice(form.product_quantity) }}</span
                     >
-                      التكلفة ({{ form.product_cost_price }})
-                    </div>
-                  </template>
-                </v-text-field>
-              </v-col>
-              <v-col cols="12" lg="1">
-                <v-text-field
-                  readonly
-                  variant="outlined"
-                  :model-value="formatePrice(calcTotalOfForm(form))"
-                  label="الإجمالي"
-                  placeholder="الإجمالي"
-                  hide-details="auto"
-                  class="mb-0"
+                    <UButton
+                      size="xs"
+                      color="neutral"
+                      variant="soft"
+                      icon="i-lucide-plus"
+                      aria-label="زيادة الكمية"
+                      class="flex items-center justify-center"
+                      @click="changeQty(form, 1)"
+                    />
+                  </span>
+                  <span>×</span>
+                  <span dir="ltr">{{ formatePrice(form.product_price) }}</span>
+                  <span>=</span>
+                  <span class="font-bold text-gray-800">{{
+                    formatePrice(calcTotalOfForm(form))
+                  }}</span>
+                </div>
+              </div>
+              <div class="flex shrink-0 gap-1.5">
+                <UButton
+                  size="sm"
+                  color="neutral"
+                  variant="soft"
+                  icon="i-lucide-pencil"
+                  @click="expandLine(form)"
+                  >تعديل</UButton
                 >
-                </v-text-field>
-              </v-col>
-              <v-col cols="12" lg="1">
-                <v-text-field
-                  variant="outlined"
-                  :model-value="index"
-                  label="الترتيب"
-                  hide-details="auto"
-                  class="mb-0"
-                  placeholder="الترتيب"
-                  @update:model-value="(v) => (form.order = v)"
-                  @keydown.enter="
-                    moveIndexToNewValue(index, form.order);
-                    form.order = null;
-                  "
-                >
-                </v-text-field>
-              </v-col>
-              <v-col cols="3" lg="1">
-                <v-btn
-                  v-if="index >= 1"
-                  @click="removeElementIndex(index)"
-                  flat
+                <UButton
+                  v-if="invoiceData.products.length > 1"
+                  size="sm"
                   color="error"
-                  variant="tonal"
+                  variant="soft"
+                  icon="i-lucide-trash-2"
+                  @click="removeLine(form)"
+                  >حذف</UButton
                 >
-                  <v-icon icon="mdi-delete-outline" size="30" />
-                </v-btn>
-              </v-col>
-            </v-row>
+              </div>
+            </div>
+            <!-- Expanded edit mode -->
+            <div v-else>
+              <div class="mb-2 flex items-center justify-between">
+                <span class="text-xs font-bold text-gray-400">
+                  {{ form.product_name || `منتج #${index + 1}` }}
+                </span>
+                <div class="flex shrink-0 gap-1.5">
+                  <UButton
+                    size="sm"
+                    color="success"
+                    variant="soft"
+                    icon="i-lucide-chevron-up"
+                    @click="collapseLine(form)"
+                    >إغلاق</UButton
+                  >
+                  <UButton
+                    v-if="invoiceData.products.length > 1"
+                    icon="i-lucide-trash-2"
+                    color="error"
+                    variant="soft"
+                    size="xs"
+                    class="flex items-center justify-center"
+                    aria-label="حذف السطر"
+                    @click="removeLine(form)"
+                  />
+                </div>
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <UFormField label="المنتج" class="col-span-2">
+                  <USelectMenu
+                    :model-value="selectedProd(form)"
+                    :items="productMenuItems(form)"
+                    label-key="name"
+                    by="id"
+                    :search-term="getProdSearch(form)"
+                    :search-input="{
+                      placeholder: 'بحث عن منتج...',
+                      icon: 'i-lucide-search',
+                    }"
+                    :ignore-filter="true"
+                    placeholder="المنتج"
+                    :loading="loadingProds"
+                    class="w-full"
+                    @update:search-term="(v) => setProdSearch(form, v)"
+                    @update:model-value="(prod) => onPickProduct(form, prod)"
+                  />
+                </UFormField>
+                <UFormField label="خيار معين">
+                  <UInput
+                    v-model="form.option"
+                    placeholder="خيار معين"
+                    class="w-full"
+                  />
+                </UFormField>
+                <UFormField label="الكمية">
+                  <UInputNumber
+                    v-model="form.product_quantity"
+                    :min="0"
+                    :step="1"
+                    class="w-full"
+                  />
+                </UFormField>
+                <UFormField label="سعر المنتج">
+                  <UInputNumber
+                    v-model="form.product_price"
+                    :min="0"
+                    class="w-full"
+                    :color="isCostGreaterThanPrice(form) ? 'error' : undefined"
+                  />
+                  <template v-if="form.product_cost_price && viewCost" #hint>
+                    <span class="text-xs text-gray-500"
+                      >التكلفة ({{ form.product_cost_price }})</span
+                    >
+                  </template>
+                </UFormField>
+                <UFormField label="الإجمالي">
+                  <UInput
+                    :model-value="formatePrice(calcTotalOfForm(form))"
+                    readonly
+                    class="w-full"
+                  />
+                </UFormField>
+                <UFormField label="الترتيب">
+                  <UInput
+                    :model-value="String(index)"
+                    placeholder="الترتيب"
+                    inputmode="numeric"
+                    dir="ltr"
+                    class="w-full"
+                    @update:model-value="(v) => (form.order = Number(v))"
+                    @keydown.enter="
+                      moveIndexToNewValue(index, form.order);
+                      form.order = null;
+                    "
+                  />
+                </UFormField>
+              </div>
+            </div>
           </div>
-          <div v-else class="my-3 text-center">
-            جاري تحميل المنتجات... الرجاء الإنتظار
-          </div>
-          <v-col cols="9" lg="12">
-            <v-btn color="success" block flat @click="addNewForm"
-              >إضافة منتج
-            </v-btn>
-          </v-col>
-        </v-form>
-      </div>
-      <Invoice
-        v-if="!loadingProds"
-        @reset="resetInvoice"
-        :isForAdmin="isForAdmin"
-        :invoice-data="invoiceData"
-      />
-      <div v-else class="my-3 text-center">
-        جاري تحميل المنتجات... الرجاء الإنتظار
+        </div>
+        <div v-else class="my-3 text-center text-gray-500">
+          جاري تحميل المنتجات... الرجاء الإنتظار
+        </div>
+      </UCard>
+
+      <!-- Live preview -->
+      <div class="min-w-0 xl:sticky xl:top-16 xl:w-[480px] xl:shrink-0">
+        <Invoice
+          v-if="!loadingProds"
+          :invoice-data="invoiceData"
+          @reset="resetInvoice"
+          @saved="(id) => (invoiceData.id = id)"
+        />
+        <div v-else class="my-3 text-center text-gray-500">
+          جاري تحميل المنتجات... الرجاء الإنتظار
+        </div>
       </div>
     </div>
   </div>
 </template>
-<script setup>
-definePageMeta({
-  title: "إنشاء فاتورة",
-});
+<script setup lang="ts">
+import type { Customer, Invoice, InvoiceProductLine, Product } from "~/types";
+import { toDateSafe } from "~/types";
+
+definePageMeta({ title: "إنشاء فاتورة" });
 const { formatDate, formatTime12Hour, formatePrice } = useHelpers();
 const products = useProductsStore();
 const { onDocChange } = useFirebase();
 const invoices = useInvoicesStore();
 const customers = useCustomersStore();
 const authStore = useAuth();
-const isForAdmin = ref(false);
+const { notify } = useAppToast();
 const updating = ref(false);
 const loadingCustomers = ref(false);
 const loadingProds = ref(false);
-const containerRef = ref();
+const containerRef = ref<HTMLElement | null>(null);
 const startView = ref(false);
 const viewCost = ref(false);
-const invoiceData = ref({
-  customer_name: null,
-  customer_phone: null,
-  debt: null,
-  delivery_price: null,
-  discount_percentage: false,
-  discount: null,
-  discount_for: null,
-  amount_of_animal_feeds: null,
-  amount_of_mahros: null,
-  created_by: authStore.currentUserKey || "su",
-  products: [
-    {
-      product_name: "",
-      product_price: 0,
-      product_cost_price: 0,
-      product_quantity: 1,
-      total: 0,
-      option: "",
-      product_id: "",
-    },
-  ],
-  date: new Date(),
-  time: new Date(),
-});
-function isCostGreaterThanPrice(product){
-  return isAdmin && Number(product.product_price)<Number(product.product_cost_price)
+
+function emptyLine(): InvoiceProductLine {
+  return {
+    product_name: "",
+    product_price: 0,
+    product_cost_price: 0,
+    product_quantity: 1,
+    total: 0,
+    option: "",
+    product_id: "",
+  };
 }
-function resetInvoice() {
-  invoiceData.value = {
+function emptyInvoice(): Invoice {
+  return {
     customer_name: null,
     customer_phone: null,
-    discount: null,
-    discount_percentage: false,
-    discount_for: null,
     debt: null,
     delivery_price: null,
-    created_by: authStore.currentUserKey || "su",
-    products: [
-      {
-        product_name: "",
-        product_price: 0,
-        product_quantity: 1,
-        product_cost_price: 0,
-        total: 0,
-        product_id: "",
-        option: "",
-      },
-    ],
+    discount_percentage: false,
+    discount: null,
+    discount_for: null,
+    amount_of_animal_feeds: null,
+    amount_of_mahros: null,
+    created_by: (authStore.currentUserKey as string) || "su",
+    products: [emptyLine()],
     date: new Date(),
     time: new Date(),
   };
 }
-const calcTotalOfForm = (form) => {
+const invoiceData = ref<Invoice>(emptyInvoice());
+const creatorOptions = computed(() => usersList.value.slice(1));
+
+function isCostGreaterThanPrice(
+  product: Pick<InvoiceProductLine, "product_price" | "product_cost_price">,
+): boolean {
+  return (
+    isAdmin.value &&
+    Number(product.product_price) < Number(product.product_cost_price)
+  );
+}
+function resetInvoice(): void {
+  invoiceData.value = emptyInvoice();
+}
+// FLAG [D1]: shared calc lives in useHelpers.calcLineTotal; kept local for template compat.
+const calcTotalOfForm = (
+  form: Pick<InvoiceProductLine, "product_price" | "product_quantity">,
+): number => {
   if (form.product_price && form.product_quantity) {
     return Number(form.product_price) * Number(form.product_quantity);
-  } else return 0;
+  }
+  return 0;
 };
-async function loadCustomers() {
+
+// USelectMenu bridges (object pickers replace return-object autocompletes)
+const CREATE_CUSTOMER_ID = "__create__";
+const CREATE_PRODUCT_ID = "__create__";
+const customerSearch = ref("");
+const showCustomerModal = ref(false);
+const customerMenuItems = computed<Customer[]>(() => {
+  const q = customerSearch.value.trim();
+  const base = q
+    ? customers.list.filter(
+        (c) => c.name?.includes(q) || String(c.phone ?? "").includes(q),
+      )
+    : [...customers.list];
+  return [
+    {
+      id: CREATE_CUSTOMER_ID,
+      name: "+ إضافة عميل جديد",
+      phone: null,
+    } as Customer,
+    ...base.slice(0, 30),
+  ];
+});
+function selectedCustomer(): Customer | undefined {
+  if (!invoiceData.value.customer_phone) return undefined;
+  return customers.list.find(
+    (c) =>
+      String(c.phone ?? "") === String(invoiceData.value.customer_phone ?? ""),
+  );
+}
+function onPickCustomer(cus: Customer | null | undefined): void {
+  if (!cus) return;
+  // First dropdown item opens the create modal instead of selecting.
+  if (cus.id === CREATE_CUSTOMER_ID) {
+    showCustomerModal.value = true;
+    return;
+  }
+  invoiceData.value.customer_phone = cus?.phone ?? null;
+  invoiceData.value.customer_name = cus?.name ?? null;
+}
+function selectedProd(form: InvoiceProductLine): Product | undefined {
+  if (!form.product_id) return undefined;
+  return products.list.find((p) => p.id === form.product_id);
+}
+// Per-line dropdown search (object identity survives unshift/splice/move).
+const prodSearch = reactive(new Map<InvoiceProductLine, string>());
+function getProdSearch(form: InvoiceProductLine): string {
+  return prodSearch.get(form) ?? "";
+}
+function setProdSearch(form: InvoiceProductLine, v: string): void {
+  prodSearch.set(form, v);
+}
+function productMenuItems(form: InvoiceProductLine): Product[] {
+  const q = (prodSearch.get(form) ?? "").trim().toLowerCase();
+  const base = q
+    ? products.list.filter((p) => p.name?.toLowerCase().includes(q))
+    : [...products.list];
+  return [
+    {
+      id: CREATE_PRODUCT_ID,
+      name: "+ إضافة منتج جديد",
+      price: null,
+      cost_price: null,
+    } as Product,
+    ...base.slice(0, 30),
+  ];
+}
+const showProductModal = ref(false);
+const productModalLine = ref<InvoiceProductLine | null>(null);
+function onPickProduct(
+  form: InvoiceProductLine,
+  prod: Product | null | undefined,
+): void {
+  if (!prod) return;
+  // First dropdown item opens the create modal instead of selecting.
+  if (prod.id === CREATE_PRODUCT_ID) {
+    productModalLine.value = form;
+    showProductModal.value = true;
+    return;
+  }
+  form.product_price = Number(prod?.price ?? 0);
+  form.product_id = prod?.id ?? "";
+  form.product_cost_price = Number(prod?.cost_price ?? 0);
+  form.product_name = prod?.name ?? "";
+  // No auto-collapse: the user locks the line explicitly with collapseLine().
+  prodSearch.delete(form);
+}
+function onProductModalDone(prod: Product | null | undefined): void {
+  if (productModalLine.value) onPickProduct(productModalLine.value, prod);
+  productModalLine.value = null;
+}
+// Expanded/collapsed state by object identity (never persisted to Firestore).
+const expandedLines = reactive(new Set<InvoiceProductLine>());
+function isExpanded(form: InvoiceProductLine): boolean {
+  return expandedLines.has(form) || !form.product_id;
+}
+function expandLine(form: InvoiceProductLine): void {
+  expandedLines.add(form);
+}
+// Quick +/- steppers in compact view (floor at 0; precise halves via edit mode).
+function changeQty(form: InvoiceProductLine, delta: number): void {
+  const next = Number(form.product_quantity || 0) + delta;
+  form.product_quantity = Math.max(0, Number.isFinite(next) ? next : 0);
+}
+// Explicit lock: collapse the line, then auto-append a fresh line on top
+// so the entry flow continues (only when no empty line exists).
+function collapseLine(form: InvoiceProductLine): void {
+  if (!form.product_id) {
+    notify("اختر المنتج أولًا قبل إغلاق السطر.", "error");
+    return;
+  }
+  expandedLines.delete(form);
+  if (!invoiceData.value.products.some((l) => !l.product_id)) {
+    const line = emptyLine();
+    invoiceData.value.products.unshift(line);
+    expandedLines.add(line);
+    nextTick(scrollToTop);
+  }
+}
+function removeLine(form: InvoiceProductLine): void {
+  if (invoiceData.value.products.length <= 1) return;
+  const index = invoiceData.value.products.indexOf(form);
+  if (index === -1) return;
+  expandedLines.delete(form);
+  prodSearch.delete(form);
+  invoiceData.value.products.splice(index, 1);
+}
+
+// Date/time bridges for native inputs
+const dateModel = computed<Date | null>({
+  get: () => toDateSafe(invoiceData.value.date),
+  set: (v) => {
+    invoiceData.value.date = v;
+  },
+});
+const timeInput = computed<string>({
+  get: () => {
+    const t = invoiceData.value.time;
+    if (t instanceof Date && !isNaN(t.getTime())) {
+      return `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
+    }
+    if (typeof t === "string" && /^\d{1,2}:\d{2}/.test(t)) return t.slice(0, 5);
+    return "";
+  },
+  set: (v: string) => {
+    invoiceData.value.time = v;
+  },
+});
+
+// Coerce nullable/string numerics for UInputNumber (number-only model).
+function numOrUndef(v: unknown): number | undefined {
+  if (v === null || v === undefined || v === "") return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+// Discount uses a plain numeric UInput (for the trailing slot) — string bridge.
+const discountInput = computed(() => {
+  const d = invoiceData.value.discount;
+  return d === null || d === undefined || d === "" ? "" : String(d);
+});
+async function loadCustomers(): Promise<void> {
   loadingCustomers.value = true;
-  await customers.fetchCustomers();
-  loadingCustomers.value = false;
+  try {
+    await customers.fetchCustomers();
+  } finally {
+    loadingCustomers.value = false;
+  }
 }
-async function loadProds(updatePrices) {
+async function loadProds(updatePrices?: boolean): Promise<void> {
   loadingProds.value = true;
-  await products.fetchProducts();
-  if (updatePrices) {
-    updateProdsPrices();
+  try {
+    await products.fetchProducts();
+    if (updatePrices) updateProdsPrices();
+  } finally {
+    loadingProds.value = false;
   }
-  loadingProds.value = false;
 }
-const scrollToBottom = () => {
-  if (containerRef.value) {
-    containerRef.value.scrollTop = containerRef.value.scrollHeight;
-  }
+const scrollToTop = (): void => {
+  if (containerRef.value)
+    containerRef.value.scrollTo({ top: 0, behavior: "smooth" });
 };
 watch(
   () => invoiceData.value.products.length,
-  (n, o) => (o > n ? null : nextTick(scrollToBottom)),
-  { flush: "post" }
+  (n, o) => (o > n ? null : nextTick(scrollToTop)),
+  { flush: "post" },
 );
-function moveIndexToNewValue(from, to) {
-  if (typeof from !== "number") return;
-  if (!to) return;
-  if (invoiceData.value.products.length < Number(to)) {
+function moveIndexToNewValue(from: number, to: unknown): void {
+  if (typeof from !== "number" || !to) return;
+  const target = Number(to);
+  if (
+    !Number.isInteger(target) ||
+    target < 0 ||
+    target >= invoiceData.value.products.length
+  )
+    return;
+  const [product] = invoiceData.value.products.splice(from, 1);
+  if (product) invoiceData.value.products.splice(target, 0, product);
+}
+function addNewForm(): void {
+  // New lines go on TOP; refuse while any line is still empty.
+  if (invoiceData.value.products.some((l) => !l.product_id)) {
+    // P4: toast instead of blocking alert().
+    notify(
+      "عذرًا، يجب أن تُضيف منتجًا في السطر الفارغ أولًا حتى تتمكّن من إضافة منتج جديد للفاتورة.",
+      "error",
+    );
     return;
   }
-  const product = invoiceData.value.products.find(
-    (_el, index) => index == from
-  );
-  if (product) {
-    invoiceData.value.products.splice(from, 1);
-    invoiceData.value.products.splice(to, 0, product);
-  }
+  const line = emptyLine();
+  invoiceData.value.products.unshift(line);
+  expandedLines.add(line);
+  nextTick(scrollToTop);
 }
-function addNewForm() {
-  const lastProduct =
-    invoiceData.value.products[invoiceData.value.products.length - 1];
-  if (lastProduct && lastProduct.product_id) {
-    invoiceData.value.products.push({
-      product_name: "",
-      product_price: 0,
-      product_quantity: 1,
-      product_cost_price: 0,
-      product_id: "",
-      total: 0,
-      option: "",
-    });
-  } else {
-    alert(
-      "عذرًا، يجب أن تُضيف منتجًا في الصف الأخير أولًا حتى تتمكّن من إضافة منتج جديد للفاتورة."
-    );
-  }
-}
-const reBuild = ref(false);
-function removeElementIndex(index) {
-  reBuild.value = true;
-  invoiceData.value.products = invoiceData.value.products.filter(
-    (p, i) => i !== index
-  );
-  setTimeout(() => {
-    reBuild.value = false;
-  }, 200);
-}
-function updateProdsPrices() {
+function updateProdsPrices(): void {
   const productMap = new Map(products.list.map((p) => [p.id, p]));
-
   invoiceData.value.products.forEach((item) => {
-    const prod = productMap.get(item.product_id);
+    const prod = item.product_id ? productMap.get(item.product_id) : undefined;
     if (prod) {
-      item.product_price = prod.price;
-      item.product_cost_price = prod.cost_price;
+      item.product_price = Number(prod.price ?? 0);
+      item.product_cost_price = Number(prod.cost_price ?? 0);
       item.product_name = prod.name;
     }
   });
 }
-function handleViewCostClick() {
+function handleViewCostClick(): void {
   if (viewCost.value) {
     startView.value = false;
     viewCost.value = false;
@@ -592,42 +720,38 @@ function handleViewCostClick() {
     startView.value = true;
   }
 }
-async function updateInvoiceData() {
-  // Update all products in the invoice to the price in the productsList and also update the date to now
+async function updateInvoiceData(): Promise<void> {
   updating.value = true;
-  await loadProds();
-  invoiceData.value.date = new Date();
-  invoiceData.value.time = new Date();
-  updateProdsPrices();
-  updating.value = false;
+  try {
+    await loadProds();
+    invoiceData.value.date = new Date();
+    invoiceData.value.time = new Date();
+    updateProdsPrices();
+  } finally {
+    updating.value = false;
+  }
 }
-const unSubCustomers = ref();
-const usSubProds = ref();
+const unSubCustomers = ref<(() => void) | undefined>();
+const usSubProds = ref<(() => void) | undefined>();
 onMounted(async () => {
   if (invoices.invoiceToEdit) {
+    const src = invoices.invoiceToEdit;
+    const d = toDateSafe(src.date) ?? new Date();
     invoiceData.value = {
-      ...invoices.invoiceToEdit,
-      date:
-        invoices.invoiceToEdit.id && invoices.invoiceToEdit.date
-          ? new Date(invoices.invoiceToEdit.date.seconds * 1000)
-          : new Date(),
-      time:
-        invoices.invoiceToEdit.id && invoices.invoiceToEdit.date
-          ? new Date(invoices.invoiceToEdit.date.seconds * 1000)
-          : new Date(),
+      ...emptyInvoice(),
+      ...src,
+      date: new Date(d),
+      time: new Date(d),
+      products: src.products?.length ? src.products : [emptyLine()],
     };
     invoices.invoiceToEdit = undefined;
   }
   await Promise.all([loadCustomers(), loadProds()]);
   unSubCustomers.value = await onDocChange("customers", loadCustomers);
-  usSubProds.value = await onDocChange("products", loadProds);
+  usSubProds.value = await onDocChange("products", () => loadProds());
 });
 onUnmounted(() => {
-  if (unSubCustomers.value) {
-    unSubCustomers.value();
-  }
-  if (usSubProds.value) {
-    usSubProds.value();
-  }
+  unSubCustomers.value?.();
+  usSubProds.value?.();
 });
 </script>
