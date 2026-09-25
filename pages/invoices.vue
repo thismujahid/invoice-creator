@@ -277,6 +277,9 @@
               >
                 المتبقي: {{ row.debt }}
               </div>
+              <div class="mt-0.5 text-xs font-semibold text-emerald-600">
+                الربح: {{ hideTotal ? "****" : row.profit }}
+              </div>
             </div>
             <div class="flex shrink-0 gap-1.5" @click.stop>
               <UButton
