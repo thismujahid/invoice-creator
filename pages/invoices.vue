@@ -20,7 +20,7 @@
           variant="soft"
           :disabled="loading"
           @click="!hideTotal ? (hideTotal = true) : (startViewTotal = true)"
-          >عرض الإجماليات</UButton
+          >عرض الأموال</UButton
         >
         <FormsAuthScreen
           @close="() => (startViewTotal = false)"
@@ -185,7 +185,7 @@
               <td class="p-2 text-gray-600" dir="ltr">{{ row.phone }}</td>
               <td class="p-2">{{ row.products_count }}</td>
               <td class="p-2 font-semibold">{{ row.total }}</td>
-              <td class="p-2 text-red-600">{{ row.debt }}</td>
+              <td class="p-2 text-red-600">{{ formatePrice(row.debt) }}</td>
               <td class="p-2 font-semibold text-emerald-600">
                 {{ hideTotal ? "****" : row.profit }}
               </td>
@@ -275,7 +275,7 @@
                 v-if="row.debt"
                 class="mt-0.5 text-xs font-semibold text-red-600"
               >
-                المتبقي: {{ row.debt }}
+                المتبقي: {{ formatePrice(row.debt) }}
               </div>
               <div class="mt-0.5 text-xs font-semibold text-emerald-600">
                 الربح: {{ hideTotal ? "****" : row.profit }}
@@ -476,7 +476,12 @@ const toNum = (num: unknown): number => {
 };
 function calcDebts(inv: Invoice): number {
   // No paid_amount field (pre-feature invoices) = treated as PAID, not debt.
-  if (!("paid_amount" in inv) || inv.paid_amount === null || inv.paid_amount === undefined) return 0;
+  if (
+    !("paid_amount" in inv) ||
+    inv.paid_amount === null ||
+    inv.paid_amount === undefined
+  )
+    return 0;
   const total = calcTotal(inv) - discountAmount(inv);
   const paid = toNum(inv.paid_amount);
   const diff = total - paid;
