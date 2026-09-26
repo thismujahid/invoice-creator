@@ -1,7 +1,8 @@
-import { collection, doc } from "firebase/firestore";
+import { collection, doc, getDocs } from "firebase/firestore";
 import type { CustomerLoan, DebtPaymentAllocation } from "~/types/finance";
 import type { Customer, Invoice } from "~/types";
-import { loanStatusOf, normalizePhone, round2, toNum, invoiceTotals } from "./finance";
+import { loanStatusOf, normalizePhone, normalizeName, round2, toNum, outstandingDebtOf } from "./finance";
+import { summarizeInvoice, writeDebtSummary } from "./debtSummaries";
 import { toDateSafe } from "~/types";
 
 export interface Obligation {
@@ -12,7 +13,8 @@ export interface Obligation {
   paid: number;
   remaining: number;
   date: Date | null;
-  ref: Invoice | CustomerLoan;
+  /** Minimal ref: loans carry their note; invoices carry nothing (fetched on demand). */
+  ref: { note?: string | null } | null;
 }
 
 export interface CustomerDebt {
@@ -35,10 +37,9 @@ export const useDebts = defineStore("debts", () => {
 
   const creator = () => (authStore.currentUserKey as string) || null;
 
-  /** Remaining for an invoice doc snapshot: stored first, computed fallback (legacy). */
+  /** Remaining for an invoice doc snapshot — shared legacy-safe rule. */
   function remainingOf(data: Record<string, unknown>): number {
-    if (data.remaining !== null && data.remaining !== undefined) return round2(toNum(data.remaining));
-    const t = invoiceTotals({
+    return outstandingDebtOf({
       products: (Array.isArray(data.products) ? data.products : []) as Invoice["products"],
       discount: data.discount as Invoice["discount"],
       discount_percentage: data.discount_percentage as boolean | undefined,
@@ -47,27 +48,27 @@ export const useDebts = defineStore("debts", () => {
       amount_of_animal_feeds: data.amount_of_animal_feeds as Invoice["amount_of_animal_feeds"],
       amount_of_mahros: data.amount_of_mahros as Invoice["amount_of_mahros"],
       paid_amount: data.paid_amount as Invoice["paid_amount"],
+      remaining: data.remaining as Invoice["remaining"],
     });
-    return t.remaining;
   }
-  /** Aggregation key: real id first, then normalized phone, then name. */
+  /** Aggregation key: real id first; otherwise a composite legacy identity
+   *  (normalized name + normalized phone) — never phone alone. */
   function customerKeyOf(o: { customer_id?: string | null; customer_phone?: string | number | null; customer_name?: string | null; phone?: string | number | null; name?: string }): string {
     if (o.customer_id) return `id:${o.customer_id}`;
     const phone = normalizePhone((o as { customer_phone?: unknown }).customer_phone ?? (o as { phone?: unknown }).phone);
-    if (phone) return `phone:${phone}`;
-    return `name:${String((o as { customer_name?: unknown }).customer_name ?? (o as { name?: unknown }).name ?? "").trim()}`;
+    const name = normalizeName((o as { customer_name?: unknown }).customer_name ?? (o as { name?: unknown }).name);
+    return `legacy:${name}|${phone}`;
   }
 
   function debtOfInvoice(inv: Invoice): number {
-    if (inv.remaining !== null && inv.remaining !== undefined) return round2(toNum(inv.remaining));
-    const { invoiceTotals } = useFinance();
-    return invoiceTotals(inv).remaining;
+    return outstandingDebtOf(inv);
   }
 
-  /** Aggregate all outstanding debts by customer (F15). Small scale: client-side. */
+  /** Debt book from LIGHT summaries only — never preloads full invoices (#5).
+   *  Each summary is a tiny doc maintained transactionally by every flow. */
   async function fetchDebtsBook(): Promise<CustomerDebt[]> {
-    const [invoices, loans] = await Promise.all([
-      readFrom<Invoice>("invoices"),
+    const [sumSnap, loans] = await Promise.all([
+      getDocs(collection(db, "invoice_debt_summaries")),
       readFrom<CustomerLoan>("customer_loans"),
     ]);
     const map = new Map<string, CustomerDebt>();
@@ -93,20 +94,29 @@ export const useDebts = defineStore("debts", () => {
       }
       return e;
     };
-    for (const inv of invoices) {
-      const rem = debtOfInvoice(inv);
+    for (const d of sumSnap.docs) {
+      const s = d.data() as Record<string, unknown>;
+      const rem = round2(toNum(s.remaining));
       if (!(rem > 0)) continue;
-      const key = customerKeyOf({ customer_id: inv.customer_id, customer_phone: inv.customer_phone, customer_name: inv.customer_name });
-      const e = ensure(key, { customer_id: inv.customer_id ?? null, name: inv.customer_name, phone: inv.customer_phone ?? null });
+      const key = customerKeyOf({
+        customer_id: (s.customer_id as string) || null,
+        customer_phone: s.customer_phone as string | number | null,
+        customer_name: s.customer_name as string | null,
+      });
+      const e = ensure(key, {
+        customer_id: (s.customer_id as string) || null,
+        name: s.customer_name as string | null,
+        phone: (s.customer_phone as string | number | null) ?? null,
+      });
       e.invoices.push({
         kind: "invoice",
-        id: inv.id as string,
-        label: `فاتورة ${inv.customer_name || ""}`,
-        total: round2(toNum(inv.paid_amount) + rem),
-        paid: round2(toNum(inv.paid_amount)),
+        id: d.id,
+        label: `فاتورة ${String(s.customer_name || "")}`,
+        total: round2(toNum(s.total)),
+        paid: round2(toNum(s.paid)),
         remaining: rem,
-        date: toDateSafe(inv.date),
-        ref: inv,
+        date: toDateSafe(s.date),
+        ref: null,
       });
       e.invoiceDebt = round2(e.invoiceDebt + rem);
       e.unpaidCount += 1;
@@ -124,7 +134,7 @@ export const useDebts = defineStore("debts", () => {
         paid: round2(toNum(loan.paid_amount)),
         remaining: rem,
         date: toDateSafe(loan.created_at),
-        ref: loan,
+        ref: { note: loan.note ?? null },
       });
       e.loanDebt = round2(e.loanDebt + rem);
     }
@@ -210,7 +220,7 @@ export const useDebts = defineStore("debts", () => {
       let payId = "";
       await runTx(async (tx) => {
         // 1. Read + validate every obligation against its CURRENT remaining.
-        const states: { a: DebtPaymentAllocation; remaining: number; paid: number; kind: "invoice" | "loan" }[] = [];
+        const states: { a: DebtPaymentAllocation; remaining: number; paid: number; kind: "invoice" | "loan"; doc: Record<string, unknown> }[] = [];
         for (const a of allocs) {
           if (a.type === "invoice") {
             const snap = await tx.get(doc(db, "invoices", a.reference_id));
@@ -218,14 +228,14 @@ export const useDebts = defineStore("debts", () => {
             const d = snap.data() as Record<string, unknown>;
             const rem = remainingOf(d);
             if (a.amount - rem > 1e-9) throw new Error("VALIDATION:مبلغ مخصص يتجاوز المتبقي على إحدى الفواتير.");
-            states.push({ a, remaining: rem, paid: round2(toNum(d.paid_amount)), kind: "invoice" });
+            states.push({ a, remaining: rem, paid: round2(toNum(d.paid_amount)), kind: "invoice", doc: d });
           } else {
             const snap = await tx.get(doc(db, "customer_loans", a.reference_id));
             if (!snap.exists()) throw new Error("VALIDATION:إحدى السلف غير موجودة.");
             const d = snap.data() as Record<string, unknown>;
             const rem = round2(toNum(d.remaining));
             if (a.amount - rem > 1e-9) throw new Error("VALIDATION:مبلغ مخصص يتجاوز المتبقي على إحدى السلف.");
-            states.push({ a, remaining: rem, paid: round2(toNum(d.paid_amount)), kind: "loan" });
+            states.push({ a, remaining: rem, paid: round2(toNum(d.paid_amount)), kind: "loan", doc: d });
           }
         }
         // 2. Cashbox in (always valid direction).
@@ -252,6 +262,14 @@ export const useDebts = defineStore("debts", () => {
           const paid = round2(s.paid + s.a.amount);
           if (s.kind === "invoice") {
             tx.update(doc(db, "invoices", s.a.reference_id), { remaining: left, paid_amount: paid });
+            writeDebtSummary(tx, db, {
+              invoice_id: s.a.reference_id,
+              customer_id: (s.doc.customer_id as string) || null,
+              customer_name: (s.doc.customer_name as string | null) ?? null,
+              customer_phone: (s.doc.customer_phone as string | number | null) ?? null,
+              date: (s.doc.date as unknown) ?? null,
+              ...summarizeInvoice({ ...(s.doc as object), paid_amount: paid, remaining: left } as Invoice),
+            });
             tx.set(doc(collection(db, "cash_transactions")), {
               type: "invoice_payment", direction: "in", amount: s.a.amount,
               customer_id: input.customer_id, invoice_id: s.a.reference_id,
@@ -277,5 +295,5 @@ export const useDebts = defineStore("debts", () => {
     }
   }
 
-  return { customerKeyOf, debtOfInvoice, fetchDebtsBook, fetchLoansForCustomer, fetchPaymentsForCustomer, createLoan, payDebts };
+  return { customerKeyOf, fetchDebtsBook, fetchLoansForCustomer, fetchPaymentsForCustomer, createLoan, payDebts };
 });

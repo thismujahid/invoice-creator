@@ -3,6 +3,7 @@ import { collection, doc, getDocs, limit as fsLimit, query, where } from "fireba
 import type { Invoice } from "~/types";
 import { toDateSafe } from "~/types";
 import { round2, stockDeltaForEdit, toNum } from "~/composables/finance";
+import { summarizeInvoice, writeDebtSummary } from "~/composables/debtSummaries";
 
 const STOCK_EPS = 1e-9;
 
@@ -40,11 +41,11 @@ export const useInvoicesStore = defineStore("invoices", () => {
       await runTx(async (tx) => {
         // 1. Read stock + validate aggregated need per product.
         const ids = [...new Set(lines.map((l) => l.product_id as string))];
-        const stocks = new Map<string, { count: number; name: string }>();
+        const stocks = new Map<string, { stock: number; name: string }>();
         for (const pid of ids) {
           const snap = await tx.get(doc(db, "products", pid));
           if (!snap.exists()) throw new Error("VALIDATION:منتج غير موجود بالمخزون.");
-          stocks.set(pid, { count: toNum(snap.data().count), name: String(snap.data().name || "") });
+          stocks.set(pid, { stock: toNum(snap.data().stock_quantity), name: String(snap.data().name || "") });
         }
         const needByProduct = new Map<string, number>();
         for (const l of lines) {
@@ -53,10 +54,10 @@ export const useInvoicesStore = defineStore("invoices", () => {
         }
         for (const [pid, need] of needByProduct) {
           const st = stocks.get(pid)!;
-          if (need - st.count > STOCK_EPS) {
-            throw new Error(`VALIDATION:الكمية المطلوبة (${need}) تتجاوز المخزون المتاح (${st.count}) لمنتج ${st.name}.`);
+          if (need - st.stock > STOCK_EPS) {
+            throw new Error(`VALIDATION:الكمية المطلوبة (${need}) تتجاوز المخزون المتاح (${st.stock}) لمنتج ${st.name}.`);
           }
-          st.count = round2(st.count - need);
+          st.stock = round2(st.stock - need);
         }
         // 2. Cashbox state (missing doc = not onboarded → skip cash, flag it).
         const cashRef = doc(db, "cashbox", "current");
@@ -74,11 +75,20 @@ export const useInvoicesStore = defineStore("invoices", () => {
           inventory_applied: true,
           cashbox_applied: !(paid > 0 && !cashReady),
         });
+        // 3b. Debt summary for the lightweight debt book (same txn).
+        writeDebtSummary(tx, db, {
+          invoice_id: invoiceId,
+          customer_id: (payload.customer_id as string) || null,
+          customer_name: payload.customer_name ?? null,
+          customer_phone: (payload.customer_phone as string | number | null) ?? null,
+          date: (payload.date as unknown) ?? null,
+          ...summarizeInvoice(payload as Invoice),
+        });
         // 4. Stock (final balances from step 1) + per-line inventory logs.
         for (const l of lines) {
           const pid = l.product_id as string;
           const st = stocks.get(pid)!;
-          tx.update(doc(db, "products", pid), { count: st.count });
+          tx.update(doc(db, "products", pid), { stock_quantity: st.stock });
           tx.set(doc(collection(db, "inventory_transactions")), {
             type: "sale",
             product_id: pid,
@@ -144,7 +154,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
           const pRef = doc(db, "products", d.product_id);
           const pSnap = await tx.get(pRef);
           if (!pSnap.exists()) throw new Error(`VALIDATION:المنتج ${d.product_name} غير موجود بالمخزون.`);
-          stocks.set(d.product_id, toNum(pSnap.data().count));
+          stocks.set(d.product_id, toNum(pSnap.data().stock_quantity));
         }
         for (const d of deltas) {
           if (-d.delta - (stocks.get(d.product_id) ?? 0) > STOCK_EPS) {
@@ -166,10 +176,18 @@ export const useInvoicesStore = defineStore("invoices", () => {
           inventory_applied: true,
           cashbox_applied: !(paidDelta !== 0 && !cashReady),
         });
+        writeDebtSummary(tx, db, {
+          invoice_id: id,
+          customer_id: (payload.customer_id as string) || null,
+          customer_name: payload.customer_name ?? null,
+          customer_phone: (payload.customer_phone as string | number | null) ?? null,
+          date: (payload.date as unknown) ?? null,
+          ...summarizeInvoice(payload as Invoice),
+        });
         // 5. Stock + logs.
         for (const d of deltas) {
           const cur = stocks.get(d.product_id) ?? 0;
-          tx.update(doc(db, "products", d.product_id), { count: round2(cur + d.delta) });
+          tx.update(doc(db, "products", d.product_id), { stock_quantity: round2(cur + d.delta) });
           tx.set(doc(collection(db, "inventory_transactions")), {
             type: "sale",
             product_id: d.product_id,

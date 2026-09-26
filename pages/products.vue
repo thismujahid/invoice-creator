@@ -102,6 +102,7 @@
                 سعر التكلفة
               </th>
               <th class="p-2 text-start font-medium">العدد</th>
+              <th class="p-2 text-start font-medium">المخزون</th>
               <th class="p-2 text-start font-medium">الأدوات</th>
             </tr>
           </thead>
@@ -125,6 +126,7 @@
                 {{ p.cost_price }}
               </td>
               <td class="p-2">{{ p.count }}</td>
+              <td class="p-2 font-semibold" :class="p.stock === null ? 'text-gray-400' : ''">{{ p.stock ?? "—" }}</td>
               <td class="p-2" @click.stop>
                 <div class="flex gap-2">
                   <UButton
@@ -197,6 +199,9 @@
                 <div class="text-sm text-gray-500">
                   بيع: {{ p.price }}
                   <span v-if="viewCost">| تكلفة: {{ p.cost_price }}</span>
+                </div>
+                <div class="text-xs" :class="p.stock === null ? 'text-gray-400' : 'text-gray-500'">
+                  المخزون: {{ p.stock ?? "غير مُدخل" }}
                 </div>
               </div>
             </div>
@@ -290,21 +295,23 @@
     <!-- Stock purchase -->
     <UiAppDialog v-model:open="purchaseOpen" :title="`شراء مخزون — ${purchaseName}`">
       <div class="space-y-3">
-        <UAlert color="info" variant="soft" :title="`المخزون الحالي: ${purchaseCount}`" />
-        <UFormField label="الكمية المشتراة" required :error="stockFormError">
+        <UAlert color="info" variant="soft" :title="`المخزون الحالي: ${purchaseCountText}`" />
+        <UAlert color="neutral" variant="soft" title="هذه العملية ستزيد كمية المخزون وسيتم خصم إجمالي تكلفة الشراء من الخزنة." />
+        <UFormField label="الكمية المشتراة" required :error="purchaseQtyError || undefined">
           <UInputNumber v-model="purchaseQty" :min="0" :step="1" size="lg" class="w-full" />
         </UFormField>
-        <UFormField label="سعر تكلفة الوحدة" required>
+        <UFormField label="سعر تكلفة الوحدة" required :error="purchaseCostError || undefined">
           <UInputNumber v-model="purchaseCost" :min="0" size="lg" class="w-full" />
         </UFormField>
-        <div class="text-sm font-bold">الإجمالي: {{ formatePrice((purchaseQty || 0) * (purchaseCost || 0)) }} (يُخصم من الخزنة)</div>
+        <div class="text-sm font-bold">إجمالي تكلفة الشراء: {{ formatePrice(purchaseTotal) }} ج — سيتم خصمها من الخزنة</div>
         <UCheckbox v-model="purchaseUpdatePrice" label="تحديث سعر البيع الحالي بهذا السعر" />
-        <UFormField v-if="purchaseUpdatePrice" label="سعر البيع الجديد" required>
+        <UFormField v-if="purchaseUpdatePrice" label="سعر البيع الجديد" required :error="purchasePriceError || undefined">
           <UInputNumber v-model="purchasePrice" :min="0" size="lg" class="w-full" />
         </UFormField>
         <UFormField label="ملاحظة">
           <UInput v-model="purchaseNote" placeholder="مثال: فاتورة مورد" size="lg" class="w-full" />
         </UFormField>
+        <UAlert v-if="stockSubmitError" color="error" variant="soft" :title="stockSubmitError" />
       </div>
       <template #footer>
         <div class="flex w-full gap-2">
@@ -316,16 +323,17 @@
     <!-- Manual stock adjustment (no cash) -->
     <UiAppDialog v-model:open="adjustOpen" :title="`تعديل مخزون — ${adjustName}`">
       <div class="space-y-3">
-        <UAlert color="warning" variant="soft" title="تعديل يدوي بدون حركة نقدية. للمشتريات الحقيقية استخدم شراء مخزون." />
+        <UAlert color="warning" variant="soft" title="هذا التعديل سيغيّر كمية المخزون فقط ولن يؤثر على رصيد الخزنة." />
         <UFormField label="الكمية الحالية">
-          <UInput :model-value="String(adjustCount)" readonly size="lg" class="w-full" />
+          <UInput :model-value="adjustCountText" readonly size="lg" class="w-full" />
         </UFormField>
-        <UFormField label="الكمية الجديدة" required :error="stockFormError">
+        <UFormField label="الكمية الجديدة" required :error="adjustNewError || undefined">
           <UInputNumber v-model="adjustNew" :min="0" :step="1" size="lg" class="w-full" />
         </UFormField>
         <UFormField label="سبب التعديل" required>
           <UInput v-model="adjustReason" placeholder="مثال: جرد فعلي" size="lg" class="w-full" />
         </UFormField>
+        <UAlert v-if="stockSubmitError" color="error" variant="soft" :title="stockSubmitError" />
       </div>
       <template #footer>
         <div class="flex w-full gap-2">
@@ -344,6 +352,7 @@ import { toDateSafe } from "~/types";
 definePageMeta({ title: "المنتجات", middleware: "admin-only" });
 const searchText = ref<string>("");
 const { formatePrice } = useHelpers();
+const { round2 } = useFinance();
 const productFormState = ref(false);
 const productsStore = useProductsStore();
 const startView = ref(false);
@@ -384,6 +393,7 @@ const paginateArray = computed(() => {
       price: formatePrice(prod.price),
       cost_price: formatePrice(prod.cost_price),
       count: prod.count,
+      stock: prod.stock_quantity ?? null,
     }));
 });
 function isSelected(item: { id?: string }): boolean {
@@ -412,7 +422,26 @@ function editProduct(product: { id?: string }): void {
 const inventory = useInventory();
 const { notify: notifyToast } = useAppToast();
 const stockBusy = ref(false);
-const stockFormError = ref("");
+const stockSubmitError = ref("");
+// Live field errors: empty = untouched (no red); message only when truly invalid.
+const purchaseQtyError = computed(() => {
+  if (purchaseQty.value === undefined || purchaseQty.value === null) return "";
+  return purchaseQty.value > 0 ? "" : "الكمية يجب أن تكون أكبر من صفر.";
+});
+const purchaseCostError = computed(() => {
+  if (purchaseCost.value === undefined || purchaseCost.value === null) return "";
+  return purchaseCost.value >= 0 ? "" : "سعر التكلفة غير صالح.";
+});
+const purchasePriceError = computed(() => {
+  if (!purchaseUpdatePrice.value) return "";
+  if (purchasePrice.value === undefined || purchasePrice.value === null) return "";
+  return purchasePrice.value >= 0 ? "" : "سعر البيع غير صالح.";
+});
+const adjustNewError = computed(() => {
+  if (adjustNew.value === undefined || adjustNew.value === null) return "";
+  return adjustNew.value >= 0 ? "" : "الكمية الجديدة غير صالحة.";
+});
+const purchaseTotal = computed(() => round2((purchaseQty.value || 0) * (purchaseCost.value || 0)));
 const purchaseOpen = ref(false);
 const purchaseId = ref<string | null>(null);
 const purchaseQty = ref<number | undefined>(undefined);
@@ -421,13 +450,15 @@ const purchaseUpdatePrice = ref(false);
 const purchasePrice = ref<number | undefined>(undefined);
 const purchaseNote = ref("");
 const purchaseName = computed(() => prodsList.value.find((p) => p.id === purchaseId.value)?.name ?? "");
-const purchaseCount = computed(() => prodsList.value.find((p) => p.id === purchaseId.value)?.count ?? 0);
+const purchaseCount = computed(() => prodsList.value.find((p) => p.id === purchaseId.value)?.stock_quantity ?? null);
+const purchaseCountText = computed(() => (purchaseCount.value === null ? 'غير مُدخل' : String(purchaseCount.value)));
 const adjustOpen = ref(false);
 const adjustId = ref<string | null>(null);
 const adjustNew = ref<number | undefined>(undefined);
 const adjustReason = ref("");
 const adjustName = computed(() => prodsList.value.find((p) => p.id === adjustId.value)?.name ?? "");
-const adjustCount = computed(() => prodsList.value.find((p) => p.id === adjustId.value)?.count ?? 0);
+const adjustCount = computed(() => prodsList.value.find((p) => p.id === adjustId.value)?.stock_quantity ?? null);
+const adjustCountText = computed(() => (adjustCount.value === null ? 'غير مُدخل' : String(adjustCount.value)));
 function openPurchase(id?: string): void {
   if (!id) return;
   const p = prodsList.value.find((x) => x.id === id);
@@ -437,7 +468,7 @@ function openPurchase(id?: string): void {
   purchaseUpdatePrice.value = false;
   purchasePrice.value = undefined;
   purchaseNote.value = "";
-  stockFormError.value = "";
+  stockSubmitError.value = "";
   purchaseOpen.value = true;
 }
 function openAdjust(id?: string): void {
@@ -445,12 +476,17 @@ function openAdjust(id?: string): void {
   adjustId.value = id;
   adjustNew.value = undefined;
   adjustReason.value = "";
-  stockFormError.value = "";
+  stockSubmitError.value = "";
   adjustOpen.value = true;
 }
 async function doPurchase(): Promise<void> {
-  stockFormError.value = "";
+  stockSubmitError.value = "";
   if (!purchaseId.value) return;
+  if (purchaseQtyError.value || purchaseCostError.value || purchasePriceError.value) return;
+  if (purchaseQty.value === undefined || purchaseCost.value === undefined) {
+    stockSubmitError.value = "أدخل الكمية وسعر التكلفة أولاً.";
+    return;
+  }
   stockBusy.value = true;
   try {
     const res = await inventory.purchaseStock({
@@ -462,7 +498,7 @@ async function doPurchase(): Promise<void> {
       note: purchaseNote.value.trim() || null,
     });
     if (!res.ok) {
-      stockFormError.value = res.error;
+      stockSubmitError.value = res.error;
       return;
     }
     notifyToast("تم تسجيل عملية الشراء وخصم قيمتها من الخزنة.", "success");
@@ -472,8 +508,13 @@ async function doPurchase(): Promise<void> {
   }
 }
 async function doAdjust(): Promise<void> {
-  stockFormError.value = "";
+  stockSubmitError.value = "";
   if (!adjustId.value) return;
+  if (adjustNewError.value) return;
+  if (adjustNew.value === undefined) {
+    stockSubmitError.value = "أدخل الكمية الجديدة أولاً.";
+    return;
+  }
   stockBusy.value = true;
   try {
     const res = await inventory.adjustStock({
@@ -482,7 +523,7 @@ async function doAdjust(): Promise<void> {
       note: adjustReason.value,
     });
     if (!res.ok) {
-      stockFormError.value = res.error;
+      stockSubmitError.value = res.error;
       return;
     }
     notifyToast("تم تعديل المخزون بنجاح.", "success");
@@ -498,6 +539,7 @@ interface ProductRow {
   price: string;
   cost_price: string;
   count?: number | null;
+  stock?: number | null;
 }
 const confirmDelete = ref<ProductRow | null>(null);
 const deleteOpen = computed({

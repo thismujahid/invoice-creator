@@ -44,9 +44,52 @@ export function invoiceTotals(
   return { gross: round2(gross), discountValue: round2(discountValue), net: round2(net), paid: round2(paid), remaining: round2(net - paid) };
 }
 
-/** Discount value for an invoice (replaces the 3 local copies). */
+/** Single shared outstanding-debt rule (legacy-safe):
+ *  - stored `remaining` exists → max(remaining, 0)
+ *  - `paid_amount` missing/null/undefined → 0 (pre-feature invoices are paid)
+ *  - otherwise computed remaining, clamped at 0. */
+export function outstandingDebtOf(
+  inv: Pick<
+    Invoice,
+    "remaining" | "paid_amount" | "products" | "discount" | "discount_percentage" | "debt" | "delivery_price" | "amount_of_animal_feeds" | "amount_of_mahros"
+  >,
+): number {
+  if (inv.remaining !== null && inv.remaining !== undefined) {
+    const r = round2(toNum(inv.remaining));
+    return r > 0 ? r : 0;
+  }
+  if (inv.paid_amount === null || inv.paid_amount === undefined) return 0;
+  return Math.max(0, invoiceTotals(inv).remaining);
+}
+
+/** Discount value for an invoice (replaces the local copies). */
 export function discountValueOf(inv: Pick<Invoice, "discount" | "discount_percentage" | "products" | "debt" | "delivery_price" | "amount_of_animal_feeds" | "amount_of_mahros">): number {
   return invoiceTotals(inv).discountValue;
+}
+
+/** Gross realized profit of invoice lines: Σ(price − cost) × qty. */
+export function grossProfitOf(
+  lines: Pick<InvoiceProductLine, "product_price" | "product_cost_price" | "product_quantity">[] | null | undefined,
+): number {
+  if (!Array.isArray(lines)) return 0;
+  return round2(
+    lines.reduce((s, l) => s + (toNum(l.product_price) - toNum(l.product_cost_price)) * toNum(l.product_quantity), 0),
+  );
+}
+
+/** Estimated collected (cash-in-hand) share of gross profit.
+ *  Proportional to the paid share of net total — an approximation, since
+ *  payments are not tracked per product line. */
+export function collectedProfitOf(
+  lines: Pick<InvoiceProductLine, "product_price" | "product_cost_price" | "product_quantity">[] | null | undefined,
+  paidAmount: unknown,
+  netTotal: unknown,
+): number {
+  const profit = grossProfitOf(lines);
+  const net = toNum(netTotal);
+  if (profit <= 0 || net <= 0) return 0;
+  const ratio = Math.min(Math.max(toNum(paidAmount) / net, 0), 1);
+  return round2(profit * ratio);
 }
 
 /** Net ratio used to allocate discounts proportionally on returns. */
@@ -119,8 +162,9 @@ export function loanStatusOf(paid: unknown, remaining: unknown): "open" | "parti
   return "open";
 }
 
-/** Inventory aggregates for the cashbox dashboard. */
-export function inventoryAggregates(products: Pick<Product, "count" | "price" | "cost_price">[]): {
+/** Inventory aggregates for the cashbox dashboard.
+ *  Uses stock_quantity ONLY — legacy `count` means pieces-per-package. */
+export function inventoryAggregates(products: Pick<Product, "stock_quantity" | "price" | "cost_price">[]): {
   costValue: number;
   saleValue: number;
   expectedProfit: number;
@@ -128,7 +172,7 @@ export function inventoryAggregates(products: Pick<Product, "count" | "price" | 
   let cost = 0;
   let sale = 0;
   for (const p of products) {
-    const c = toNum(p.count);
+    const c = toNum(p.stock_quantity);
     cost += c * toNum(p.cost_price);
     sale += c * toNum(p.price);
   }
@@ -142,16 +186,28 @@ export function normalizePhone(phone: unknown): string {
   return String(phone ?? "").replace(/\D/g, "");
 }
 
+/** Normalize a customer name: strip diacritics, collapse whitespace, trim. */
+export function normalizeName(name: unknown): string {
+  return String(name ?? "")
+    .replace(/[\u0610-\u061A\u064B-\u065F\u06D6-\u06ED]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export const useFinance = () => ({
   round2,
   toNum,
   invoiceTotals,
   discountValueOf,
+  outstandingDebtOf,
   netRatioOf,
+  grossProfitOf,
+  collectedProfitOf,
   lineRefundValue,
   splitRefund,
   stockDeltaForEdit,
   loanStatusOf,
   inventoryAggregates,
   normalizePhone,
+  normalizeName,
 });

@@ -111,7 +111,7 @@
             <div class="truncate text-base font-bold sm:text-lg">
               {{ hideTotal ? "***********" : totalProfit }}
             </div>
-            <div class="text-xs text-gray-500">إجمالي الأرباح</div>
+            <div class="text-xs text-gray-500">إجمالي الأرباح <span class="text-gray-400">(شامل الديون)</span></div>
           </div>
           <UIcon
             name="i-lucide-trending-up"
@@ -196,7 +196,7 @@
               <td class="p-2">
                 <div class="flex gap-1.5">
                   <UTooltip
-                    v-if="debtOf(row.invoice) > 0"
+                    v-if="outstandingDebtOf(row.invoice) > 0"
                     text="سداد الفاتورة بالكامل"
                     ><UButton
                       icon="i-lucide-hand-coins"
@@ -297,7 +297,7 @@
             </div>
             <div class="flex shrink-0 gap-1.5" @click.stop>
               <UButton
-                v-if="debtOf(row.invoice) > 0"
+                v-if="outstandingDebtOf(row.invoice) > 0"
                 icon="i-lucide-hand-coins"
                 color="success"
                 variant="soft"
@@ -417,7 +417,7 @@
       <div v-if="returnInvoice" class="space-y-3">
         <p class="text-sm text-gray-500">
           الفاتورة: <strong>{{ returnInvoice.customer_name }}</strong>
-          — المتبقي الحالي: <strong>{{ formatePrice(debtOf(returnInvoice)) }}</strong>
+          — المتبقي الحالي: <strong>{{ formatePrice(outstandingDebtOf(returnInvoice)) }}</strong>
         </p>
         <div v-for="r in returnRows" :key="r.key" class="rounded-lg border border-gray-200 p-2.5">
           <div class="mb-1.5 flex items-center justify-between gap-2">
@@ -483,7 +483,7 @@ watch(searchText, () => {
 // HOME delta: settle debts in full (single or bulk) — preserved from home.
 async function payFull(listInvs: Invoice[] | null | undefined) {
   // Same UX as before, now atomic + ledger-logged via debt payments (F18/F19).
-  const list = (listInvs ?? []).filter((inv) => inv.id && debtOf(inv) > 0);
+  const list = (listInvs ?? []).filter((inv) => inv.id && outstandingDebtOf(inv) > 0);
   if (!list.length) return;
   isPayingFull.value = true;
   try {
@@ -507,7 +507,7 @@ async function payFull(listInvs: Invoice[] | null | undefined) {
         allocations: invs.map((inv) => ({
           type: "invoice" as const,
           reference_id: inv.id as string,
-          amount: debtOf(inv),
+          amount: outstandingDebtOf(inv),
         })),
       });
       if (!res.ok) {
@@ -547,7 +547,7 @@ function formatTimestamp(
   return `${formattedDate} ${formattedTime}`;
 }
 const { formatePrice, calcTotal } = useHelpers();
-const { round2, lineRefundValue, netRatioOf, splitRefund } = useFinance();
+const { round2, lineRefundValue, netRatioOf, splitRefund, outstandingDebtOf } = useFinance();
 const invoicesStore = useInvoicesStore();
 const returnsApi = useInvoiceReturns();
 const debtsApi = useDebts();
@@ -556,25 +556,6 @@ const { notify: notifyToast } = useAppToast();
 const toNum = (num: unknown): number => {
   return num && typeof num !== "number" ? Number(num) : (num as number) || 0;
 };
-function calcDebts(inv: Invoice): number {
-  // No paid_amount field (pre-feature invoices) = treated as PAID, not debt.
-  if (
-    !("paid_amount" in inv) ||
-    inv.paid_amount === null ||
-    inv.paid_amount === undefined
-  )
-    return 0;
-  const total = calcTotal(inv) - discountAmount(inv);
-  const paid = toNum(inv.paid_amount);
-  const diff = total - paid;
-  return Number.isFinite(diff) && diff > 0 ? diff : 0;
-}
-// Single source for "how much is left": stored remaining first, computed fallback.
-function debtOf(inv: Invoice): number {
-  if (inv.remaining !== null && inv.remaining !== undefined)
-    return Number(inv.remaining);
-  return calcDebts(inv);
-}
 const calcInvTotal = (inv: Invoice): number =>
   inv.products?.reduce(
     (total, prod) =>
@@ -585,7 +566,7 @@ const calcInvTotal = (inv: Invoice): number =>
   ) ?? 0;
 const totalDebts = computed(() => {
   return formatePrice(
-    filteredInvoices.value.reduce((t, i) => (t += debtOf(i)), 0),
+    filteredInvoices.value.reduce((t, i) => (t += outstandingDebtOf(i)), 0),
   );
 });
 const totalProfit = computed(() => {
@@ -604,7 +585,7 @@ const totalPaidInvs = computed(() => {
 const totalInvoices = computed(() => filteredInvoices.value.length);
 const isFilteredInvoicesContainsDebts = computed<Invoice[] | null>(() => {
   if (searchText.value) {
-    return filteredInvoices.value.some((i) => debtOf(i) > 0)
+    return filteredInvoices.value.some((i) => outstandingDebtOf(i) > 0)
       ? filteredInvoices.value
       : null;
   } else return null;
@@ -642,7 +623,7 @@ const paginateArray = computed(() => {
       products_count: invoice.products?.length || 0,
       total: formatePrice(calcTotal(invoice) - discountAmount(invoice)),
       // HOME delta: debt + profit columns replace the creator column.
-      debt: debtOf(invoice),
+      debt: outstandingDebtOf(invoice),
       profit: formatePrice(calcInvTotal(invoice)),
       returnBadge: returnBadgeFor(invoice),
       created_at: formatTimestamp(
@@ -795,7 +776,7 @@ const returnPreviewSplit = computed(() => {
   const total = round2(
     returnRows.value.reduce((s, r) => s + lineRefundValue(r.unit_price, Math.min(toNum(r.qty), r.maxQty), ratio), 0),
   );
-  const split = splitRefund(total, debtOf(returnInvoice.value));
+  const split = splitRefund(total, outstandingDebtOf(returnInvoice.value));
   return { ...split, total };
 });
 const returnPreviewTotal = computed(() => returnPreviewSplit.value.total);

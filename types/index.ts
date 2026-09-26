@@ -11,7 +11,10 @@ export interface Product {
   name: string;
   price: number | null;
   cost_price: number | null;
+  /** Legacy meaning preserved: pieces contained in one sold package. NOT stock. */
   count?: number | null;
+  /** Real on-hand stock. Unset/zero until opening stock is entered. */
+  stock_quantity?: number | null;
   date?: Date | FirestoreTimestampLike | string | null;
 }
 

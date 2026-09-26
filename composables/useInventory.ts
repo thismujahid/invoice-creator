@@ -55,13 +55,13 @@ export const useInventory = defineStore("inventory", () => {
         const pRef = doc(db, "products", input.product_id);
         const pSnap = await tx.get(pRef);
         if (!pSnap.exists()) throw new Error("PRODUCT_MISSING");
-        const cur = toNum(pSnap.data().count);
+        const cur = toNum(pSnap.data().stock_quantity);
         const cRef = doc(db, "cashbox", "current");
         const cSnap = await tx.get(cRef);
         const bal = cSnap.exists() ? round2(Number(cSnap.data().balance || 0)) : 0;
         if (bal < total) throw new Error("INSUFFICIENT_FUNDS");
         const now = serverTimestamp();
-        const patch: Record<string, unknown> = { count: round2(cur + qty) };
+        const patch: Record<string, unknown> = { stock_quantity: round2(cur + qty) };
         if (input.update_price) patch.price = round2(input.new_price);
         tx.update(pRef, patch);
         tx.set(cRef, { balance: round2(bal - total), updated_at: now }, { merge: true });
@@ -108,10 +108,10 @@ export const useInventory = defineStore("inventory", () => {
         const pRef = doc(db, "products", input.product_id);
         const pSnap = await tx.get(pRef);
         if (!pSnap.exists()) throw new Error("PRODUCT_MISSING");
-        const cur = round2(toNum(pSnap.data().count));
+        const cur = round2(toNum(pSnap.data().stock_quantity));
         const delta = round2(target - cur);
         if (Math.abs(delta) < EPS) return;
-        tx.update(pRef, { count: target });
+        tx.update(pRef, { stock_quantity: target });
         logInv(tx, {
           type: "manual_adjustment",
           product_id: input.product_id,

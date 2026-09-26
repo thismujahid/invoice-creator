@@ -4,6 +4,7 @@
     :open="open"
     :title="title"
     :description="description"
+    :ui="layerUi"
     @update:open="emit('update:open', $event)"
   >
     <template #body>
@@ -18,6 +19,7 @@
     :open="open"
     :title="title"
     :description="description"
+    :ui="layerUi"
     @update:open="emit('update:open', $event)"
   >
     <template #body>
@@ -32,15 +34,26 @@
 <script setup lang="ts">
 // P0 wrapper: one dialog API that renders as a bottom slideover on
 // phones (<640px) and a centered modal on larger screens.
-withDefaults(
+const props = withDefaults(
   defineProps<{
     open: boolean;
     title?: string;
     description?: string;
+    /** Optional stacking layer (e.g. 70) so a dialog opened above another
+     *  dialog renders on top (overlay + content). */
+    zIndex?: number | null;
   }>(),
-  { title: "", description: "" },
+  { title: "", description: "", zIndex: null },
 );
 const emit = defineEmits(["update:open", "close"]);
+
+// Nuxt UI merges `ui` classes over theme defaults (tailwind-merge),
+// so only the z-index utilities are overridden.
+const layerUi = computed(() =>
+  props.zIndex
+    ? { overlay: `z-[${props.zIndex}]!`, content: `z-[${props.zIndex}]!` }
+    : undefined,
+);
 
 const isMobile = ref(false);
 onMounted(() => {

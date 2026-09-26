@@ -1,7 +1,8 @@
 import { collection, doc, getDocs, limit as fsLimit, orderBy, query, where } from "firebase/firestore";
 import type { InvoiceReturn, InvoiceReturnItem } from "~/types/finance";
 import type { Invoice } from "~/types";
-import { invoiceTotals, lineRefundValue, netRatioOf, round2, splitRefund, toNum } from "./finance";
+import { lineRefundValue, netRatioOf, outstandingDebtOf, round2, splitRefund, toNum } from "./finance";
+import { summarizeInvoice, writeDebtSummary } from "./debtSummaries";
 
 export interface ReturnLineInput {
   product_id: string;
@@ -157,9 +158,9 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
         }
         if (!retItems.length) throw new Error("VALIDATION:لا توجد كميات صالحة للإرجاع.");
         const totalRefund = round2(retItems.reduce((s, i) => s + i.refund_amount, 0));
-        // 3. Debt-first split against CURRENT remaining (F14).
-        const t = invoiceTotals({ ...fresh, paid_amount: fresh.paid_amount });
-        const remainingDebt = fresh.remaining !== null && fresh.remaining !== undefined ? round2(toNum(fresh.remaining)) : round2(t.net - t.paid);
+        // 3. Debt-first split against CURRENT remaining (shared legacy rule:
+        //    legacy invoices without paid state count as paid → full cash).
+        const remainingDebt = outstandingDebtOf(fresh);
         const split = splitRefund(totalRefund, remainingDebt);
         debtReduction = split.debtReduction;
         cashRefund = split.cashRefund;
@@ -169,7 +170,7 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
           if (stocks.has(it.product_id)) continue;
           const pSnap = await tx.get(doc(db, "products", it.product_id));
           if (!pSnap.exists()) throw new Error(`VALIDATION:المنتج ${it.product_name} غير موجود بالمخزون.`);
-          stocks.set(it.product_id, toNum(pSnap.data().count));
+          stocks.set(it.product_id, toNum(pSnap.data().stock_quantity));
         }
         // 5. Cashbox only when real cash leaves.
         let cashBal = 0;
@@ -200,7 +201,7 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
         for (const it of retItems) {
           const cur = round2((stocks.get(it.product_id) ?? 0) + it.quantity);
           stocks.set(it.product_id, cur);
-          tx.update(doc(db, "products", it.product_id), { count: cur });
+          tx.update(doc(db, "products", it.product_id), { stock_quantity: cur });
           tx.set(doc(collection(db, "inventory_transactions")), {
             type: "refund",
             product_id: it.product_id,
@@ -222,6 +223,14 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
         tx.update(invRef, {
           remaining: round2(remainingDebt - debtReduction),
           returned: mergedReturned,
+        });
+        writeDebtSummary(tx, db, {
+          invoice_id: invoice.id as string,
+          customer_id: (fresh.customer_id as string) || null,
+          customer_name: (fresh.customer_name as string | null) ?? null,
+          customer_phone: (fresh.customer_phone as string | number | null) ?? null,
+          date: (fresh.date as unknown) ?? null,
+          ...summarizeInvoice({ ...fresh, remaining: round2(remainingDebt - debtReduction) }),
         });
         if (cashRefund > 0) {
           const cRef = doc(db, "cashbox", "current");

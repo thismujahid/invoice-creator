@@ -65,6 +65,11 @@ service cloud.firestore {
       allow create: if isStaff();
       allow update, delete: if isAdmin();
     }
+    match /invoice_debt_summaries/{id} {
+      allow read: if isStaff();
+      allow create, update: if isStaff();
+      allow delete: if isAdmin();
+    }
     match /{document=**} {
       allow read, write: if false;
     }

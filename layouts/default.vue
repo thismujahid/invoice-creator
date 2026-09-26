@@ -38,12 +38,12 @@
       </div>
     </header>
 
-    <!-- Body: fixed vertical nav rail (right in RTL) + page -->
+    <!-- Body: desktop nav rail (right in RTL) + page -->
     <div
-      class="mx-auto flex w-full max-w-6xl pb-20 md:pb-4 min-w-0 flex-1 items-start gap-3 px-3 py-4 md:px-4"
+      class="mx-auto flex w-full max-w-6xl min-w-0 flex-1 items-start gap-3 px-3 py-4 md:px-4"
     >
       <aside
-        class="fixed md:sticky z-20 inset-x-0 top-none md:top-18 bottom-0 md:bottom-none w-full p-2 flex-row flex md:w-32 shrink-0 md:flex-col items-center md:rounded-2xl border border-gray-200 bg-white py-3 shadow-sm"
+        class="sticky top-18 bottom-none z-20 hidden w-32 shrink-0 flex-col items-center rounded-lg border border-gray-200 bg-white py-3 md:py-0 shadow-sm sm:flex"
         aria-label="التنقل الرئيسي"
       >
         <UButton
@@ -53,7 +53,7 @@
           :variant="isActiveTab(item.to) ? 'solid' : 'ghost'"
           :color="isActiveTab(item.to) ? 'success' : 'neutral'"
           :aria-label="item.label"
-          class="flex w-full flex-col md:flex-row items-center justify-start"
+          class="flex w-full flex-row items-center justify-start"
           @click="navigateTo(item.to)"
         >
           {{ item.label }}</UButton
@@ -96,6 +96,65 @@
         </div>
       </template>
     </UiAppDialog>
+
+    <!-- Mobile bottom bar: exactly 4 primary items; المزيد opens the rest -->
+    <nav
+      class="fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur sm:hidden"
+      aria-label="التنقل السريع"
+    >
+      <div
+        v-if="moreOpen"
+        class="absolute inset-x-3 bottom-full mb-2 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg"
+      >
+        <button
+          v-for="item in secondaryItems"
+          :key="item.to"
+          class="flex w-full items-center gap-2 px-3 py-2.5 text-sm"
+          :class="
+            isActiveTab(item.to)
+              ? 'font-bold text-emerald-600'
+              : 'text-gray-700'
+          "
+          @click="goSecondary(item.to)"
+        >
+          <UIcon :name="item.icon" class="size-5 shrink-0" />
+          {{ item.label }}
+        </button>
+      </div>
+      <div class="grid grid-cols-4">
+        <button
+          v-for="item in primaryItems"
+          :key="item.to"
+          :aria-label="item.label"
+          :aria-current="isActiveTab(item.to) ? 'page' : undefined"
+          class="flex min-h-14 flex-col items-center justify-center gap-0.5 text-[11px] leading-none"
+          :class="
+            isActiveTab(item.to)
+              ? 'font-bold text-emerald-600'
+              : 'text-gray-500'
+          "
+          @click="navigateTo(item.to)"
+        >
+          <UIcon :name="item.icon" class="size-5" />
+          {{ item.label }}
+        </button>
+        <button
+          aria-label="المزيد"
+          :aria-expanded="moreOpen"
+          class="flex min-h-14 flex-col items-center justify-center gap-0.5 text-[11px] leading-none"
+          :class="moreActive ? 'font-bold text-emerald-600' : 'text-gray-500'"
+          @click="moreOpen = !moreOpen"
+        >
+          <UIcon name="i-lucide-ellipsis" class="size-5" />
+          المزيد
+        </button>
+      </div>
+    </nav>
+    <!-- Spacer so the fixed bar never covers footer content on mobile -->
+    <div
+      aria-hidden="true"
+      class="h-[calc(3.5rem+env(safe-area-inset-bottom))] sm:hidden"
+    />
   </div>
 </template>
 
@@ -134,6 +193,29 @@ const tabItems = computed(() => [
 function isActiveTab(to: string): boolean {
   return route.path === to;
 }
+
+// Mobile bottom bar: 3 primaries + المزيد popover with the rest.
+const PRIMARY_TOS = ["/", "/invoices", "/debts"];
+const primaryItems = computed(() =>
+  tabItems.value.filter((t) => PRIMARY_TOS.includes(t.to as string)),
+);
+const secondaryItems = computed(() =>
+  tabItems.value.filter((t) => !PRIMARY_TOS.includes(t.to as string)),
+);
+const moreOpen = ref(false);
+const moreActive = computed(() =>
+  secondaryItems.value.some((t) => isActiveTab(t.to as string)),
+);
+function goSecondary(to: string): void {
+  moreOpen.value = false;
+  navigateTo(to);
+}
+watch(
+  () => route.path,
+  () => {
+    moreOpen.value = false;
+  },
+);
 
 const userMenu = computed<DropdownMenuItem[]>(() => [
   {
