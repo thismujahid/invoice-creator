@@ -4,6 +4,7 @@ import type {
   PurchaseInvoiceItem,
   SupplierPayment,
 } from "~/types/finance";
+import { deriveSupplierInvoiceStatus } from "~/types/finance";
 import type { Product, ProductUnit } from "~/types";
 import {
   MAX_PURCHASE_ITEMS,
@@ -316,6 +317,7 @@ export const usePurchasing = defineStore("purchasing", () => {
           }
         }
         const remaining = round2(total - paid);
+        const status = deriveSupplierInvoiceStatus(paid, remaining);
         // 3. Writes.
         tx.set(invRef, {
           supplier_name: input.supplier_name?.trim() || null,
@@ -329,6 +331,7 @@ export const usePurchasing = defineStore("purchasing", () => {
           total_amount: total,
           paid_amount: paid,
           remaining_amount: remaining,
+          status,
           payment_ids: [],
           note: input.note ?? null,
           created_by: byWho,
@@ -461,9 +464,11 @@ export const usePurchasing = defineStore("purchasing", () => {
         const now = serverTimestamp();
         const byWho = by();
         const paid = round2(toNum(d.paid_amount) + pay);
+        const remainingAfterPayment = round2(remaining - pay);
+        const status = deriveSupplierInvoiceStatus(paid, remainingAfterPayment);
         resultingBalance = round2(bal - pay);
         const ids = [...((d.payment_ids as string[]) ?? []), key];
-        tx.update(invRef, { paid_amount: paid, remaining_amount: round2(remaining - pay), payment_ids: ids });
+        tx.update(invRef, { paid_amount: paid, remaining_amount: remainingAfterPayment, status, payment_ids: ids });
         writeSupplierSummaryDelta(tx, db, { supplier_id: d.supplier_id as string | null, supplier_name: d.supplier_name as string | null }, { outstanding_payable: -pay });
         tx.set(payRef, {
           purchase_invoice_id: invoiceId,
@@ -488,7 +493,7 @@ export const usePurchasing = defineStore("purchasing", () => {
           created_at: now,
         });
         tx.set(cRef, { balance: resultingBalance as number, updated_at: now }, { merge: true });
-        out = { ok: true, remaining: round2(remaining - pay) };
+        out = { ok: true, remaining: remainingAfterPayment };
       });
       if (isDuplicate) {
         // Already recorded: report current state instead of re-executing.
@@ -518,12 +523,10 @@ export const usePurchasing = defineStore("purchasing", () => {
       let q = query(collection(db, "purchase_invoices"));
       if (options.supplierId) q = query(q, where("supplier_id", "==", options.supplierId));
       if (pinnedOnly) q = query(q, where("pinned", "==", true));
-      if (options.status === "paid") q = query(q, where("remaining_amount", "==", 0));
-      if (options.status === "unpaid") q = query(q, where("paid_amount", "==", 0), where("remaining_amount", ">", 0));
-      if (options.status === "partial") q = query(q, where("paid_amount", ">", 0), where("remaining_amount", ">", 0));
+      if (options.status && options.status !== "all") q = query(q, where("status", "==", options.status));
       q = query(q, orderBy("created_at", "desc"));
       if (!pinnedOnly && options.cursor) q = query(q, startAfter(options.cursor));
-      return query(q, limit(pageSize + 1));
+      return query(q, limit(pinnedOnly ? 20 : pageSize + 1));
     };
     const [pageSnapshot, pinnedSnapshot] = await Promise.all([
       getDocs(buildQuery(false)),
@@ -532,7 +535,7 @@ export const usePurchasing = defineStore("purchasing", () => {
     const pageDocs = pageSnapshot.docs.slice(0, pageSize);
     return {
       items: pageDocs.map((d) => ({ id: d.id, ...(d.data() as object) }) as PurchaseInvoice),
-      pinned: pinnedSnapshot.docs.slice(0, pageSize).map((d) => ({ id: d.id, ...(d.data() as object) }) as PurchaseInvoice),
+      pinned: pinnedSnapshot.docs.slice(0, 20).map((d) => ({ id: d.id, ...(d.data() as object) }) as PurchaseInvoice),
       cursor: pageDocs.at(-1) ?? null,
       hasMore: pageSnapshot.docs.length > pageSize,
     };

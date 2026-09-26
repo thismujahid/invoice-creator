@@ -85,15 +85,16 @@
         />
       </div>
     </div>
-    <!-- HOME delta: debts dashboard cards (replaces single total alert). -->
-    <div class="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-4">
+    <USkeleton v-if="statsLoading" class="mb-3 h-24 w-full" />
+    <UAlert v-else-if="!statsReady" color="warning" variant="soft" class="mb-3" title="إجماليات الفواتير تحتاج تهيئة من أدوات المدير في صفحة الخزنة." />
+    <div v-else class="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-5">
       <UCard variant="outline">
         <div class="flex items-center justify-between gap-2">
           <div class="min-w-0">
             <div class="truncate text-base font-bold sm:text-lg">
-              {{ hideTotal ? "***********" : totalPaidInvs }}
+              {{ hideTotal ? "***********" : formatePrice(invoiceStats.total_sales) }}
             </div>
-            <div class="text-xs text-gray-500">مبيعات الصفحة الحالية</div>
+            <div class="text-xs text-gray-500">إجمالي المبيعات{{ selectedDate ? " في اليوم المحدد" : "" }}</div>
           </div>
           <UIcon
             name="i-lucide-banknote"
@@ -105,9 +106,9 @@
         <div class="flex items-center justify-between gap-2">
           <div class="min-w-0">
             <div class="truncate text-base font-bold sm:text-lg">
-              {{ hideTotal ? "***********" : totalProfit }}
+              {{ hideTotal ? "***********" : formatePrice(invoiceStats.total_profit) }}
             </div>
-              <div class="text-xs text-gray-500">أرباح الصفحة الحالية <span class="text-gray-400">(شامل الديون)</span></div>
+            <div class="text-xs text-gray-500">إجمالي الأرباح <span class="text-gray-400">(شامل الديون)</span></div>
           </div>
           <UIcon
             name="i-lucide-trending-up"
@@ -119,9 +120,9 @@
         <div class="flex items-center justify-between gap-2">
           <div class="min-w-0">
             <div class="truncate text-base font-bold sm:text-lg">
-              {{ totalDebts }}
+              {{ hideTotal ? "***********" : formatePrice(invoiceStats.outstanding_customer_debt) }}
             </div>
-            <div class="text-xs text-gray-500">ديون الصفحة الحالية</div>
+            <div class="text-xs text-gray-500">إجمالي المديونية</div>
           </div>
           <UIcon
             name="i-lucide-trending-down"
@@ -133,14 +134,25 @@
         <div class="flex items-center justify-between gap-2">
           <div class="min-w-0">
             <div class="truncate text-base font-bold sm:text-lg">
-              {{ totalInvoices }}
+              {{ invoiceStats.invoice_count }}
             </div>
-            <div class="text-xs text-gray-500">فواتير الصفحة الحالية</div>
+            <div class="text-xs text-gray-500">عدد الفواتير</div>
           </div>
           <UIcon
             name="i-lucide-files"
             class="size-8 shrink-0 text-emerald-600"
           />
+        </div>
+      </UCard>
+      <UCard variant="outline">
+        <div class="flex items-center justify-between gap-2">
+          <div class="min-w-0">
+            <div class="truncate text-base font-bold sm:text-lg">
+              {{ hideTotal ? "***********" : formatePrice(invoiceStats.total_paid) }}
+            </div>
+            <div class="text-xs text-gray-500">إجمالي المدفوع</div>
+          </div>
+          <UIcon name="i-lucide-wallet" class="size-8 shrink-0 text-blue-500" />
         </div>
       </UCard>
     </div>
@@ -151,8 +163,8 @@
           val ? ((hideTotal = !hideTotal), (startViewTotal = false)) : false
       "
       v-if="startViewTotal && isAdmin"
-      success-text="تم التحقق من الهوية بنجاح... تم عرض إجماليات الفواتير المعروضة بنجاح"
-      title="برجاء تأكيد هويتك لتتمكن من عرض إجماليات الفواتير المعروضة"
+      success-text="تم التحقق من الهوية بنجاح... تم عرض إجماليات الفواتير بنجاح"
+      title="برجاء تأكيد هويتك لتتمكن من عرض إجماليات الفواتير"
     />
     <USkeleton v-if="loading" class="h-24 w-full" />
     <template v-else>
@@ -433,11 +445,14 @@ import type { Invoice } from "~/types";
 import { toDateSafe } from "~/types";
 import type { ReturnRow } from "~/composables/useInvoiceReturns";
 import type { QueryDocumentSnapshot } from "firebase/firestore";
+import { doc, getDoc } from "firebase/firestore";
+import { invoiceDayKey } from "~/composables/invoiceStats";
 
 definePageMeta({ title: "الفواتير" });
 const route = useRoute();
 const hideTotal = ref(true);
 const authStore = useAuth();
+const { db } = useFirebase();
 // HOME delta: debts filter replaces the creator filter.
 const paid_amount_filter = ref<number | null>(null);
 const debtsFilterOptions = [
@@ -456,10 +471,47 @@ const hasMoreInvoices = ref(false);
 const loading = ref(false);
 const exporting = ref(false);
 const deleting = ref(false);
+const statsLoading = ref(true);
+const statsReady = ref(false);
+const invoiceStats = ref({ total_sales: 0, total_paid: 0, outstanding_customer_debt: 0, total_profit: 0, invoice_count: 0 });
+
+async function loadInvoiceStats(): Promise<void> {
+  statsLoading.value = true;
+  try {
+    const statsRef = selectedDate.value
+      ? doc(db, "invoice_stats_daily", invoiceDayKey({ date: selectedDate.value }) as string)
+      : doc(db, "store_stats", "current");
+    const snapshot = await getDoc(statsRef);
+    if (!snapshot.exists()) {
+      statsReady.value = false;
+      invoiceStats.value = { total_sales: 0, total_paid: 0, outstanding_customer_debt: 0, total_profit: 0, invoice_count: 0 };
+      return;
+    }
+    const data = snapshot.data();
+    statsReady.value = selectedDate.value !== null || data.initialized === true;
+    if (!statsReady.value) {
+      invoiceStats.value = { total_sales: 0, total_paid: 0, outstanding_customer_debt: 0, total_profit: 0, invoice_count: 0 };
+      return;
+    }
+    invoiceStats.value = {
+      total_sales: Number(data.total_sales) || 0,
+      total_paid: Number(data.total_paid) || 0,
+      outstanding_customer_debt: Number(data.outstanding_customer_debt ?? data.outstanding_debt) || 0,
+      total_profit: Number(data.total_profit) || 0,
+      invoice_count: Math.max(0, Math.floor(Number(data.invoice_count) || 0)),
+    };
+  } catch (error) {
+    console.error(error);
+    statsReady.value = false;
+  } finally {
+    statsLoading.value = false;
+  }
+}
 
 // Native date input applies immediately.
 watch(selectedDate, () => {
   void loadInvoices(true);
+  void loadInvoiceStats();
 });
 watch(paid_amount_filter, () => { void loadInvoices(true); });
 watch(currentPerPage, () => { void loadInvoices(true); });
@@ -506,7 +558,7 @@ async function payFull(listInvs: Invoice[] | null | undefined) {
       }
     }
     notifyToast("تم تسجيل السداد وتحديث الخزنة.", "success");
-    await loadInvoices();
+    await Promise.all([loadInvoices(), loadInvoiceStats()]);
   } finally {
     isPayingFull.value = false;
   }
@@ -549,25 +601,6 @@ const toNum = (num: unknown): number => {
   return num && typeof num !== "number" ? Number(num) : (num as number) || 0;
 };
 const calcInvTotal = (inv: Invoice): number => grossProfitOf(inv.products);
-const totalDebts = computed(() => {
-  return formatePrice(
-    filteredInvoices.value.reduce((t, i) => (t += outstandingDebtOf(i)), 0),
-  );
-});
-const totalProfit = computed(() => {
-  let total = 0;
-  for (const inv of filteredInvoices.value) total += calcInvTotal(inv);
-  return formatePrice(total);
-});
-const totalPaidInvs = computed(() => {
-  return formatePrice(
-    filteredInvoices.value.reduce(
-      (total, inv) => total + (calcTotal(inv) - discountAmount(inv)),
-      0,
-    ),
-  );
-});
-const totalInvoices = computed(() => filteredInvoices.value.length);
 const isFilteredInvoicesContainsDebts = computed<Invoice[] | null>(() => {
   if (searchText.value) {
     return filteredInvoices.value.some((i) => outstandingDebtOf(i) > 0)
@@ -707,7 +740,7 @@ async function deleteConfirmed() {
     authStore.snackBarColor = "error";
     authStore.snackBarText = String(err);
   } finally {
-    await loadInvoices();
+    await Promise.all([loadInvoices(), loadInvoiceStats()]);
     deleting.value = false;
   }
 }
@@ -798,10 +831,11 @@ async function submitReturn(): Promise<void> {
       "success",
     );
     returnInvoice.value = null;
-    await Promise.all([loadInvoices(), productsStore.fetchProducts()]);
+    await Promise.all([loadInvoices(), loadInvoiceStats(), productsStore.fetchProducts()]);
   } finally {
     returnBusy.value = false;
   }
 }
 void loadInvoices();
+void loadInvoiceStats();
 </script>

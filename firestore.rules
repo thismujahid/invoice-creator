@@ -82,7 +82,7 @@ service cloud.firestore {
       let supplierId = request.resource.data.get('supplier_id', null);
       let supplierPath = /databases/$(database)/documents/suppliers/$(supplierId);
       return request.resource.data.keys().hasAll([
-          'items', 'product_ids', 'total_amount', 'paid_amount', 'remaining_amount',
+          'items', 'product_ids', 'total_amount', 'paid_amount', 'remaining_amount', 'status',
           'payment_ids', 'created_by', 'created_at'
         ])
         && request.resource.data.items is list
@@ -96,6 +96,10 @@ service cloud.firestore {
         && request.resource.data.paid_amount <= request.resource.data.total_amount
         && request.resource.data.paid_amount + request.resource.data.remaining_amount >= request.resource.data.total_amount - 0.005
         && request.resource.data.paid_amount + request.resource.data.remaining_amount <= request.resource.data.total_amount + 0.005
+        && request.resource.data.status in ['paid', 'partial', 'unpaid']
+        && ((request.resource.data.status == 'paid' && request.resource.data.remaining_amount <= 0)
+          || (request.resource.data.status == 'partial' && request.resource.data.paid_amount > 0 && request.resource.data.remaining_amount > 0)
+          || (request.resource.data.status == 'unpaid' && request.resource.data.paid_amount == 0 && request.resource.data.remaining_amount > 0))
         && request.resource.data.payment_ids is list
         && request.resource.data.payment_ids.size() == 0
         && (supplierId == null || (supplierId is string && exists(supplierPath)));
@@ -106,7 +110,7 @@ service cloud.firestore {
       let paymentId = paymentIds[paymentIds.size() - 1];
       let paymentPath = /databases/$(database)/documents/supplier_payments/$(paymentId);
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'paid_amount', 'remaining_amount', 'payment_ids'
+          'paid_amount', 'remaining_amount', 'status', 'payment_ids'
         ])
         && paymentIds is list
         && paymentIds.size() == resource.data.payment_ids.size() + 1
@@ -115,6 +119,10 @@ service cloud.firestore {
         && request.resource.data.paid_amount > resource.data.paid_amount
         && request.resource.data.remaining_amount < resource.data.remaining_amount
         && request.resource.data.remaining_amount >= 0
+        && request.resource.data.status in ['paid', 'partial', 'unpaid']
+        && ((request.resource.data.status == 'paid' && request.resource.data.remaining_amount <= 0)
+          || (request.resource.data.status == 'partial' && request.resource.data.paid_amount > 0 && request.resource.data.remaining_amount > 0)
+          || (request.resource.data.status == 'unpaid' && request.resource.data.paid_amount == 0 && request.resource.data.remaining_amount > 0))
         && request.resource.data.paid_amount + request.resource.data.remaining_amount >= resource.data.total_amount - 0.005
         && request.resource.data.paid_amount + request.resource.data.remaining_amount <= resource.data.total_amount + 0.005
         && !exists(paymentPath)
@@ -247,6 +255,16 @@ service cloud.firestore {
     match /store_stats/{id} {
       allow read: if isStaff();
       allow create, update: if isStaff() && id == 'current';
+      allow delete: if isAdmin();
+    }
+    match /invoice_stats_daily/{id} {
+      allow read: if isStaff();
+      allow create, update: if isStaff() && id.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+      allow delete: if isAdmin();
+    }
+    match /invoice_stats_monthly/{id} {
+      allow read: if isStaff();
+      allow create, update: if isStaff() && id.matches('^[0-9]{4}-[0-9]{2}$');
       allow delete: if isAdmin();
     }
     match /purchase_invoices/{id} {

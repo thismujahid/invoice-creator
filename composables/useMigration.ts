@@ -3,9 +3,11 @@ import type { Customer } from "~/types";
 import type { Invoice } from "~/types";
 import type { Product } from "~/types";
 import type { PurchaseInvoice, Supplier } from "~/types/finance";
+import { deriveSupplierInvoiceStatus } from "~/types/finance";
 import { normalizeName, normalizePhone, round2, toNum } from "./finance";
 import { summarizeInvoice } from "./debtSummaries";
 import { customerSummaryId } from "./performanceSummaries";
+import { invoiceDayKey, invoiceMonthKey, invoiceStatsOf, sumInvoiceStats } from "./invoiceStats";
 
 const CHUNK = 100;
 const MIN_PHONE_DIGITS = 7;
@@ -20,7 +22,7 @@ function matchKey(phone: unknown, name: unknown): string | null {
 
 /** One-time, idempotent, chunked migration tools (F22). No replay of cash. */
 export const useMigration = defineStore("migration", () => {
-  const { db, writeBatch, serverTimestamp, readFrom } = useFirebase();
+  const { auth, db, writeBatch, serverTimestamp, readFrom } = useFirebase();
   const authStore = useAuth();
 
   const by = () => (authStore.currentUserKey as string) || null;
@@ -204,16 +206,21 @@ export const useMigration = defineStore("migration", () => {
     return { total: invoices.length, created: targets.length, skipped: invoices.length - targets.length };
   }
 
-  /** Explicit admin-only UI action: initializes aggregate documents from a complete historical scan. */
+  /** Explicit admin-only and intentionally expensive one-time historical backfill. */
   async function backfillPerformanceSummaries(
     onProgress?: (done: number, total: number) => void,
-  ): Promise<{ invoices: number; customers: number; customerSummaries: number; debtSummaries: number; supplierInvoices: number; suppliers: number }> {
-    const [invoices, customers, purchaseInvoices, suppliers, existingDebtSummaries] = await Promise.all([
+  ): Promise<{ invoices: number; customers: number; customerSummaries: number; debtSummaries: number; supplierInvoices: number; suppliers: number; dailyStats: number; monthlyStats: number; returns: number; returnsTotal: number }> {
+    const claims = await auth.currentUser?.getIdTokenResult(true);
+    if (claims?.claims.role !== "admin") throw new Error("Admin access is required to rebuild performance summaries.");
+    const [invoices, customers, purchaseInvoices, suppliers, existingDebtSummaries, returnSnapshots, existingDaily, existingMonthly] = await Promise.all([
       readFrom<Invoice>("invoices"),
       readFrom<Customer>("customers"),
       readFrom<PurchaseInvoice>("purchase_invoices"),
       readFrom<Supplier>("suppliers"),
       getDocs(collection(db, "invoice_debt_summaries")),
+      getDocs(collection(db, "invoice_returns")),
+      getDocs(collection(db, "invoice_stats_daily")),
+      getDocs(collection(db, "invoice_stats_monthly")),
     ]);
     const existingDebtIds = new Set(existingDebtSummaries.docs.map((d) => d.id));
     const missingDebtSummaries = invoices.filter((invoice) => invoice.id && !existingDebtIds.has(invoice.id));
@@ -222,14 +229,17 @@ export const useMigration = defineStore("migration", () => {
       if (!customer.id) continue;
       aggregates.set(customer.id, { customer_id: customer.id, customer_name: customer.name, customer_phone: customer.phone ?? null, invoice_count: 0, total_sales: 0, outstanding_debt: 0 });
     }
-    let totalSales = 0;
-    let totalDebt = 0;
-    let totalProfit = 0;
+    let storeStats = invoiceStatsOf(null);
+    const dailyStats = new Map<string, ReturnType<typeof invoiceStatsOf>>();
+    const monthlyStats = new Map<string, ReturnType<typeof invoiceStatsOf>>();
     for (const invoice of invoices) {
       const totals = summarizeInvoice(invoice);
-      totalSales = round2(totalSales + totals.total);
-      totalDebt = round2(totalDebt + totals.remaining);
-      totalProfit = round2(totalProfit + totals.profit);
+      const contribution = invoiceStatsOf(invoice);
+      storeStats = sumInvoiceStats(storeStats, contribution);
+      const dayKey = invoiceDayKey(invoice);
+      const monthKey = invoiceMonthKey(invoice);
+      if (dayKey) dailyStats.set(dayKey, sumInvoiceStats(dailyStats.get(dayKey) ?? {}, contribution));
+      if (monthKey) monthlyStats.set(monthKey, sumInvoiceStats(monthlyStats.get(monthKey) ?? {}, contribution));
       const id = customerSummaryId(invoice);
       if (!id) continue;
       const aggregate = aggregates.get(id) ?? {
@@ -244,6 +254,19 @@ export const useMigration = defineStore("migration", () => {
       aggregate.total_sales = round2(aggregate.total_sales + totals.total);
       aggregate.outstanding_debt = round2(aggregate.outstanding_debt + totals.remaining);
       aggregates.set(id, aggregate);
+    }
+    let returnsTotal = 0;
+    for (const returnSnapshot of returnSnapshots.docs) {
+      const returned = returnSnapshot.data() as { invoice_id?: string; total_refund?: number; created_at?: unknown };
+      const total = round2(toNum(returned.total_refund));
+      returnsTotal = round2(returnsTotal + total);
+      storeStats = sumInvoiceStats(storeStats, { return_count: 1, returns_total: total });
+      const delta = { return_count: 1, returns_total: total };
+      const returnDate = returned.created_at ? { date: returned.created_at } : null;
+      const dayKey = returnDate ? invoiceDayKey(returnDate) : null;
+      const monthKey = returnDate ? invoiceMonthKey(returnDate) : null;
+      if (dayKey) dailyStats.set(dayKey, sumInvoiceStats(dailyStats.get(dayKey) ?? {}, delta));
+      if (monthKey) monthlyStats.set(monthKey, sumInvoiceStats(monthlyStats.get(monthKey) ?? {}, delta));
     }
     const supplierAggregates = new Map<string, { supplier_id: string; supplier_name: string; invoice_count: number; total_purchases: number; outstanding_payable: number }>();
     for (const supplier of suppliers) if (supplier.id) supplierAggregates.set(supplier.id, { supplier_id: supplier.id, supplier_name: supplier.name, invoice_count: 0, total_purchases: 0, outstanding_payable: 0 });
@@ -270,7 +293,14 @@ export const useMigration = defineStore("migration", () => {
     }
     const docs = [...aggregates.entries()];
     const supplierDocs = [...supplierAggregates.entries()];
-    const totalWrites = docs.length + supplierDocs.length + missingDebtSummaries.length + 1;
+    const currentDailyIds = new Set(dailyStats.keys());
+    const currentMonthlyIds = new Set(monthlyStats.keys());
+    const stalePeriods = [
+      ...existingDaily.docs.filter((snapshot) => !currentDailyIds.has(snapshot.id)).map((snapshot) => ({ collection: "invoice_stats_daily", id: snapshot.id })),
+      ...existingMonthly.docs.filter((snapshot) => !currentMonthlyIds.has(snapshot.id)).map((snapshot) => ({ collection: "invoice_stats_monthly", id: snapshot.id })),
+    ];
+    const periodDocs = dailyStats.size + monthlyStats.size;
+    const totalWrites = docs.length + supplierDocs.length + missingDebtSummaries.length + periodDocs + stalePeriods.length + 1;
     let completed = 0;
     for (let i = 0; i < docs.length; i += CHUNK) {
       const batch = writeBatch(db);
@@ -306,20 +336,59 @@ export const useMigration = defineStore("migration", () => {
       completed += Math.min(CHUNK, missingDebtSummaries.length - i);
       onProgress?.(completed, totalWrites);
     }
+    const periodEntries = [
+      ...[...dailyStats.entries()].map(([id, data]) => ({ collection: "invoice_stats_daily", id, data })),
+      ...[...monthlyStats.entries()].map(([id, data]) => ({ collection: "invoice_stats_monthly", id, data })),
+    ];
+    for (let i = 0; i < periodEntries.length; i += CHUNK) {
+      const batch = writeBatch(db);
+      for (const entry of periodEntries.slice(i, i + CHUNK)) {
+        batch.set(doc(db, entry.collection, entry.id), { ...entry.data, updated_at: serverTimestamp() });
+      }
+      await batch.commit();
+      completed += Math.min(CHUNK, periodEntries.length - i);
+      onProgress?.(completed, totalWrites);
+    }
+    for (let i = 0; i < stalePeriods.length; i += CHUNK) {
+      const batch = writeBatch(db);
+      for (const entry of stalePeriods.slice(i, i + CHUNK)) batch.delete(doc(db, entry.collection, entry.id));
+      await batch.commit();
+      completed += Math.min(CHUNK, stalePeriods.length - i);
+      onProgress?.(completed, totalWrites);
+    }
     const statsBatch = writeBatch(db);
     statsBatch.set(doc(db, "store_stats", "current"), {
-      total_sales: totalSales,
-      outstanding_customer_debt: totalDebt,
-      total_profit: totalProfit,
-      invoice_count: invoices.length,
+      ...storeStats,
       customer_count: customers.length,
       initialized: true,
       updated_at: serverTimestamp(),
     });
     await statsBatch.commit();
     onProgress?.(totalWrites, totalWrites);
-    return { invoices: invoices.length, customers: customers.length, customerSummaries: docs.length, debtSummaries: missingDebtSummaries.length, supplierInvoices: purchaseInvoices.length, suppliers: suppliers.length };
+    return { invoices: invoices.length, customers: customers.length, customerSummaries: docs.length, debtSummaries: missingDebtSummaries.length, supplierInvoices: purchaseInvoices.length, suppliers: suppliers.length, dailyStats: dailyStats.size, monthlyStats: monthlyStats.size, returns: returnSnapshots.size, returnsTotal };
   }
 
-  return { backfillCustomerIds, repairCustomerLinks, setOpeningStocks, backfillDebtSummaries, backfillPerformanceSummaries };
+  /** Explicit admin migration: intentionally scans purchase invoices once, then updates only missing or invalid status fields. */
+  async function backfillSupplierInvoiceStatuses(
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ total: number; updated: number; skipped: number }> {
+    const invoices = await readFrom<PurchaseInvoice>("purchase_invoices");
+    const targets = invoices.filter((invoice) =>
+      invoice.id && invoice.status !== "paid" && invoice.status !== "partial" && invoice.status !== "unpaid",
+    );
+    for (let i = 0; i < targets.length; i += CHUNK) {
+      const batch = writeBatch(db);
+      for (const invoice of targets.slice(i, i + CHUNK)) {
+        batch.update(doc(db, "purchase_invoices", invoice.id as string), {
+          status: deriveSupplierInvoiceStatus(invoice.paid_amount, invoice.remaining_amount, invoice.total_amount),
+        });
+      }
+      await batch.commit();
+      onProgress?.(Math.min(i + CHUNK, targets.length), targets.length);
+    }
+    onProgress?.(targets.length, targets.length);
+    return { total: invoices.length, updated: targets.length, skipped: invoices.length - targets.length };
+  }
+
+  return { backfillCustomerIds, repairCustomerLinks, setOpeningStocks, backfillDebtSummaries, backfillPerformanceSummaries, backfillSupplierInvoiceStatuses };
 });

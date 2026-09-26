@@ -4,7 +4,7 @@ import type { Customer, Invoice } from "~/types";
 import { loanStatusOf, normalizePhone, normalizeName, round2, toNum, outstandingDebtOf } from "./finance";
 import { summarizeInvoice, writeDebtSummary } from "./debtSummaries";
 import { toDateSafe } from "~/types";
-import { writeCustomerSummaryDelta, writeStoreStatsDelta } from "./performanceSummaries";
+import { writeCustomerSummaryDelta, writeInvoiceStatsDelta } from "./performanceSummaries";
 
 export interface Obligation {
   kind: "invoice" | "loan";
@@ -302,7 +302,11 @@ export const useDebts = defineStore("debts", () => {
               date: (s.doc.date as unknown) ?? null,
               ...summarizeInvoice({ ...(s.doc as object), paid_amount: paid, remaining: left } as Invoice),
             });
-            writeStoreStatsDelta(tx, db, { outstanding_customer_debt: -s.a.amount });
+            writeInvoiceStatsDelta(tx, db, s.doc as unknown as Invoice, {
+              ...(s.doc as unknown as Invoice),
+              paid_amount: paid,
+              remaining: left,
+            });
             writeCustomerSummaryDelta(tx, db, {
               customer_id: s.doc.customer_id as string | null,
               customer_name: s.doc.customer_name as string | null,

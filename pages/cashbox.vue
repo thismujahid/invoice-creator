@@ -289,7 +289,7 @@
         <UCard variant="outline">
           <div class="mb-1 text-sm font-bold">تهيئة الملخصات والإجماليات</div>
           <p class="mb-2 text-xs text-gray-500">
-            إعداد ملخصات الديون والعملاء وإجماليات الخزنة من سجل الفواتير مرة واحدة. {{ migSumMsg }}
+            إعادة بناء ملخصات الديون والعملاء وإجماليات الفواتير اليومية والشهرية والكلية، بما فيها المرتجعات. إجراء إداري صريح ويمكن إعادة تشغيله. {{ migSumMsg }}
           </p>
           <UProgress v-if="migSumBusy" :value="migSumPct" class="mb-2" />
           <UButton
@@ -301,6 +301,21 @@
             @click="runSumBackfill"
             >بدء التهيئة</UButton
           >
+        </UCard>
+        <UCard variant="outline">
+          <div class="mb-1 text-sm font-bold">تهيئة حالات فواتير الموردين</div>
+          <p class="mb-2 text-xs text-gray-500">
+            تحديث حقل الحالة للفواتير القديمة التي لا تحتوي حالة صالحة. عملية إدارية لمرة واحدة ويمكن إعادة تشغيلها بأمان. {{ migSupplierStatusMsg }}
+          </p>
+          <UProgress v-if="migSupplierStatusBusy" :value="migSupplierStatusPct" class="mb-2" />
+          <UButton
+            color="neutral"
+            variant="soft"
+            size="sm"
+            :loading="migSupplierStatusBusy"
+            icon="i-lucide-refresh-cw"
+            @click="runSupplierStatusBackfill"
+          >تهيئة الحالات</UButton>
         </UCard>
         <UCard variant="outline">
           <div class="mb-1 text-sm font-bold">مراجعة متوسط تكلفة المخزون</div>
@@ -725,6 +740,9 @@ const migStockMsg = ref("");
 const migSumBusy = ref(false);
 const migSumPct = ref(0);
 const migSumMsg = ref("");
+const migSupplierStatusBusy = ref(false);
+const migSupplierStatusPct = ref(0);
+const migSupplierStatusMsg = ref("");
 const openingQtys = ref<Record<string, number | undefined>>({});
 const openingThresholds = ref<Record<string, number | undefined>>({});
 const stockSearch = ref("");
@@ -791,14 +809,30 @@ async function runSumBackfill(): Promise<void> {
     const performance = await migration.backfillPerformanceSummaries((d, t) => {
       migSumPct.value = t ? Math.round((d / t) * 100) : 100;
     });
-    migSumMsg.value = `ملخصات الديون ${performance.debtSummaries}؛ وإجماليات ${performance.invoices} فاتورة و${performance.customers} عميل.`;
-    notify("اكتملت تهيئة الملخصات والإجماليات.", "success");
+    migSumMsg.value = `ملخصات الديون ${performance.debtSummaries}؛ إجماليات ${performance.invoices} فاتورة، ${performance.dailyStats} يوم، ${performance.monthlyStats} شهر، و${performance.returns} مرتجع بقيمة ${formatePrice(performance.returnsTotal)}.`;
+    notify("اكتملت إعادة بناء الملخصات والإجماليات.", "success");
     await fetchStats();
   } catch (e) {
     migSumMsg.value = "فشلت التهيئة.";
     notify("تعذر إتمام التهيئة.", "error");
   } finally {
     migSumBusy.value = false;
+  }
+}
+async function runSupplierStatusBackfill(): Promise<void> {
+  migSupplierStatusBusy.value = true;
+  migSupplierStatusMsg.value = "";
+  try {
+    const result = await migration.backfillSupplierInvoiceStatuses((done, total) => {
+      migSupplierStatusPct.value = total ? Math.round((done / total) * 100) : 100;
+    });
+    migSupplierStatusMsg.value = `تم تحديث ${result.updated} من ${result.total} فاتورة.`;
+    notify(migSupplierStatusMsg.value, "success");
+  } catch {
+    migSupplierStatusMsg.value = "فشلت التهيئة.";
+    notify("تعذر تهيئة حالات فواتير الموردين.", "error");
+  } finally {
+    migSupplierStatusBusy.value = false;
   }
 }
 async function runStockEntry(): Promise<void> {

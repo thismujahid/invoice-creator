@@ -215,9 +215,14 @@ async function saveProduct(isActive: { value: boolean }) {
         ...customerForm.value,
       });
     } else {
-      await customersStore.addCustomer({ ...customerForm.value });
+      const created = await customersStore.addCustomer({ ...customerForm.value });
+      if (created?.id) {
+        summaries.value = {
+          ...summaries.value,
+          [created.id]: { invoiceCount: 0, debt: 0, initialized: true },
+        };
+      }
     }
-    await loadCustomers();
     customerForm.value = { name: "", phone: null };
     isActive.value = false;
   } finally {
@@ -228,7 +233,7 @@ async function loadCustomers(): Promise<void> {
   loading.value = true;
   try {
     const { db } = useFirebase();
-    const [_, snapshot] = await Promise.all([customersStore.fetchCustomers(undefined, true), getDocs(collection(db, "customer_summaries"))]);
+    const [_, snapshot] = await Promise.all([customersStore.fetchCustomers(), getDocs(collection(db, "customer_summaries"))]);
     const totals: Record<string, { invoiceCount: number; debt: number; initialized: boolean }> = {};
     for (const item of snapshot.docs) {
       const data = item.data();
@@ -267,8 +272,12 @@ async function deleteConfirmed(): Promise<void> {
   if (!id) return;
   deleting.value = true;
   try {
-    await customersStore.deleteCustomer(id);
-    await loadCustomers();
+    const deleted = await customersStore.deleteCustomer(id);
+    if (deleted) {
+      const nextSummaries = { ...summaries.value };
+      delete nextSummaries[id];
+      summaries.value = nextSummaries;
+    }
   } finally {
     deleting.value = false;
     confirmDelete.value = null;

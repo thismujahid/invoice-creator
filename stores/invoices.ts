@@ -4,13 +4,13 @@ import type { Invoice } from "~/types";
 import { toDateSafe } from "~/types";
 import { applyStockGroup, lineBaseQuantity, restoreGroupsForEdit, round2, round4, stockDeltaForEdit, toNum } from "~/composables/finance";
 import { summarizeInvoice, writeDebtSummary } from "~/composables/debtSummaries";
-import { customerSummaryId, invoiceSummaryDelta, writeCustomerSummaryDelta, writeStoreStatsDelta } from "~/composables/performanceSummaries";
+import { customerSummaryId, writeCustomerSummaryDelta, writeInvoiceStatsDelta } from "~/composables/performanceSummaries";
 
 const STOCK_EPS = 1e-9;
 const INVOICE_PAGE_SIZE = 25;
 
 export const useInvoicesStore = defineStore("invoices", () => {
-  const { readFrom, saveDataTo, updateItem, deleteItem, db, serverTimestamp, getDoc } = useFirebase();
+  const { readFrom, saveDataTo, updateItem, db, serverTimestamp, getDoc } = useFirebase();
   const authStore = useAuth();
   const { notify } = useAppToast();
   const list = ref<Invoice[]>([]);
@@ -66,6 +66,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
     }
   }
 
+  /** Legacy full-list API retained for explicit export/admin callers; normal browsing uses fetchInvoicePage. */
   const fetchInvoices = async (filters: Record<string, string | number | boolean | Date | null | undefined> = {}): Promise<boolean> => {
     list.value = await readFrom<Invoice>("invoices", filters);
     return true;
@@ -151,7 +152,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
           date: (payload.date as unknown) ?? null,
           ...summarizeInvoice(payload as Invoice),
         });
-        writeStoreStatsDelta(tx, db, invoiceSummaryDelta(payload as Invoice, 1));
+        writeInvoiceStatsDelta(tx, db, null, { ...(payload as Invoice), products: pricedLines });
         const newSummary = summarizeInvoice(payload as Invoice);
         writeCustomerSummaryDelta(tx, db, payload as Invoice, {
           invoice_count: 1,
@@ -259,6 +260,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
             : line;
         });
         const effectivePayload = { ...payload, products: effectiveLines };
+        const oldInvoice = orig as unknown as Invoice;
         const oldPaid = round2(toNum(orig.paid_amount));
         const newPaid = round2(toNum(payload.paid_amount));
         const paidDelta = round2(newPaid - oldPaid);
@@ -311,11 +313,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
         });
         const oldSummary = summarizeInvoice(orig as unknown as Invoice);
         const newSummary = summarizeInvoice(effectivePayload as Invoice);
-        writeStoreStatsDelta(tx, db, {
-          total_sales: round2(newSummary.total - oldSummary.total),
-          outstanding_customer_debt: round2(newSummary.remaining - oldSummary.remaining),
-          total_profit: round2(newSummary.profit - oldSummary.profit),
-        });
+        writeInvoiceStatsDelta(tx, db, oldInvoice, effectivePayload as Invoice);
         const oldCustomerSummaryId = customerSummaryId(orig as unknown as Invoice);
         const newCustomerSummaryId = customerSummaryId(effectivePayload as Invoice);
         if (oldCustomerSummaryId === newCustomerSummaryId) {
@@ -458,9 +456,35 @@ export const useInvoicesStore = defineStore("invoices", () => {
       console.error(e);
       return { ok: false };
     }
-    const ok = await deleteItem("invoices", id);
-    if (ok) list.value = list.value.filter((inv) => inv.id !== id);
-    return { ok };
+    try {
+      await runTx(async (tx) => {
+        const invoiceRef = doc(db, "invoices", id);
+        const [invoiceSnap, statsSnap] = await Promise.all([
+          tx.get(invoiceRef),
+          tx.get(doc(db, "store_stats", "current")),
+        ]);
+        if (!invoiceSnap.exists()) return;
+        const invoice = { id: invoiceSnap.id, ...(invoiceSnap.data() as object) } as Invoice;
+        const data = invoiceSnap.data();
+        if (data.inventory_applied === true || data.cashbox_applied === true) {
+          throw new Error("VALIDATION:لا يمكن حذف فاتورة لها حركات مخزنية أو نقدية — استخدم المرتجع بدلاً من الحذف.");
+        }
+        tx.delete(invoiceRef);
+        tx.delete(doc(db, "invoice_debt_summaries", id));
+        if (statsSnap.exists() && statsSnap.data().initialized === true) {
+          writeInvoiceStatsDelta(tx, db, invoice, null);
+        }
+      });
+      list.value = list.value.filter((inv) => inv.id !== id);
+      return { ok: true };
+    } catch (e) {
+      if (e instanceof Error && e.message.startsWith("VALIDATION:")) {
+        notify(e.message.slice("VALIDATION:".length), "error");
+        return { ok: false, blocked: true };
+      }
+      console.error(e);
+      return { ok: false };
+    }
   };
 
   const exportInvoicesToExcel = async (invoices: Invoice[] = []): Promise<string> => {

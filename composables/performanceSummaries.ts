@@ -1,14 +1,54 @@
 import { doc, increment, serverTimestamp, type Firestore, type Transaction } from "firebase/firestore";
 import type { Invoice } from "~/types";
-import { normalizeName, normalizePhone, round2 } from "./finance";
-import { summarizeInvoice } from "./debtSummaries";
+import { normalizeName, normalizePhone } from "./finance";
+import { invoiceDayKey, invoiceMonthKey, invoiceStatsDelta, sumInvoiceStats, type InvoiceStats } from "./invoiceStats";
+export function writeInvoiceStatsDelta(
+  tx: Transaction,
+  db: Firestore,
+  oldInvoice: Invoice | null,
+  newInvoice: Invoice | null,
+  returnDelta: { count: number; total: number } = { count: 0, total: 0 },
+  returnDate?: unknown,
+): void {
+  const globalDelta = sumInvoiceStats(invoiceStatsDelta(oldInvoice, newInvoice), {
+    return_count: returnDelta.count,
+    returns_total: returnDelta.total,
+  });
+  writeStatsDocumentDelta(tx, db, "store_stats", "current", globalDelta);
 
-export interface StoreStatsDelta {
-  total_sales?: number;
-  outstanding_customer_debt?: number;
-  total_profit?: number;
-  invoice_count?: number;
-  customer_count?: number;
+  const periodDeltas = new Map<string, Partial<InvoiceStats>>();
+  const applyPeriod = (key: string | null, delta: Partial<InvoiceStats>) => {
+    if (!key) return;
+    periodDeltas.set(key, sumInvoiceStats(periodDeltas.get(key) ?? {}, delta));
+  };
+  if (oldInvoice) {
+    const oldContribution = invoiceStatsDelta(oldInvoice, null);
+    applyPeriod(invoiceDayKey(oldInvoice), oldContribution);
+    applyPeriod(invoiceMonthKey(oldInvoice), oldContribution);
+  }
+  if (newInvoice) {
+    const newContribution = invoiceStatsDelta(null, newInvoice);
+    applyPeriod(invoiceDayKey(newInvoice), newContribution);
+    applyPeriod(invoiceMonthKey(newInvoice), newContribution);
+  }
+  if (returnDelta.count || returnDelta.total) {
+    const delta = { return_count: returnDelta.count, returns_total: returnDelta.total };
+    const periodInvoice = returnDate === undefined ? newInvoice ?? oldInvoice : { date: returnDate } as Invoice;
+    applyPeriod(periodInvoice ? invoiceDayKey(periodInvoice) : null, delta);
+    applyPeriod(periodInvoice ? invoiceMonthKey(periodInvoice) : null, delta);
+  }
+  for (const [key, delta] of periodDeltas) {
+    const isMonth = key.length === 7;
+    writeStatsDocumentDelta(tx, db, isMonth ? "invoice_stats_monthly" : "invoice_stats_daily", key, delta);
+  }
+}
+
+function writeStatsDocumentDelta(tx: Transaction, db: Firestore, collectionName: string, id: string, delta: Partial<InvoiceStats>): void {
+  const changes: Record<string, unknown> = { updated_at: serverTimestamp() };
+  for (const [key, value] of Object.entries(delta)) {
+    if (value !== undefined && value !== 0) changes[key] = increment(value);
+  }
+  tx.set(doc(db, collectionName, id), changes, { merge: true });
 }
 
 export function legacyCustomerSummaryId(name: unknown, phone: unknown): string | null {
@@ -24,24 +64,6 @@ export function legacyCustomerSummaryId(name: unknown, phone: unknown): string |
 export function customerSummaryId(invoice: Pick<Invoice, "customer_id" | "customer_name" | "customer_phone">): string | null {
   if (invoice.customer_id) return invoice.customer_id;
   return legacyCustomerSummaryId(invoice.customer_name, invoice.customer_phone);
-}
-
-export function invoiceSummaryDelta(invoice: Invoice, multiplier: 1 | -1): StoreStatsDelta {
-  const summary = summarizeInvoice(invoice);
-  return {
-    total_sales: round2(summary.total * multiplier),
-    outstanding_customer_debt: round2(summary.remaining * multiplier),
-    total_profit: round2(summary.profit * multiplier),
-    invoice_count: multiplier,
-  };
-}
-
-export function writeStoreStatsDelta(tx: Transaction, db: Firestore, delta: StoreStatsDelta): void {
-  const changes: Record<string, unknown> = { updated_at: serverTimestamp() };
-  for (const [key, value] of Object.entries(delta)) {
-    if (value !== undefined && value !== 0) changes[key] = increment(value);
-  }
-  tx.set(doc(db, "store_stats", "current"), changes, { merge: true });
 }
 
 export function writeCustomerSummaryDelta(

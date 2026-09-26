@@ -119,6 +119,7 @@ export interface PurchaseInvoice {
   total_amount: number;
   paid_amount: number;
   remaining_amount: number;
+  status?: SupplierInvoiceStatus;
   payment_ids?: string[];
   note?: string | null;
   created_by?: string | null;
@@ -134,11 +135,23 @@ export interface Supplier {
   created_at?: Timestamp | unknown;
 }
 
-export function supplierInvoiceStatus(inv: Pick<PurchaseInvoice, "paid_amount" | "remaining_amount" | "total_amount">): SupplierInvoiceStatus {
-  const rem = toNum(inv.remaining_amount);
+function finiteAmount(value: unknown): number {
+  const amount = value === null || value === undefined || value === "" ? 0 : Number(value);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+export function deriveSupplierInvoiceStatus(paidAmount: unknown, remainingAmount: unknown, totalAmount?: unknown): SupplierInvoiceStatus {
+  const paid = finiteAmount(paidAmount);
+  const hasRemaining = remainingAmount !== null && remainingAmount !== undefined && remainingAmount !== "" && Number.isFinite(Number(remainingAmount));
+  const rem = hasRemaining ? Number(remainingAmount) : Math.max(0, finiteAmount(totalAmount) - paid);
   if (rem <= 0) return "paid";
-  if (toNum(inv.paid_amount) > 0) return "partial";
+  if (paid > 0) return "partial";
   return "unpaid";
+}
+
+export function supplierInvoiceStatus(inv: Pick<PurchaseInvoice, "paid_amount" | "remaining_amount" | "total_amount" | "status">): SupplierInvoiceStatus {
+  if (inv.status === "paid" || inv.status === "partial" || inv.status === "unpaid") return inv.status;
+  return deriveSupplierInvoiceStatus(inv.paid_amount, inv.remaining_amount, inv.total_amount);
 }
 
 export const SUPPLIER_STATUS_LABELS: Record<SupplierInvoiceStatus, string> = {

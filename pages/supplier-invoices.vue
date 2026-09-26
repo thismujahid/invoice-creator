@@ -61,7 +61,7 @@
 import type { Product, ProductUnit } from "~/types";
 import type { PurchaseInvoice, PurchaseInvoiceItem, Supplier, SupplierPayment } from "~/types/finance";
 import type { QueryDocumentSnapshot } from "firebase/firestore";
-import { supplierInvoiceStatus } from "~/types/finance";
+import { deriveSupplierInvoiceStatus, supplierInvoiceStatus } from "~/types/finance";
 import { proposedSellingPrice, round2, toNum, unitsForProduct } from "~/composables/finance";
 import { toDateSafe } from "~/types";
 import { useSuppliersStore } from "~/stores/suppliers";
@@ -206,7 +206,7 @@ function openDetails(invoice: PurchaseInvoice): void { selectedInvoice.value = i
 function printInvoice(): void { if (import.meta.client) window.print(); }
 async function togglePin(invoice: PurchaseInvoice): Promise<void> { if (!invoice.id) return; await purchasing.setPurchaseInvoicePinned(invoice.id, !invoice.pinned); await reload(true); }
 function openPayment(invoice: PurchaseInvoice): void { paymentTarget.value = invoice; paymentAmount.value = undefined; paymentNote.value = ""; paymentKey.value = id(); paymentOpen.value = true; }
-async function submitPayment(): Promise<void> { if (!paymentTarget.value?.id || paymentError.value || paying.value) return; paying.value = true; try { const amount = Number(paymentAmount.value); const result = await purchasing.paySupplierInvoice(paymentTarget.value.id, amount, paymentNote.value.trim() || null, paymentKey.value); if (!result.ok) { notify(result.error, "error"); return; } const update = (items: PurchaseInvoice[]) => items.map((item) => item.id === paymentTarget.value?.id ? { ...item, paid_amount: round2(item.paid_amount + amount), remaining_amount: result.remaining } : item); pageInvoices.value = update(pageInvoices.value); pinnedInvoices.value = update(pinnedInvoices.value); notify(result.remaining ? `تم تسجيل السداد، والمتبقي ${formatePrice(result.remaining)} ج.` : "تم سداد فاتورة المورد بالكامل.", "success"); paymentOpen.value = false; } finally { paying.value = false; } }
+async function submitPayment(): Promise<void> { if (!paymentTarget.value?.id || paymentError.value || paying.value) return; paying.value = true; try { const amount = Number(paymentAmount.value); const result = await purchasing.paySupplierInvoice(paymentTarget.value.id, amount, paymentNote.value.trim() || null, paymentKey.value); if (!result.ok) { notify(result.error, "error"); return; } const target = paymentTarget.value; const paid = round2(target.paid_amount + amount); const status = deriveSupplierInvoiceStatus(paid, result.remaining, target.total_amount); const update = (items: PurchaseInvoice[]) => items.map((item) => item.id === target.id ? { ...item, paid_amount: paid, remaining_amount: result.remaining, status } : item); pageInvoices.value = update(pageInvoices.value); pinnedInvoices.value = update(pinnedInvoices.value); notify(result.remaining ? `تم تسجيل السداد، والمتبقي ${formatePrice(result.remaining)} ج.` : "تم سداد فاتورة المورد بالكامل.", "success"); paymentOpen.value = false; if (statusFilter.value !== "all" && statusFilter.value !== status) await reload(true); } finally { paying.value = false; } }
 async function loadPayments(invoice: PurchaseInvoice): Promise<void> { if (!invoice.id) return; paymentsOpen.value = true; payments.value = await purchasing.fetchSupplierPayments(invoice.id); }
 async function reload(reset = false): Promise<void> {
   loading.value = true;

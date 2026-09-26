@@ -3,7 +3,7 @@ import type { InvoiceReturn, InvoiceReturnItem } from "~/types/finance";
 import type { Invoice } from "~/types";
 import { applyStockGroup, lineBaseQuantity, lineRefundValue, lineUnitFactor, netRatioOf, outstandingDebtOf, round2, round4, splitRefund, toNum } from "./finance";
 import { summarizeInvoice, writeDebtSummary } from "./debtSummaries";
-import { writeCustomerSummaryDelta, writeStoreStatsDelta } from "./performanceSummaries";
+import { writeCustomerSummaryDelta, writeInvoiceStatsDelta } from "./performanceSummaries";
 
 export interface ReturnLineInput {
   rowKey: string;
@@ -277,6 +277,7 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
           if (cashBal < cashRefund) throw new Error("VALIDATION:رصيد الخزنة لا يكفي للمبلغ المسترد نقداً.");
         }
         const now = serverTimestamp();
+        const returnDate = new Date();
         const by = (authStore.currentUserKey as string) || null;
         // 6. Writes.
         const retRef = doc(collection(db, "invoice_returns"));
@@ -342,11 +343,13 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
         }
         const returnedBaseQuantity = round2(Object.values(mergedReturned).reduce((sum, quantity) => sum + toNum(quantity), 0));
         const soldBaseQuantity = round2((fresh.products ?? []).reduce((sum, line) => sum + lineBaseQuantity(line), 0));
+        const updatedRemaining = round2(remainingDebt - debtReduction);
+        const updatedReturnStatus = returnedBaseQuantity + EPS >= soldBaseQuantity ? "full" : "partial";
         tx.update(invRef, {
-          remaining: round2(remainingDebt - debtReduction),
+          remaining: updatedRemaining,
           returned: mergedReturned,
           returned_base_quantity: returnedBaseQuantity,
-          return_status: returnedBaseQuantity + EPS >= soldBaseQuantity ? "full" : "partial",
+          return_status: updatedReturnStatus,
         });
         writeDebtSummary(tx, db, {
           invoice_id: invoice.id as string,
@@ -356,7 +359,13 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
           date: (fresh.date as unknown) ?? null,
           ...summarizeInvoice({ ...fresh, remaining: round2(remainingDebt - debtReduction) }),
         });
-        writeStoreStatsDelta(tx, db, { outstanding_customer_debt: -debtReduction });
+        writeInvoiceStatsDelta(tx, db, fresh, {
+          ...fresh,
+          remaining: updatedRemaining,
+          returned: mergedReturned,
+          returned_base_quantity: returnedBaseQuantity,
+          return_status: updatedReturnStatus,
+        }, { count: 1, total: totalRefund }, returnDate);
         writeCustomerSummaryDelta(tx, db, fresh, { outstanding_debt: -debtReduction });
         if (cashRefund > 0) {
           const cRef = doc(db, "cashbox", "current");
