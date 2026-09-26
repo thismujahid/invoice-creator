@@ -310,6 +310,22 @@
             >بدء التهيئة</UButton
           >
         </UCard>
+        <UCard variant="outline">
+          <div class="mb-1 text-sm font-bold">مراجعة متوسط تكلفة المخزون</div>
+          <p class="mb-2 text-xs text-gray-500">
+            إعادة تشغيل سجل الحركات ومقارنته بالمخزن — الإصلاح اليدوي فقط للصفوف القابلة. {{ repairMsg }}
+          </p>
+          <UProgress v-if="repairBusy" :value="repairPct" class="mb-2" />
+          <UButton
+            color="neutral"
+            variant="soft"
+            size="sm"
+            :loading="repairBusy"
+            icon="i-lucide-scale"
+            @click="runRepairAnalyze"
+            >بدء التحليل</UButton
+          >
+        </UCard>
         <UCard variant="outline" class="sm:col-span-2">
           <div class="flex items-center flex-col md:flex-row justify-between">
             <div>
@@ -391,6 +407,67 @@
         </UCard>
       </div>
     </div>
+
+    <!-- Cost repair review -->
+    <UiAppDialog v-model:open="repairOpen" title="مراجعة متوسط التكلفة">
+      <div v-if="repairRows.length" class="mb-2 flex items-center justify-between gap-2 text-xs">
+        <span class="text-gray-500">{{ repairRows.length }} منتج • المحدد: {{ selectedRepairable.length }}</span>
+        <div class="flex gap-2">
+          <UButton size="xs" color="neutral" variant="soft" @click="toggleRepairSelectAll">
+            {{ allRepairableSelected ? "إلغاء تحديد الكل" : "تحديد القابل للإصلاح" }}
+          </UButton>
+          <UButton
+            size="xs"
+            color="warning"
+            :loading="repairApplyBusy"
+            :disabled="!selectedRepairable.length"
+            @click="applySelectedRepairs"
+            >تطبيق المحدد ({{ selectedRepairable.length }})</UButton
+          >
+        </div>
+      </div>
+      <div class="max-h-[60vh] space-y-2 overflow-y-auto">
+        <UEmpty v-if="!repairRows.length && !repairBusy" icon="i-lucide-scale" title="شغّل التحليل أولاً" />
+        <div
+          v-for="r in repairRows"
+          :key="r.product_id"
+          class="flex items-start gap-2 rounded-lg border border-gray-200 p-2 text-sm"
+        >
+          <UCheckbox
+            v-if="r.status === 'REPAIRABLE'"
+            :model-value="isRepairSelected(r.product_id)"
+            @update:model-value="() => toggleRepairRow(r.product_id)"
+          />
+          <div class="min-w-0 flex-1">
+            <div class="truncate font-semibold">{{ r.product_name }}</div>
+            <div class="mt-0.5 grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs text-gray-500">
+              <span>المخزون الحالي: {{ r.currentStock ?? "—" }}</span>
+              <span>المعاد تشغيله: {{ r.replayedStock }}</span>
+              <span>التكلفة الحالية: {{ r.currentCost ?? "—" }}</span>
+              <span>المعاد حسابها: {{ r.recomputedCost ?? "—" }}</span>
+            </div>
+            <div class="mt-0.5 text-xs">
+              <span v-if="r.difference !== null && r.difference !== 0" class="font-bold text-amber-600">
+                الفرق: {{ r.difference > 0 ? "+" : "" }}{{ r.difference }}
+              </span>
+              <UBadge :color="repairStatusColor(r.status)" variant="soft" size="xs" class="ms-1">
+                {{ REPAIR_STATUS_LABELS[r.status] }}
+              </UBadge>
+            </div>
+          </div>
+          <UButton
+            v-if="r.status === 'REPAIRABLE'"
+            size="xs"
+            color="warning"
+            variant="soft"
+            :loading="repairRowBusy === r.product_id"
+            @click="applySingleRepair(r)"
+            >تطبيق</UButton
+          >
+        </div>
+      </div>
+      <p v-if="repairMsg" class="mt-2 text-sm font-semibold text-gray-700">{{ repairMsg }}</p>
+    </UiAppDialog>
 
     <!-- Deposit dialog -->
     <UiAppDialog v-model:open="depositOpen" title="إضافة أموال">
@@ -500,6 +577,8 @@
 <script setup lang="ts">
 import type { CashDirection, CashTransactionType } from "~/types/finance";
 import { CASH_TYPE_LABELS } from "~/types/finance";
+import type { RepairRow } from "~/composables/useInventoryCostRepair";
+import { REPAIR_STATUS_LABELS } from "~/composables/useInventoryCostRepair";
 import { toDateSafe } from "~/types";
 import { collection, getCountFromServer } from "firebase/firestore";
 
@@ -517,7 +596,101 @@ const invoicesStore = useInvoicesStore();
 const cashbox = useCashbox();
 const products = useProductsStore();
 const migration = useMigration();
+const repairApi = useInventoryCostRepair();
 const { notify } = useAppToast();
+
+// Cost repair review state (§12).
+const repairOpen = ref(false);
+const repairBusy = ref(false);
+const repairPct = ref(0);
+const repairMsg = ref("");
+const repairRows = ref<RepairRow[]>([]);
+const repairSelected = ref(new Set<string>());
+const repairApplyBusy = ref(false);
+const repairRowBusy = ref<string | null>(null);
+const selectedRepairable = computed(() =>
+  repairRows.value.filter((r) => r.status === "REPAIRABLE" && repairSelected.value.has(r.product_id)),
+);
+const allRepairableSelected = computed(() => {
+  const reps = repairRows.value.filter((r) => r.status === "REPAIRABLE");
+  return reps.length > 0 && reps.every((r) => repairSelected.value.has(r.product_id));
+});
+function isRepairSelected(id: string): boolean {
+  return repairSelected.value.has(id);
+}
+function toggleRepairRow(id: string): void {
+  if (repairSelected.value.has(id)) repairSelected.value.delete(id);
+  else repairSelected.value.add(id);
+}
+function toggleRepairSelectAll(): void {
+  if (allRepairableSelected.value) {
+    repairSelected.value = new Set();
+  } else {
+    repairSelected.value = new Set(
+      repairRows.value.filter((r) => r.status === "REPAIRABLE").map((r) => r.product_id),
+    );
+  }
+}
+function repairStatusColor(s: RepairRow["status"]): "success" | "warning" | "error" | "neutral" {
+  if (s === "OK") return "success";
+  if (s === "REPAIRABLE") return "warning";
+  if (s === "STOCK_MISMATCH" || s === "INVALID_HISTORY") return "error";
+  return "neutral";
+}
+async function runRepairAnalyze(): Promise<void> {
+  repairBusy.value = true;
+  repairMsg.value = "";
+  repairRows.value = [];
+  repairSelected.value = new Set();
+  repairOpen.value = true;
+  try {
+    repairRows.value = await repairApi.analyze((d, t) => {
+      repairPct.value = t ? Math.round((d / t) * 100) : 100;
+    });
+    const reps = repairRows.value.filter((r) => r.status === "REPAIRABLE").length;
+    repairMsg.value = `اكتمل التحليل: ${repairRows.value.length} منتج، ${reps} قابل للإصلاح.`;
+  } catch (e) {
+    repairMsg.value = "فشل التحليل.";
+    notify("تعذر إتمام التحليل.", "error");
+  } finally {
+    repairBusy.value = false;
+  }
+}
+async function applySingleRepair(r: RepairRow): Promise<void> {
+  repairRowBusy.value = r.product_id;
+  try {
+    const res = await repairApi.applyOne(r, "إصلاح يدوي من المراجعة");
+    if (!res.ok) {
+      notify(res.error, "error");
+      return;
+    }
+    notify(`تم إصلاح ${r.product_name}.`, "success");
+    repairSelected.value.delete(r.product_id);
+    await products.fetchProducts();
+    await refreshRepairRows();
+  } finally {
+    repairRowBusy.value = null;
+  }
+}
+async function applySelectedRepairs(): Promise<void> {
+  const targets = selectedRepairable.value;
+  if (!targets.length) return;
+  repairApplyBusy.value = true;
+  try {
+    const res = await repairApi.applyMany(targets, "إصلاح جماعي من المراجعة", () => {});
+    repairMsg.value = `تم تطبيق ${res.applied}، وتخطي ${res.skipped}، وفشل ${res.failed}.`;
+    notify(repairMsg.value, res.failed ? "error" : "success");
+    repairSelected.value = new Set();
+    await products.fetchProducts();
+    await refreshRepairRows();
+  } finally {
+    repairApplyBusy.value = false;
+  }
+}
+async function refreshRepairRows(): Promise<void> {
+  // Re-run analysis (idempotent: applied rows now report OK).
+  repairRows.value = await repairApi.analyze();
+}
 
 // Migration tools state (F22)
 const migCustomerBusy = ref(false);

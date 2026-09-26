@@ -272,6 +272,17 @@
       <p class="mb-4 text-gray-600">
         أنت علي وشك حذف المنتج {{ confirmDelete?.name }}
       </p>
+      <label
+        v-if="deleteStock > 0"
+        class="mb-4 flex cursor-pointer items-start gap-2 rounded-lg border border-gray-200 p-2.5"
+      >
+        <UCheckbox v-model="recoverToCashbox" class="mt-0.5" />
+        <span class="text-sm">
+          استرداد قيمة الكمية المتبقية ({{ deleteStock }}) للخزنة —
+          <strong>{{ formatePrice(deleteRecoverValue) }}</strong>
+          <span class="block text-xs text-gray-500">عملية "استرجاع منتجات للمورد" تُسجل في الخزنة</span>
+        </span>
+      </label>
       <template #footer>
         <div class="flex w-full flex-col gap-2">
           <UButton
@@ -352,7 +363,7 @@ import { toDateSafe } from "~/types";
 definePageMeta({ title: "المنتجات", middleware: "admin-only" });
 const searchText = ref<string>("");
 const { formatePrice } = useHelpers();
-const { round2 } = useFinance();
+const { round2, toNum } = useFinance();
 const productFormState = ref(false);
 const productsStore = useProductsStore();
 const startView = ref(false);
@@ -548,6 +559,18 @@ const deleteOpen = computed({
     if (!v) confirmDelete.value = null;
   },
 });
+// Recovery option state (reset on every open).
+const recoverToCashbox = ref(false);
+watch(confirmDelete, () => {
+  recoverToCashbox.value = false;
+});
+const deleteTarget = computed(() =>
+  prodsList.value.find((p) => p.id === confirmDelete.value?.id),
+);
+const deleteStock = computed(() => toNum(deleteTarget.value?.stock_quantity));
+const deleteRecoverValue = computed(() =>
+  round2(deleteStock.value * toNum(deleteTarget.value?.cost_price)),
+);
 async function loadProds(): Promise<void> {
   loading.value = true;
   try {
@@ -561,7 +584,18 @@ async function deleteConfirmed(): Promise<void> {
   if (!id) return;
   deleting.value = true;
   try {
-    await productsStore.deleteProduct(id);
+    if (recoverToCashbox.value && deleteStock.value > 0) {
+      const res = await productsStore.deleteProductWithRecovery(id, true);
+      if (!res.ok) {
+        notifyToast(res.error, "error");
+        return;
+      }
+      if (res.recovered > 0) {
+        notifyToast(`تم حذف المنتج واسترداد ${formatePrice(res.recovered)} للخزنة.`, "success");
+      }
+    } else {
+      await productsStore.deleteProduct(id);
+    }
     await loadProds();
   } finally {
     deleting.value = false;

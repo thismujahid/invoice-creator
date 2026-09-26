@@ -2,7 +2,7 @@ import * as XLSX from "xlsx/dist/xlsx.full.min.js";
 import { collection, doc, getDocs, limit as fsLimit, query, where } from "firebase/firestore";
 import type { Invoice } from "~/types";
 import { toDateSafe } from "~/types";
-import { round2, stockDeltaForEdit, toNum } from "~/composables/finance";
+import { round2, movingAverageCost, stockDeltaForEdit, toNum } from "~/composables/finance";
 import { summarizeInvoice, writeDebtSummary } from "~/composables/debtSummaries";
 
 const STOCK_EPS = 1e-9;
@@ -149,15 +149,18 @@ export const useInvoicesStore = defineStore("invoices", () => {
         const paidDelta = round2(newPaid - oldPaid);
         // 2. Stock deltas (positive = back to stock).
         const deltas = stockDeltaForEdit(oldLines, lines);
-        const stocks = new Map<string, number>();
+        const stocks = new Map<string, { stock: number; cost: number }>();
         for (const d of deltas) {
           const pRef = doc(db, "products", d.product_id);
           const pSnap = await tx.get(pRef);
           if (!pSnap.exists()) throw new Error(`VALIDATION:المنتج ${d.product_name} غير موجود بالمخزون.`);
-          stocks.set(d.product_id, toNum(pSnap.data().stock_quantity));
+          stocks.set(d.product_id, {
+            stock: toNum(pSnap.data().stock_quantity),
+            cost: toNum(pSnap.data().cost_price),
+          });
         }
         for (const d of deltas) {
-          if (-d.delta - (stocks.get(d.product_id) ?? 0) > STOCK_EPS) {
+          if (-d.delta - (stocks.get(d.product_id)?.stock ?? 0) > STOCK_EPS) {
             throw new Error(`VALIDATION:الكمية المطلوبة تتجاوز المخزون المتاح لمنتج ${d.product_name}.`);
           }
         }
@@ -184,10 +187,19 @@ export const useInvoicesStore = defineStore("invoices", () => {
           date: (payload.date as unknown) ?? null,
           ...summarizeInvoice(payload as Invoice),
         });
-        // 5. Stock + logs.
+        // 5. Stock + logs. Restored units re-enter at their historical cost
+        // via the moving average; taken units leave cost untouched.
         for (const d of deltas) {
-          const cur = stocks.get(d.product_id) ?? 0;
-          tx.update(doc(db, "products", d.product_id), { stock_quantity: round2(cur + d.delta) });
+          const st = stocks.get(d.product_id)!;
+          const patch: Record<string, unknown> = {
+            stock_quantity: round2(st.stock + d.delta),
+          };
+          if (d.delta > 0) {
+            patch.cost_price = round2(
+              movingAverageCost(st.stock, st.cost, d.delta, d.unit_cost),
+            );
+          }
+          tx.update(doc(db, "products", d.product_id), patch);
           tx.set(doc(collection(db, "inventory_transactions")), {
             type: "sale",
             product_id: d.product_id,

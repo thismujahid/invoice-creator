@@ -1,6 +1,6 @@
 import { collection, doc, type Transaction } from "firebase/firestore";
 import type { InventoryTransaction, InventoryTransactionType } from "~/types/finance";
-import { round2, toNum } from "./finance";
+import { movingAverageCost, round2, toNum } from "./finance";
 
 export interface PurchaseInput {
   product_id: string;
@@ -56,12 +56,17 @@ export const useInventory = defineStore("inventory", () => {
         const pSnap = await tx.get(pRef);
         if (!pSnap.exists()) throw new Error("PRODUCT_MISSING");
         const cur = toNum(pSnap.data().stock_quantity);
+        const curCost = toNum(pSnap.data().cost_price);
         const cRef = doc(db, "cashbox", "current");
         const cSnap = await tx.get(cRef);
         const bal = cSnap.exists() ? round2(Number(cSnap.data().balance || 0)) : 0;
         if (bal < total) throw new Error("INSUFFICIENT_FUNDS");
         const now = serverTimestamp();
-        const patch: Record<string, unknown> = { stock_quantity: round2(cur + qty) };
+        const patch: Record<string, unknown> = {
+          stock_quantity: round2(cur + qty),
+          // Moving weighted average cost (system-managed, same txn).
+          cost_price: round2(movingAverageCost(cur, curCost, qty, unitCost)),
+        };
         if (input.update_price) patch.price = round2(input.new_price);
         tx.update(pRef, patch);
         tx.set(cRef, { balance: round2(bal - total), updated_at: now }, { merge: true });

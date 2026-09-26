@@ -7,9 +7,17 @@
       <UFormField label="اسم المنتج" required :error="errors.name">
         <UInput v-model="productForm.name" placeholder="اسم المنتج" size="lg" class="w-full" :disabled="saving" />
       </UFormField>
-      <template v-if="!hideCost">
+      <template v-if="!isEditMode">
         <UFormField label="سعر التكلفة" required :error="errors.cost_price">
           <UInputNumber :model-value="numOrUndef(productForm.cost_price)" placeholder="سعر التكلفة" :min="0" size="lg" class="w-full" :disabled="saving" @update:model-value="(v) => (productForm.cost_price = v ?? null)" />
+        </UFormField>
+      </template>
+      <template v-else-if="!costLocked">
+        <UFormField label="سعر التكلفة (متوسط متحرك، للعرض فقط)">
+          <UInput :model-value="formatePrice(productForm.cost_price)" readonly size="lg" class="w-full" dir="ltr" />
+          <template #hint>
+            <span class="text-xs text-gray-500">تُدار بواسطة حركات المخزون (شراء/مرتجع) ولا تُعدَّل يدوياً.</span>
+          </template>
         </UFormField>
       </template>
       <UAlert v-else color="warning" variant="soft" title="تم إخفاء حقل سعر التكلفة، إذا كنت تريد تعديل سعر التكلفة قم بعرض القيمة أولاً">
@@ -47,6 +55,7 @@ const emit = defineEmits(["done", "close", "update:modelValue"]);
 const productsStore = useProductsStore();
 const auth = useAuth();
 const { notify } = useAppToast();
+const { formatePrice } = useHelpers();
 const productForm = ref<Product>({ name: "", price: null, cost_price: null, count: null });
 const saving = ref(false);
 const submitError = ref("");
@@ -61,6 +70,9 @@ const open = computed({
     if (!v) emit("close");
   },
 });
+// Cost is freely visible when creating; password gate applies to edits only.
+const isEditMode = computed(() => !!productForm.value?.id);
+const costLocked = computed(() => !!props.hideCost && isEditMode.value);
 
 function numOrUndef(v: unknown): number | undefined {
   if (v === null || v === undefined || v === "") return undefined;
@@ -80,7 +92,8 @@ function validate(): boolean {
   const e: typeof errors.value = {};
   const nameRes = requiredRule(productForm.value.name?.trim());
   if (nameRes !== true) e.name = nameRes;
-  if (!props.hideCost) {
+  // Cost is editable on create only; edits never touch it (§7).
+  if (!isEditMode.value) {
     const costRes = requiredRule(productForm.value.cost_price);
     if (costRes !== true) e.cost_price = costRes;
     else {
@@ -93,6 +106,14 @@ function validate(): boolean {
   else {
     const neg = positiveNumberRule(productForm.value.price);
     if (neg !== true) e.price = neg;
+  }
+  // Cost may never exceed selling price (create mode, when editable).
+  if (!isEditMode.value && !e.cost_price && !e.price) {
+    const cost = Number(productForm.value.cost_price);
+    const price = Number(productForm.value.price);
+    if (cost - price > 1e-9) {
+      e.cost_price = "سعر التكلفة لا يمكن أن يكون أعلى من سعر البيع.";
+    }
   }
   const countNeg = positiveNumberRule(productForm.value.count);
   if (countNeg !== true) e.count = countNeg;
@@ -112,7 +133,10 @@ async function saveProduct() {
   try {
     let id = productForm.value?.id;
     if (productForm.value?.id) {
-      await productsStore.updateProduct(productForm.value.id, { ...productForm.value });
+      // Edit mode never writes cost_price (§7: system-managed).
+      const { cost_price: _locked, ...editData } = productForm.value;
+      void _locked;
+      await productsStore.updateProduct(productForm.value.id, { ...editData });
     } else {
       const created = (await productsStore.addProduct({ ...productForm.value })) as { id?: string } | null;
       id = created?.id;

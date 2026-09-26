@@ -39,7 +39,9 @@
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <UFormField label="اسم العميل" class="min-w-0">
             <USelectMenu
-              :model-value="selectedCustomer()"
+              :model-value="
+                (selectedCustomer() ?? null) as Customer | undefined
+              "
               :items="customerMenuItems"
               label-key="name"
               by="id"
@@ -231,7 +233,7 @@
             v-for="(form, index) in invoiceData.products"
             :key="'product-line-' + index"
             class="rounded-lg border border-gray-200 p-3"
-            :class="isCostGreaterThanPrice(form) ? '!border-red-400' : ''"
+            :class="isCostGreaterThanPrice(form) ? 'border-red-400!' : ''"
           >
             <!-- Compact read-only view once a product is picked -->
             <div
@@ -245,6 +247,9 @@
                     >({{ form.option }})</span
                   >
                 </div>
+                <div class="mt-0.5 text-[11px] text-gray-400">
+                  المتاح بالمخزون: {{ stockOf(form) }}
+                </div>
                 <div
                   class="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-gray-500"
                 >
@@ -256,13 +261,19 @@
                       icon="i-lucide-minus"
                       aria-label="تقليل الكمية"
                       class="flex items-center justify-center"
-                      @click="changeQty(form, -1)"
+                      @click="changeQty(form, -stepOf(form))"
                     />
-                    <span
-                      dir="ltr"
-                      class="min-w-8 text-center font-bold text-gray-800"
-                      >{{ formatePrice(form.product_quantity) }}</span
-                    >
+                    <UInput
+                      :model-value="qtyText(form)"
+                      inputmode="decimal"
+                      aria-label="الكمية"
+                      class="w-20"
+                      size="xs"
+                      @update:model-value="
+                        (v) => setQtyText(form, String(v ?? ''))
+                      "
+                      @blur="qtyDrafts.delete(form)"
+                    />
                     <UButton
                       size="xs"
                       color="neutral"
@@ -270,7 +281,7 @@
                       icon="i-lucide-plus"
                       aria-label="زيادة الكمية"
                       class="flex items-center justify-center"
-                      @click="changeQty(form, 1)"
+                      @click="changeQty(form, stepOf(form))"
                     />
                   </span>
                   <span>×</span>
@@ -279,6 +290,12 @@
                   <span class="font-bold text-gray-800">{{
                     formatePrice(calcTotalOfForm(form))
                   }}</span>
+                </div>
+                <div
+                  v-if="qtyExceeds(form)"
+                  class="mt-0.5 text-xs font-bold text-red-600"
+                >
+                  تتجاوز المتاح بالمخزون ({{ stockOf(form) }}) — لن تُحفظ
                 </div>
               </div>
               <div class="flex shrink-0 gap-1.5">
@@ -331,7 +348,9 @@
               <div class="grid grid-cols-2 gap-2">
                 <UFormField label="المنتج" class="col-span-2">
                   <USelectMenu
-                    :model-value="selectedProd(form)"
+                    :model-value="
+                      (selectedProd(form) ?? null) as Product | undefined
+                    "
                     :items="productMenuItems(form)"
                     label-key="name"
                     by="id"
@@ -355,13 +374,59 @@
                     class="w-full"
                   />
                 </UFormField>
-                <UFormField label="الكمية">
-                  <UInputNumber
-                    v-model="form.product_quantity"
-                    :min="0"
-                    :step="1"
-                    class="w-full"
-                  />
+                <UFormField
+                  :label="
+                    form.product_id
+                      ? `الكمية (المتاح: ${stockOf(form)})`
+                      : 'الكمية'
+                  "
+                >
+                  <div class="flex items-center gap-1.5">
+                    <UInput
+                      :model-value="qtyText(form)"
+                      placeholder="0"
+                      inputmode="decimal"
+                      class="min-w-0 flex-1 text-center"
+                      :ui="{
+                        base: 'text-center',
+                      }"
+                      @update:model-value="
+                        (v) => setQtyText(form, String(v ?? ''))
+                      "
+                      @blur="qtyDrafts.delete(form)"
+                    >
+                      <template #leading>
+                        <UButton
+                          size="xs"
+                          color="neutral"
+                          variant="soft"
+                          icon="i-lucide-minus"
+                          aria-label="تقليل الكمية"
+                          class="flex shrink-0 items-center justify-center"
+                          @click="changeQty(form, -1)"
+                        />
+                      </template>
+                      <template #trailing>
+                        <UButton
+                          size="xs"
+                          color="neutral"
+                          variant="soft"
+                          icon="i-lucide-plus"
+                          aria-label="زيادة الكمية"
+                          class="flex shrink-0 items-center justify-center"
+                          @click="changeQty(form, 1)"
+                        />
+                      </template>
+                    </UInput>
+                  </div>
+                  <template #hint>
+                    <span
+                      v-if="form.product_id && qtyExceeds(form)"
+                      class="block text-xs font-bold text-red-600"
+                    >
+                      الكمية تتجاوز المتاح بالمخزون!
+                    </span>
+                  </template>
                 </UFormField>
                 <UFormField label="سعر المنتج">
                   <UInputNumber
@@ -546,6 +611,10 @@ const customerMenuItems = computed<Customer[]>(() => {
   ];
 });
 function selectedCustomer(): Customer | undefined {
+  // Prefer the exact unique id link; fall back to phone for legacy drafts.
+  if (invoiceData.value.customer_id) {
+    return customers.list.find((c) => c.id === invoiceData.value.customer_id);
+  }
   if (!invoiceData.value.customer_phone) return undefined;
   return customers.list.find(
     (c) =>
@@ -559,10 +628,14 @@ function onPickCustomer(cus: Customer | null | undefined): void {
     showCustomerModal.value = true;
     return;
   }
-  invoiceData.value.customer_phone = cus?.phone ?? null;
-  invoiceData.value.customer_name = cus?.name ?? null;
+  // Re-resolve against the store so display/model always use the canonical
+  // object (never a stale dropdown copy).
+  const real = customers.list.find((c) => c.id === cus.id) ?? cus;
+  invoiceData.value.customer_phone = real?.phone ?? null;
+  invoiceData.value.customer_name = real?.name ?? null;
   // F16: reliable link for debt aggregation (snapshots preserved).
-  invoiceData.value.customer_id = cus?.id ?? null;
+  invoiceData.value.customer_id = real?.id ?? null;
+  customerSearch.value = "";
 }
 function selectedProd(form: InvoiceProductLine): Product | undefined {
   if (!form.product_id) return undefined;
@@ -578,9 +651,11 @@ function setProdSearch(form: InvoiceProductLine, v: string): void {
 }
 function productMenuItems(form: InvoiceProductLine): Product[] {
   const q = (prodSearch.get(form) ?? "").trim().toLowerCase();
+  // Only sellable products: stock_quantity > 0 (unset/null counts as 0).
+  const inStock = products.list.filter((p) => (p.stock_quantity ?? 0) > 0);
   const base = q
-    ? products.list.filter((p) => p.name?.toLowerCase().includes(q))
-    : [...products.list];
+    ? inStock.filter((p) => p.name?.toLowerCase().includes(q))
+    : [...inStock];
   return [
     {
       id: CREATE_PRODUCT_ID,
@@ -604,16 +679,57 @@ function onPickProduct(
     showProductModal.value = true;
     return;
   }
-  form.product_price = Number(prod?.price ?? 0);
-  form.product_id = prod?.id ?? "";
-  form.product_cost_price = Number(prod?.cost_price ?? 0);
-  form.product_name = prod?.name ?? "";
+  // Canonical store object + clear the line search (same fix as customers).
+  const real = products.list.find((p) => p.id === prod.id) ?? prod;
+  // Stock validation at pick time: refuse out-of-stock or insufficient stock.
+  const available = real?.stock_quantity ?? 0;
+  const wanted = Number(form.product_quantity || 0);
+  if (!(available > 0)) {
+    notify(`المنتج "${real?.name || ""}" غير متوفر بالمخزون حالياً.`, "error");
+    return;
+  }
+  if (wanted - available > 1e-9) {
+    notify(
+      `الكمية المطلوبة (${wanted}) تتجاوز المتاح بالمخزون (${available}). خفّض الكمية أولاً.`,
+      "error",
+    );
+    return;
+  }
+  form.product_price = Number(real?.price ?? 0);
+  form.product_id = real?.id ?? "";
+  form.product_cost_price = Number(real?.cost_price ?? 0);
+  form.product_name = real?.name ?? "";
   // No auto-collapse: the user locks the line explicitly with collapseLine().
   prodSearch.delete(form);
+  setProdSearch(form, "");
 }
 function onProductModalDone(prod: Product | null | undefined): void {
   if (productModalLine.value) onPickProduct(productModalLine.value, prod);
   productModalLine.value = null;
+}
+// Free-typed quantity drafts (object identity, never persisted).
+// Allows intermediate states like "." or ".5" while typing; valid numbers
+// commit to the line immediately so totals update live.
+const qtyDrafts = reactive(new Map<InvoiceProductLine, string>());
+function qtyText(form: InvoiceProductLine): string {
+  const d = qtyDrafts.get(form);
+  if (d !== undefined) return d;
+  return String(form.product_quantity ?? "");
+}
+function setQtyText(form: InvoiceProductLine, v: string): void {
+  const t = v.trim();
+  if (t === "") {
+    qtyDrafts.set(form, "");
+    form.product_quantity = 0;
+    return;
+  }
+  const n = Number(t);
+  if (!Number.isFinite(n)) {
+    qtyDrafts.set(form, v); // garbage: keep visible, don't commit
+    return;
+  }
+  form.product_quantity = Math.max(0, n);
+  qtyDrafts.delete(form);
 }
 // Expanded/collapsed state by object identity (never persisted to Firestore).
 const expandedLines = reactive(new Set<InvoiceProductLine>());
@@ -623,16 +739,42 @@ function isExpanded(form: InvoiceProductLine): boolean {
 function expandLine(form: InvoiceProductLine): void {
   expandedLines.add(form);
 }
+// Live stock info per line (reactive to store + typed qty).
+function stockOf(form: InvoiceProductLine): number {
+  if (!form.product_id) return 0;
+  return (
+    products.list.find((p) => p.id === form.product_id)?.stock_quantity ?? 0
+  );
+}
+function qtyExceeds(form: InvoiceProductLine): boolean {
+  return Number(form.product_quantity || 0) - stockOf(form) > 1e-9;
+}
 // Quick +/- steppers in compact view (floor at 0; precise halves via edit mode).
 function changeQty(form: InvoiceProductLine, delta: number): void {
   const next = Number(form.product_quantity || 0) + delta;
   form.product_quantity = Math.max(0, Number.isFinite(next) ? next : 0);
+}
+// Step matches the quantity shape: whole numbers step by 1,
+// fractional (KG) quantities step by 0.5.
+function stepOf(form: InvoiceProductLine): number {
+  return Number.isInteger(Number(form.product_quantity || 0)) ? 1 : 0.5;
 }
 // Explicit lock: collapse the line, then auto-append a fresh line on top
 // so the entry flow continues (only when no empty line exists).
 function collapseLine(form: InvoiceProductLine): void {
   if (!form.product_id) {
     notify("اختر المنتج أولًا قبل إغلاق السطر.", "error");
+    return;
+  }
+  // Stock validation at lock time: quantity must fit current stock.
+  const prod = products.list.find((p) => p.id === form.product_id);
+  const available = prod?.stock_quantity ?? 0;
+  const wanted = Number(form.product_quantity || 0);
+  if (wanted - available > 1e-9) {
+    notify(
+      `الكمية المطلوبة (${wanted}) تتجاوز المتاح بالمخزون (${available}) لمنتج ${form.product_name}.`,
+      "error",
+    );
     return;
   }
   expandedLines.delete(form);
@@ -649,6 +791,7 @@ function removeLine(form: InvoiceProductLine): void {
   if (index === -1) return;
   expandedLines.delete(form);
   prodSearch.delete(form);
+  qtyDrafts.delete(form);
   invoiceData.value.products.splice(index, 1);
 }
 

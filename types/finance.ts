@@ -17,7 +17,8 @@ export type CashTransactionType =
   | "customer_loan"
   | "loan_payment"
   | "inventory_purchase"
-  | "inventory_adjustment";
+  | "inventory_adjustment"
+  | "supplier_return";
 
 export type CashDirection = "in" | "out";
 
@@ -48,6 +49,7 @@ export const CASH_TYPE_LABELS: Record<CashTransactionType, string> = {
   loan_payment: "تحصيل سلفة",
   inventory_purchase: "شراء مخزون",
   inventory_adjustment: "تسوية مخزون",
+  supplier_return: "استرجاع منتجات للمورد",
 };
 
 // ---------- Inventory ----------

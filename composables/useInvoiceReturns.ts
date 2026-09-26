@@ -1,7 +1,7 @@
 import { collection, doc, getDocs, limit as fsLimit, orderBy, query, where } from "firebase/firestore";
 import type { InvoiceReturn, InvoiceReturnItem } from "~/types/finance";
 import type { Invoice } from "~/types";
-import { lineRefundValue, netRatioOf, outstandingDebtOf, round2, splitRefund, toNum } from "./finance";
+import { lineRefundValue, movingAverageCost, netRatioOf, outstandingDebtOf, round2, splitRefund, toNum } from "./finance";
 import { summarizeInvoice, writeDebtSummary } from "./debtSummaries";
 
 export interface ReturnLineInput {
@@ -165,12 +165,15 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
         debtReduction = split.debtReduction;
         cashRefund = split.cashRefund;
         // 4. Stock + products must exist.
-        const stocks = new Map<string, number>();
+        const stocks = new Map<string, { stock: number; cost: number }>();
         for (const it of retItems) {
           if (stocks.has(it.product_id)) continue;
           const pSnap = await tx.get(doc(db, "products", it.product_id));
           if (!pSnap.exists()) throw new Error(`VALIDATION:المنتج ${it.product_name} غير موجود بالمخزون.`);
-          stocks.set(it.product_id, toNum(pSnap.data().stock_quantity));
+          stocks.set(it.product_id, {
+            stock: toNum(pSnap.data().stock_quantity),
+            cost: toNum(pSnap.data().cost_price),
+          });
         }
         // 5. Cashbox only when real cash leaves.
         let cashBal = 0;
@@ -199,9 +202,16 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
           created_at: now,
         });
         for (const it of retItems) {
-          const cur = round2((stocks.get(it.product_id) ?? 0) + it.quantity);
-          stocks.set(it.product_id, cur);
-          tx.update(doc(db, "products", it.product_id), { stock_quantity: cur });
+          const st = stocks.get(it.product_id)!;
+          // Restored units re-enter at their ORIGINAL invoice cost (§5).
+          const newCost = round2(movingAverageCost(st.stock, st.cost, it.quantity, it.original_unit_cost));
+          st.stock = round2(st.stock + it.quantity);
+          st.cost = newCost;
+          stocks.set(it.product_id, st);
+          tx.update(doc(db, "products", it.product_id), {
+            stock_quantity: st.stock,
+            cost_price: st.cost,
+          });
           tx.set(doc(collection(db, "inventory_transactions")), {
             type: "refund",
             product_id: it.product_id,

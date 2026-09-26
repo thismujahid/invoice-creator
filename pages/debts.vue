@@ -417,8 +417,9 @@
     <UiAppDialog v-model:open="loanOpen" title="إضافة سلفة">
       <div class="space-y-3">
         <UFormField label="العميل" required>
+          <!-- Same controlled-from-mount rule as invoice selects (see index.vue). -->
           <USelectMenu
-            :model-value="loanCustomer ?? undefined"
+            :model-value="(loanCustomer ?? null) as Customer | undefined"
             :items="loanCustomerItems"
             label-key="name"
             by="id"

@@ -92,6 +92,24 @@ export function collectedProfitOf(
   return round2(profit * ratio);
 }
 
+/** Moving weighted average cost — the ONLY place this formula lives.
+ *  newAvg = (curQty*curCost + addedQty*addedCost) / (curQty+addedQty).
+ *  - addedQty <= 0 → current cost unchanged.
+ *  - curQty <= 0 → addedCost (old cost is meaningless on empty stock).
+ *  Monetary persistence should round2() the result (done by callers). */
+export function movingAverageCost(
+  currentQty: unknown,
+  currentCost: unknown,
+  addedQty: unknown,
+  addedCost: unknown,
+): number {
+  const cur = toNum(currentQty);
+  const add = toNum(addedQty);
+  if (!(add > 0)) return toNum(currentCost);
+  if (!(cur > 0)) return toNum(addedCost);
+  return (cur * toNum(currentCost) + add * toNum(addedCost)) / (cur + add);
+}
+
 /** Net ratio used to allocate discounts proportionally on returns. */
 export function netRatioOf(inv: Parameters<typeof invoiceTotals>[0]): number {
   const t = invoiceTotals(inv);
@@ -201,6 +219,7 @@ export const useFinance = () => ({
   discountValueOf,
   outstandingDebtOf,
   netRatioOf,
+  movingAverageCost,
   grossProfitOf,
   collectedProfitOf,
   lineRefundValue,

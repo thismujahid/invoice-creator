@@ -50,6 +50,11 @@ service cloud.firestore {
       allow create: if isStaff();
       allow update, delete: if isAdmin();
     }
+    match /inventory_cost_adjustments/{id} {
+      allow read: if isStaff();
+      allow create: if isStaff();
+      allow update, delete: if isAdmin();
+    }
     match /invoice_returns/{id} {
       allow read: if isStaff();
       allow create: if isStaff();
