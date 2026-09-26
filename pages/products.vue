@@ -354,6 +354,9 @@
           variant="soft"
           title="ستُسجل كامل قيمة البضاعة في فاتورة الشراء، ويُخصم المدفوع الآن فقط من الخزنة."
         />
+        <UFormField v-if="purchaseUnits.length > 1" label="وحدة الشراء">
+          <USelectMenu :model-value="purchaseUnit" :items="purchaseUnits" label-key="name" by="id" class="w-full" @update:model-value="(unit) => selectPurchaseUnit(unit)" />
+        </UFormField>
         <UFormField
           label="الكمية المشتراة"
           required
@@ -599,12 +602,13 @@
 
 <script setup lang="ts">
 import type { Invoice, Product } from "~/types";
+import type { ProductUnit } from "~/types";
 import { toDateSafe } from "~/types";
 
 definePageMeta({ title: "المنتجات", middleware: "admin-only" });
 const searchText = ref<string>("");
 const { formatePrice } = useHelpers();
-const { round2, toNum, movingAverageCost, proposedSellingPrice, isLowStock } =
+const { round2, toNum, movingAverageCost, proposedSellingPrice, isLowStock, unitsForProduct } =
   useFinance();
 const productFormState = ref(false);
 const productsStore = useProductsStore();
@@ -621,6 +625,17 @@ const purchaseOpen = ref(false);
 const purchaseId = ref<string | null>(null);
 const purchaseQty = ref<number | undefined>(undefined);
 const purchaseCost = ref<number | undefined>(undefined);
+const purchaseUnitId = ref("");
+const purchaseUnits = computed<ProductUnit[]>(() => {
+  const product = prodsList.value.find((item) => item.id === purchaseId.value);
+  return product ? unitsForProduct(product) : [];
+});
+const purchaseUnit = computed(() => purchaseUnits.value.find((unit) => unit.id === purchaseUnitId.value) ?? purchaseUnits.value[0]);
+function selectPurchaseUnit(unit?: ProductUnit): void {
+  if (!unit) return;
+  purchaseUnitId.value = unit.id;
+  purchaseCost.value = round2(purchaseCurrentCost.value * unit.factor);
+}
 const priceChoice = ref<"proposed" | "custom">("proposed");
 const purchasePrice = ref<number | undefined>(undefined);
 const purchaseApproved = ref<number | null>(null);
@@ -765,8 +780,8 @@ const purchasePreviewAvg = computed(() =>
         prodsList.value.find((p) => p.id === purchaseId.value)?.stock_quantity,
       ),
       purchaseCurrentCost.value,
-      round2(purchaseQty.value ?? 0),
-      round2(purchaseCost.value ?? 0),
+      round2((purchaseQty.value ?? 0) * Number(purchaseUnit.value?.factor ?? 1)),
+      round2((purchaseCost.value ?? 0) / Number(purchaseUnit.value?.factor ?? 1)),
     ),
   ),
 );
@@ -826,6 +841,8 @@ function openPurchase(id?: string): void {
   purchaseId.value = id;
   purchaseQty.value = undefined;
   purchaseCost.value = p?.cost_price ?? undefined;
+  const baseUnit = p ? unitsForProduct(p).find((unit) => unit.is_base) ?? unitsForProduct(p)[0] : undefined;
+  purchaseUnitId.value = baseUnit?.id ?? "";
   priceChoice.value = "proposed";
   purchasePrice.value = undefined;
   purchaseApproved.value = null;
@@ -875,9 +892,10 @@ async function doPurchase(): Promise<void> {
         }
       : pricePolicyApplies.value
         ? {
-            mode: "proposed" as const,
-            approvedProposed:
-              purchasePrice.value ?? purchasePreview.value.proposed ?? 0,
+          mode: "proposed" as const,
+          approvedProposed:
+              purchasePreview.value.proposed ?? 0,
+          price: purchasePrice.value ?? purchasePreview.value.proposed ?? 0,
           }
         : { mode: "keep" as const };
   if (pricePolicyApplies.value && purchasePrice.value === undefined) {
@@ -903,6 +921,9 @@ async function doPurchase(): Promise<void> {
       product_id: purchaseId.value,
       quantity: purchaseQty.value ?? 0,
       unit_cost: purchaseCost.value ?? 0,
+      unit_id: purchaseUnit.value?.id,
+      unit_name: purchaseUnit.value?.name,
+      unit_factor: purchaseUnit.value?.factor ?? 1,
       pricing,
       paidNow: purchasePaid.value ?? undefined,
       supplier_name: purchaseSupplier.value.trim() || null,

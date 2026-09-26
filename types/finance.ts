@@ -35,6 +35,9 @@ export interface CashTransaction {
   product_id?: string | null;
   purchase_invoice_id?: string | null;
   debt_payment_id?: string | null;
+  reference_type?: "invoice" | "supplier_invoice" | "loan" | "return" | "product" | "manual" | null;
+  reference_id?: string | null;
+  reference_label?: string | null;
   note?: string | null;
   created_by?: string | null;
   created_at?: Timestamp | unknown;
@@ -70,6 +73,10 @@ export interface InventoryTransaction {
   product_id: string;
   product_name: string;
   quantity: number;
+  unit_id?: string | null;
+  unit_name?: string | null;
+  unit_factor?: number | null;
+  base_quantity?: number | null;
   direction: "in" | "out";
   unit_cost?: number | null;
   invoice_id?: string | null;
@@ -89,6 +96,11 @@ export interface PurchaseInvoiceItem {
   product_name: string;
   quantity: number;
   unit_cost: number;
+  unit_id?: string | null;
+  unit_name?: string | null;
+  unit_factor?: number | null;
+  base_quantity?: number | null;
+  base_unit_cost?: number | null;
   line_total: number;
 }
 
@@ -98,7 +110,11 @@ export interface PurchaseInvoice {
   id?: string;
   product_ids?: string[];
   supplier_name: string | null;
+  supplier_id?: string | null;
   supplier_ref?: string | null;
+  invoice_number?: string | null;
+  source?: "manual" | "excel_import" | "repeat";
+  pinned?: boolean;
   items: PurchaseInvoiceItem[];
   total_amount: number;
   paid_amount: number;
@@ -106,6 +122,15 @@ export interface PurchaseInvoice {
   payment_ids?: string[];
   note?: string | null;
   created_by?: string | null;
+  created_at?: Timestamp | unknown;
+}
+
+export interface Supplier {
+  id?: string;
+  name: string;
+  phone?: string | null;
+  address?: string | null;
+  notes?: string | null;
   created_at?: Timestamp | unknown;
 }
 
@@ -152,6 +177,10 @@ export interface InvoiceReturnItem {
   product_id: string;
   product_name: string;
   quantity: number;
+  unit_id?: string | null;
+  unit_name?: string | null;
+  unit_factor?: number | null;
+  base_quantity?: number | null;
   original_unit_price: number;
   original_unit_cost?: number;
   source_line_index?: number;

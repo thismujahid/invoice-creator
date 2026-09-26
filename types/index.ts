@@ -17,13 +17,26 @@ export interface Product {
   stock_quantity?: number | null;
   /** Low-stock alert threshold (default 5 when missing). Fractional allowed. */
   low_stock_threshold?: number | null;
+  base_unit_id?: string | null;
+  base_unit_name?: string | null;
+  units?: ProductUnit[];
   /** Latest inventory movement linked to a stock change. */
   last_inventory_transaction_id?: string | null;
+  /** Purchase invoice that authorizes the latest purchase stock/cost update. */
+  last_purchase_invoice_id?: string | null;
   /** All movement documents written for the latest atomic stock change. */
   last_inventory_transaction_ids?: string[];
   /** Latest audited cost correction. */
   last_cost_adjustment_id?: string | null;
   date?: Date | FirestoreTimestampLike | string | null;
+}
+
+export interface ProductUnit {
+  id: string;
+  name: string;
+  factor: number;
+  selling_price: number | null;
+  is_base?: boolean;
 }
 
 export interface Customer {
@@ -38,6 +51,11 @@ export interface InvoiceProductLine {
   product_price: number;
   product_cost_price?: number;
   product_quantity: number;
+  unit_id?: string;
+  unit_name?: string;
+  unit_factor?: number;
+  base_quantity?: number;
+  base_cost_snapshot?: number;
   total?: number;
   option?: string;
   order?: number | null;

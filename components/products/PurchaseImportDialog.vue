@@ -72,6 +72,7 @@
                 <UFormField label="الكمية المضافة"><UInputNumber v-model="row.quantity" :min="0.01" :step="1" class="w-full" /></UFormField>
                 <UFormField label="تكلفة شراء الوحدة"><UInputNumber v-model="row.unitCost" :min="0" class="w-full" /></UFormField>
               </div>
+              <UFormField v-if="row.product && unitChoices(row).length > 1" label="وحدة الكمية والتكلفة"><USelectMenu :model-value="selectedUnit(row)" :items="unitChoices(row)" label-key="name" by="id" class="w-full" @update:model-value="(unit) => pickUnit(row, unit)" /></UFormField>
               <template v-if="row.product">
                 <div class="grid grid-cols-2 gap-2 rounded-lg bg-gray-50 p-3 text-xs sm:grid-cols-3">
                   <span>المخزون الحالي: <b>{{ toNum(currentProduct(row)?.stock_quantity) }}</b></span>
@@ -97,6 +98,7 @@
                 <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   <UFormField label="سعر البيع للمنتج الجديد" required><UInputNumber v-model="row.newPrice" :min="0.01" class="w-full" /></UFormField>
                   <UFormField label="مؤشر نقص المخزون" hint="الافتراضي 5"><UInputNumber v-model="row.threshold" :min="0" :step="0.5" class="w-full" /></UFormField>
+                  <UFormField label="وحدة المخزون الأساسية" required><UInput v-model="row.baseUnitName" placeholder="مثال: قطعة أو جرام" class="w-full" /></UFormField>
                 </div>
               </template>
               <UAlert v-if="row.duplicate" color="error" variant="soft" title="هذا الصف مكرر في الملف." />
@@ -113,7 +115,7 @@
             <UFormField label="المدفوع الآن" :error="paidError || undefined"><UInputNumber v-model="paidNow" :min="0" :max="Math.min(total, cashBalance)" class="w-full" /></UFormField>
           </div>
           <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <UFormField label="المورد (اختياري)"><UInput v-model="supplierName" class="w-full" /></UFormField>
+            <UFormField label="المورد"><USelectMenu v-model="supplier" :items="supplierStore.list" label-key="name" by="id" placeholder="اختر المورد" class="w-full" /></UFormField>
             <UFormField label="مرجع فاتورة المورد (اختياري)"><UInput v-model="supplierRef" dir="ltr" class="w-full" /></UFormField>
           </div>
           <UFormField label="ملاحظة (اختياري)"><UInput v-model="note" class="w-full" /></UFormField>
@@ -127,7 +129,7 @@
           <div class="flex justify-between"><span>الباقي</span><b>{{ formatePrice(result.remaining) }} ج</b></div>
         </div>
         <div class="break-all text-xs text-gray-500">مرجع فاتورة الشراء: <span class="font-mono" dir="ltr">{{ result.id }}</span></div>
-        <UButton color="warning" variant="soft" icon="i-lucide-arrow-up-right" @click="navigateTo({ path: '/debts', hash: `#purchase-${encodeURIComponent(result.id)}` })">عرض فاتورة الشراء وديون الموردين</UButton>
+        <UButton color="warning" variant="soft" icon="i-lucide-arrow-up-right" @click="navigateTo({ path: '/supplier-invoices', query: { invoice: result.id } })">عرض فاتورة المورد</UButton>
       </template>
       <UAlert v-if="submitError" color="error" variant="soft" :title="submitError" />
     </div>
@@ -144,6 +146,9 @@
 <script setup lang="ts">
 import * as XLSX from "xlsx/dist/xlsx.full.min.js";
 import type { Product } from "~/types";
+import type { ProductUnit } from "~/types";
+import type { Supplier } from "~/types/finance";
+import { useSuppliersStore } from "~/stores/suppliers";
 import type { PriceDecision } from "~/composables/finance";
 
 interface ImportRow {
@@ -160,6 +165,10 @@ interface ImportRow {
   priceChoice: "proposed" | "custom";
   approvedPrice: number | null;
   customPrice: number | null;
+  baseUnitName: string;
+  unitId?: string;
+  unitName?: string;
+  unitFactor: number;
 }
 interface ImportResult { id: string; total: number; paid: number; remaining: number; duplicate: boolean }
 
@@ -171,6 +180,8 @@ const formatePrice = useHelpers().formatePrice;
 const purchasing = usePurchasing();
 const productsStore = useProductsStore();
 const cashbox = useCashbox();
+const supplierStore = useSuppliersStore();
+const supplier = ref<Supplier | undefined>();
 const rows = ref<ImportRow[]>([]);
 const fileInput = ref<HTMLInputElement | null>(null);
 const selectedFileName = ref("");
@@ -181,7 +192,6 @@ const submitError = ref("");
 const busy = ref(false);
 const fileHash = ref("");
 const paidNow = ref(0);
-const supplierName = ref("");
 const supplierRef = ref("");
 const note = ref("");
 const result = ref<ImportResult | null>(null);
@@ -211,7 +221,7 @@ const duplicateProductIds = computed(() => {
 const matchedCount = computed(() => rows.value.filter((row) => !!row.product).length);
 const newCount = computed(() => rows.value.filter((row) => !row.product && row.createNew).length);
 const errorCount = computed(() => rows.value.filter((row) => rowErrors(row).length > 0).length);
-const canSubmit = computed(() => !!fileHash.value && rows.value.length > 0 && !busy.value && !tooManyRows.value && !errorCount.value && !paidError.value);
+const canSubmit = computed(() => !!fileHash.value && !!supplier.value?.id && rows.value.length > 0 && !busy.value && !tooManyRows.value && !errorCount.value && !paidError.value);
 
 function numericCell(value: unknown): number | null {
   if (value === null || value === undefined || typeof value === "boolean" || String(value).trim() === "") return null;
@@ -237,6 +247,10 @@ function makeRow(raw: unknown[], rowNumber: number): ImportRow {
     priceChoice: "proposed",
     approvedPrice: null,
     customPrice: null,
+    baseUnitName: "وحدة",
+    unitId: existing?.base_unit_id || "legacy-base",
+    unitName: existing?.base_unit_name || "وحدة",
+    unitFactor: 1,
   };
 }
 
@@ -246,8 +260,20 @@ function pickProduct(row: ImportRow, product: Product | null | undefined): void 
   row.productId = product.id;
   row.name = product.name;
   row.createNew = false;
+  const base = product.units?.find((unit) => unit.is_base) ?? { id: product.base_unit_id || "legacy-base", name: product.base_unit_name || "وحدة", factor: 1, selling_price: product.price, is_base: true };
+  row.unitId = base.id;
+  row.unitName = base.name;
+  row.unitFactor = base.factor;
   row.approvedPrice = preview(row).price;
 }
+
+function unitChoices(row: ImportRow): ProductUnit[] {
+  const product = currentProduct(row);
+  if (!product) return [];
+  return product.units?.length ? product.units : [{ id: product.base_unit_id || "legacy-base", name: product.base_unit_name || "وحدة", factor: 1, selling_price: product.price, is_base: true }];
+}
+function selectedUnit(row: ImportRow): ProductUnit | undefined { return unitChoices(row).find((unit) => unit.id === row.unitId) ?? unitChoices(row)[0]; }
+function pickUnit(row: ImportRow, unit?: ProductUnit): void { if (!unit) return; row.unitId = unit.id; row.unitName = unit.name; row.unitFactor = unit.factor; row.approvedPrice = preview(row).price; }
 
 async function onFile(event: Event): Promise<void> {
   rows.value = [];
@@ -303,7 +329,8 @@ function currentProduct(row: ImportRow): Product | undefined {
 function preview(row: ImportRow) {
   const product = currentProduct(row);
   if (!product) return { avg: null, rate: null, price: null, applies: false };
-  const avg = round2(movingAverageCost(toNum(product.stock_quantity), product.cost_price, round2(row.quantity ?? 0), round2(row.unitCost ?? 0)));
+  const factor = Number(row.unitFactor || 1);
+  const avg = round2(movingAverageCost(toNum(product.stock_quantity), product.cost_price, round2((row.quantity ?? 0) * factor), round2((row.unitCost ?? 0) / factor)));
   const result = proposedSellingPrice(product.cost_price, product.price, avg);
   return { avg, rate: result.rate, price: result.proposed, applies: avg - toNum(product.price) > 1e-9 };
 }
@@ -321,6 +348,7 @@ function rowErrors(row: ImportRow): string[] {
   if (!row.product && row.createNew) {
     if (!(row.newPrice !== null && Number.isFinite(row.newPrice) && row.newPrice > 0)) errors.push("سعر البيع للمنتج الجديد مطلوب.");
     if (row.threshold === null || !Number.isFinite(row.threshold) || row.threshold < 0) errors.push("مؤشر النقص يجب ألا يكون سالبًا.");
+    if (!row.baseUnitName.trim()) errors.push("اسم وحدة المخزون الأساسية مطلوب.");
   }
   const price = preview(row);
   if (row.product && price.applies) {
@@ -341,7 +369,7 @@ async function submit(): Promise<void> {
       const pricing: PriceDecision = row.product && p.applies
         ? row.priceChoice === "custom"
           ? { mode: "custom", price: row.customPrice ?? 0, approvedProposed: p.price }
-          : { mode: "proposed", approvedProposed: row.approvedPrice ?? p.price ?? 0 }
+          : { mode: "proposed", approvedProposed: p.price ?? 0, price: row.approvedPrice ?? p.price ?? 0 }
         : { mode: "keep" };
       return {
         product_id: row.product?.id ?? null,
@@ -351,12 +379,20 @@ async function submit(): Promise<void> {
         pricing,
         price: row.product ? undefined : row.newPrice,
         threshold: row.product ? undefined : row.threshold,
+        unit_id: row.unitId,
+        unit_name: row.unitName,
+        unit_factor: row.unitFactor,
+        base_unit_name: row.product ? undefined : row.baseUnitName,
+        base_unit_id: row.product ? undefined : "base",
+        units: row.product ? undefined : [{ id: "base", name: row.baseUnitName, factor: 1, selling_price: row.newPrice, is_base: true }],
       };
     });
     const execution = await purchasing.executePurchase({
       idempotencyKey: `import-${fileHash.value}`,
-      supplier_name: supplierName.value.trim() || null,
+      supplier_id: supplier.value?.id ?? null,
+      supplier_name: supplier.value?.name ?? null,
       supplier_ref: supplierRef.value.trim() || null,
+      source: "excel_import",
       items,
       paidNow: paidNow.value,
       note: note.value.trim() || `استيراد ${rows.value.length} صنفًا من Excel`,
@@ -400,6 +436,7 @@ watch(open, (value) => {
     result.value = null;
     submitError.value = "";
     void cashbox.fetchCashbox();
+    void supplierStore.fetchSuppliers();
   }
 });
 

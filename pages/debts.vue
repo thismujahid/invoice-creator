@@ -231,79 +231,6 @@
       />
     </div>
 
-    <section class="mt-5 rounded-xl bg-white p-3 shadow-sm sm:p-4">
-      <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h2 class="text-lg font-bold text-gray-900">ديون الموردين</h2>
-          <p class="text-xs text-gray-500">فواتير الشراء التي لم يُسدَّد كامل رصيدها</p>
-        </div>
-        <UButton color="neutral" variant="soft" icon="i-lucide-refresh-cw" :loading="supplierLoading" @click="loadSupplierInvoices">تحديث</UButton>
-      </div>
-      <UInput v-model="supplierSearch" icon="i-lucide-search" placeholder="بحث باسم المورد أو مرجع الفاتورة" class="mb-3 w-full sm:max-w-sm" />
-      <USkeleton v-if="supplierLoading" class="h-20 w-full" />
-      <UAlert v-else-if="supplierError" color="error" variant="soft" :title="supplierError" />
-      <div v-else-if="openSupplierInvoices.length" class="grid gap-2">
-        <UCard v-for="invoice in openSupplierInvoices" :id="`purchase-${invoice.id}`" :key="invoice.id" variant="outline">
-          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div class="min-w-0 space-y-1">
-              <div class="flex flex-wrap items-center gap-2">
-                <span class="font-bold">{{ invoice.supplier_name || 'مورد غير مسمى' }}</span>
-                <UBadge :color="supplierInvoiceStatus(invoice) === 'paid' ? 'success' : supplierInvoiceStatus(invoice) === 'unpaid' ? 'error' : 'warning'" variant="soft">{{ SUPPLIER_STATUS_LABELS[supplierInvoiceStatus(invoice)] }}</UBadge>
-              </div>
-              <div class="text-xs text-gray-500">{{ invoice.supplier_ref ? `مرجع ${invoice.supplier_ref} · ` : '' }}{{ formatDateOnly(invoice.created_at) }} · {{ invoice.items?.length ?? 0 }} أصناف</div>
-              <div class="flex flex-wrap gap-x-4 gap-y-1 text-sm">
-                <span>الإجمالي: <b>{{ formatePrice(invoice.total_amount) }} ج</b></span>
-                <span>مدفوع: {{ formatePrice(invoice.paid_amount) }} ج</span>
-                <span class="font-bold text-red-600">الباقي: {{ formatePrice(invoice.remaining_amount) }} ج</span>
-              </div>
-            </div>
-            <UButton v-if="invoice.remaining_amount > 0" color="success" icon="i-lucide-hand-coins" class="min-h-11 shrink-0" @click="openSupplierPayment(invoice)">تسديد</UButton>
-            <UBadge v-else color="success" variant="soft">مسددة بالكامل</UBadge>
-            <UButton color="neutral" variant="soft" icon="i-lucide-history" class="min-h-11 shrink-0" :disabled="!invoice.payment_ids?.length" @click="showSupplierPayments(invoice)">سجل السداد</UButton>
-          </div>
-        </UCard>
-      </div>
-      <UEmpty v-else icon="i-lucide-circle-check" title="لا توجد ديون مستحقة للموردين" />
-    </section>
-
-    <UiAppDialog v-model:open="supplierPayOpen" :title="`تسديد فاتورة — ${supplierPayTarget?.supplier_name || 'مورد'}`">
-      <div v-if="supplierPayTarget" class="space-y-3">
-        <div class="grid grid-cols-2 gap-2 rounded-lg bg-gray-50 p-3 text-sm">
-          <div><span class="text-gray-500">الإجمالي</span><div class="font-bold">{{ formatePrice(supplierPayTarget.total_amount) }} ج</div></div>
-          <div><span class="text-gray-500">المدفوع</span><div class="font-bold">{{ formatePrice(supplierPayTarget.paid_amount) }} ج</div></div>
-          <div><span class="text-gray-500">المتبقي</span><div class="font-bold text-red-600">{{ formatePrice(supplierPayTarget.remaining_amount) }} ج</div></div>
-          <div><span class="text-gray-500">رصيد الخزنة</span><div class="font-bold">{{ formatePrice(cashbox.balance) }} ج</div></div>
-        </div>
-        <UAlert v-if="cashbox.balance <= 0" color="warning" variant="soft" title="لا يوجد رصيد متاح في الخزنة للسداد." />
-        <UFormField label="مبلغ الدفعة" required :error="supplierPaymentError || undefined" :hint="`الحد الأقصى ${formatePrice(Math.min(supplierPayTarget.remaining_amount, cashbox.balance))} ج`">
-          <UInputNumber v-model="supplierPaymentAmount" :min="0" :max="Math.min(supplierPayTarget.remaining_amount, cashbox.balance)" class="w-full" />
-        </UFormField>
-        <div class="flex justify-between rounded-lg bg-gray-50 p-3 text-sm"><span>المتبقي بعد هذه الدفعة</span><b>{{ formatePrice(Math.max(0, supplierPayTarget.remaining_amount - (supplierPaymentAmount ?? 0))) }} ج</b></div>
-        <UFormField label="ملاحظة (اختياري)"><UInput v-model="supplierPaymentNote" class="w-full" /></UFormField>
-        <UAlert v-if="supplierPaymentSubmitError" color="error" variant="soft" :title="supplierPaymentSubmitError" />
-      </div>
-      <template #footer>
-        <div class="flex w-full gap-2">
-          <UButton color="success" class="min-h-11 flex-1" icon="i-lucide-check" :loading="supplierPaymentBusy" :disabled="!supplierPayTarget || !!supplierPaymentError || cashbox.balance <= 0" @click="submitSupplierPayment">تأكيد السداد</UButton>
-          <UButton color="neutral" variant="soft" class="min-h-11 flex-1" :disabled="supplierPaymentBusy" @click="supplierPayOpen = false">إلغاء</UButton>
-        </div>
-      </template>
-    </UiAppDialog>
-
-    <UiAppDialog v-model:open="supplierHistoryOpen" :title="`سجل السداد — ${supplierHistoryInvoice?.supplier_name || 'مورد'}`">
-      <USkeleton v-if="supplierHistoryLoading" class="h-20 w-full" />
-      <UEmpty v-else-if="!supplierHistory.length" icon="i-lucide-history" title="لا توجد دفعات مسجلة" />
-      <div v-else class="max-h-[65vh] space-y-2 overflow-y-auto">
-        <UCard v-for="payment in supplierHistory" :key="payment.id" variant="outline">
-          <div class="flex items-center justify-between gap-2">
-            <span class="text-sm text-gray-500">{{ formatDateOnly(payment.created_at) }}</span>
-            <b class="text-emerald-700">{{ formatePrice(payment.amount) }} ج</b>
-          </div>
-          <p v-if="payment.note" class="mt-1 text-xs text-gray-600">{{ payment.note }}</p>
-        </UCard>
-      </div>
-    </UiAppDialog>
-
     <!-- Customer details -->
     <UiAppDialog
       v-model:open="detailsOpen"
@@ -700,55 +627,24 @@
 import type { Customer } from "~/types";
 import type { Invoice } from "~/types";
 import type { CustomerDebt, Obligation } from "~/composables/useDebts";
-import type { DebtPayment, PurchaseInvoice, SupplierPayment } from "~/types/finance";
-import { SUPPLIER_STATUS_LABELS, supplierInvoiceStatus } from "~/types/finance";
+import type { DebtPayment } from "~/types/finance";
 import { toDateSafe } from "~/types";
 import { doc } from "firebase/firestore";
 
 definePageMeta({ title: "دفتر الديون" });
+const route = useRoute();
 const { formatePrice } = useHelpers();
 const { round2, loanStatusOf, normalizePhone, normalizeName } = useFinance();
 const debts = useDebts();
 const customers = useCustomersStore();
-const route = useRoute();
 const { notify } = useAppToast();
 const { db, getDoc } = useFirebase();
-const purchasing = usePurchasing();
-const cashbox = useCashbox();
 
 const loading = ref(false);
 const book = ref<CustomerDebt[]>([]);
-const searchText = ref("");
+const searchText = ref(String(route.query.customer_name ?? ""));
 const currentPage = ref(1);
 const currentPerPage = ref(25);
-const supplierInvoices = ref<PurchaseInvoice[]>([]);
-const supplierSearch = ref("");
-const supplierLoading = ref(false);
-const supplierError = ref("");
-const supplierPayOpen = ref(false);
-const supplierPayTarget = ref<PurchaseInvoice | null>(null);
-const supplierPaymentAmount = ref<number | undefined>(undefined);
-const supplierPaymentNote = ref("");
-const supplierPaymentBusy = ref(false);
-const supplierPaymentSubmitError = ref("");
-const supplierPaymentKey = ref("");
-const supplierHistoryOpen = ref(false);
-const supplierHistoryInvoice = ref<PurchaseInvoice | null>(null);
-const supplierHistory = ref<SupplierPayment[]>([]);
-const supplierHistoryLoading = ref(false);
-const supplierPaymentError = computed(() => {
-  const target = supplierPayTarget.value;
-  const amount = supplierPaymentAmount.value;
-  if (!target || amount === undefined || amount === null || !(amount > 0)) return "أدخل مبلغًا أكبر من صفر.";
-  if (amount - target.remaining_amount > 1e-9) return "المبلغ يتجاوز باقي الفاتورة.";
-  if (amount - cashbox.balance > 1e-9) return "المبلغ يتجاوز رصيد الخزنة.";
-  return "";
-});
-const openSupplierInvoices = computed(() => {
-  const query = supplierSearch.value.trim().toLocaleLowerCase();
-  return supplierInvoices.value
-    .filter((invoice) => !query || `${invoice.supplier_name ?? ""} ${invoice.supplier_ref ?? ""}`.toLocaleLowerCase().includes(query));
-});
 watch(searchText, () => {
   currentPage.value = 1;
 });
@@ -1122,6 +1018,7 @@ async function submitPay(): Promise<void> {
   try {
     const res = await debts.payDebts({
       customer_id,
+      amount: v,
       allocations,
       note: payNote.value.trim() || null,
     });
@@ -1145,84 +1042,18 @@ async function reload(): Promise<void> {
   loading.value = true;
   try {
     book.value = await debts.fetchDebtsBook();
+    const customerId = String(route.query.customer_id ?? "");
+    const customerName = String(route.query.customer_name ?? "");
+    if (customerId || customerName) {
+      const target = book.value.find((customer) => (customerId && customer.customer_id === customerId) || (customerName && customer.name === customerName));
+      if (target) selected.value = target;
+    }
   } finally {
     loading.value = false;
   }
 }
 
-async function loadSupplierInvoices(): Promise<void> {
-  supplierLoading.value = true;
-  supplierError.value = "";
-  try {
-    supplierInvoices.value = await purchasing.fetchPurchaseInvoices();
-    await cashbox.fetchCashbox();
-    await nextTick();
-    scrollToSupplierInvoice();
-  } catch (error) {
-    console.error(error);
-    supplierError.value = "تعذر تحميل فواتير الموردين.";
-  } finally {
-    supplierLoading.value = false;
-  }
-}
-
-function scrollToSupplierInvoice(): void {
-  const invoiceId = String(route.hash || "").replace(/^#purchase-/, "");
-  if (!invoiceId) return;
-  document.getElementById(`purchase-${decodeURIComponent(invoiceId)}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
-}
-
-watch(() => route.hash, async () => {
-  await nextTick();
-  scrollToSupplierInvoice();
-});
-
-function openSupplierPayment(invoice: PurchaseInvoice): void {
-  supplierPayTarget.value = invoice;
-  supplierPaymentAmount.value = undefined;
-  supplierPaymentNote.value = "";
-  supplierPaymentSubmitError.value = "";
-  supplierPaymentKey.value = typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
-  void cashbox.fetchCashbox();
-  supplierPayOpen.value = true;
-}
-
-async function showSupplierPayments(invoice: PurchaseInvoice): Promise<void> {
-  if (!invoice.id) return;
-  supplierHistoryInvoice.value = invoice;
-  supplierHistory.value = [];
-  supplierHistoryOpen.value = true;
-  supplierHistoryLoading.value = true;
-  try {
-    supplierHistory.value = await purchasing.fetchSupplierPayments(invoice.id);
-    supplierHistory.value.sort((a, b) => (toDateSafe(b.created_at)?.getTime() ?? 0) - (toDateSafe(a.created_at)?.getTime() ?? 0));
-  } finally {
-    supplierHistoryLoading.value = false;
-  }
-}
-
-async function submitSupplierPayment(): Promise<void> {
-  const target = supplierPayTarget.value;
-  if (!target?.id || supplierPaymentError.value || supplierPaymentAmount.value === undefined) return;
-  supplierPaymentBusy.value = true;
-  supplierPaymentSubmitError.value = "";
-  try {
-    const response = await purchasing.paySupplierInvoice(target.id, supplierPaymentAmount.value, supplierPaymentNote.value.trim() || null, supplierPaymentKey.value);
-    if (!response.ok) {
-      supplierPaymentSubmitError.value = response.error;
-      return;
-    }
-    notify(response.remaining > 0 ? `تم تسجيل الدفعة، والمتبقي ${formatePrice(response.remaining)} ج.` : "تم سداد فاتورة المورد بالكامل.", "success");
-    supplierPayOpen.value = false;
-    await loadSupplierInvoices();
-  } finally {
-    supplierPaymentBusy.value = false;
-  }
-}
-
 onMounted(async () => {
-  await Promise.all([reload(), customers.fetchCustomers(), loadSupplierInvoices()]);
+  await Promise.all([reload(), customers.fetchCustomers()]);
 });
 </script>

@@ -142,7 +142,7 @@ const mappedProducts = computed(() => {
     else if (prod.product_quantity === 0.75) quantity = "3/4";
     return {
       عدد: quantity,
-      البيان: (prod.product_name || "") + (prod.option ? ` (${prod.option})` : ""),
+      البيان: (prod.product_name || "") + (prod.unit_name ? ` (${prod.unit_name})` : "") + (prod.option ? ` (${prod.option})` : ""),
       تصحيح: "",
       "سعر الوحدة": formatePrice(prod.product_price || 0),
       الإجمالي: formatePrice(calcTotalOfForm(prod)),

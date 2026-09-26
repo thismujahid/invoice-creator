@@ -13,7 +13,7 @@ test("moving weighted average stays aligned with sale and historical replay", ()
   const afterSecondPurchase = applyStockGroup(afterSale.stock, afterSale.avg, 0, [{ qty: 10, cost: 200 }]);
 
   assert.equal(afterSecondPurchase.stock, 12);
-  assert.equal(afterSecondPurchase.avg, 183.33);
+  assert.equal(Math.round(afterSecondPurchase.avg * 100) / 100, 183.33);
 });
 
 test("invoice edits restore old lines in separate historical cost groups", () => {

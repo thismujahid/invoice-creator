@@ -31,6 +31,8 @@
             <tr class="border-b border-gray-200 text-gray-500">
               <th class="p-2 text-start font-medium">الأسم</th>
               <th class="p-2 text-start font-medium">الهاتف</th>
+              <th class="p-2 text-start font-medium">الفواتير</th>
+              <th class="p-2 text-start font-medium">الدين الحالي</th>
               <th class="p-2 text-start font-medium">الأدوات</th>
             </tr>
           </thead>
@@ -42,6 +44,8 @@
             >
               <td class="p-2 font-medium">{{ c.name }}</td>
               <td class="p-2 text-gray-600" dir="ltr">{{ c.phone }}</td>
+              <td class="p-2"><UButton color="primary" variant="link" class="p-0" @click="goInvoices(c)">{{ c.invoiceCount }} فواتير</UButton></td>
+              <td class="p-2"><UButton v-if="c.debt > 0" color="error" variant="link" class="p-0" @click="goDebt(c)">{{ formatePrice(c.debt) }} ج</UButton><span v-else class="text-xs text-gray-400">لا يوجد دين مستحق</span></td>
               <td class="p-2">
                 <div class="flex gap-2">
                   <UButton
@@ -85,6 +89,7 @@
             <div class="min-w-0">
               <div class="truncate font-bold">{{ c.name }}</div>
               <div class="text-sm text-gray-500" dir="ltr">{{ c.phone }}</div>
+              <div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs"><UButton color="primary" variant="link" class="p-0" @click="goInvoices(c)">{{ c.invoiceCount }} فواتير</UButton><UButton v-if="c.debt > 0" color="error" variant="link" class="p-0" @click="goDebt(c)">{{ formatePrice(c.debt) }} ج مستحق</UButton><span v-else class="text-gray-400">لا يوجد دين مستحق</span></div>
             </div>
             <div class="flex shrink-0 gap-2">
               <UButton
@@ -161,6 +166,8 @@
 
 <script setup lang="ts">
 import type { Customer } from "~/types";
+import { collection, getDocs } from "firebase/firestore";
+import { normalizeName, normalizePhone, toNum } from "~/composables/finance";
 
 definePageMeta({ title: "العملاء" });
 const customerFormState = ref(false);
@@ -172,6 +179,8 @@ const currentPerPage = ref(10);
 const saving = ref(false);
 const loading = ref(false);
 const deleting = ref(false);
+const summaries = ref<Record<string, { invoiceCount: number; debt: number }>>({});
+const { formatePrice } = useHelpers();
 
 // FLAG [B4-FIXED]: watcher instead of side-effect in computed.
 watch(searchText, () => {
@@ -194,6 +203,8 @@ const paginateArray = computed(() => {
       id: customer.id,
       name: customer.name,
       phone: customer.phone,
+      invoiceCount: summaries.value[customer.id || legacyCustomerKey(customer)]?.invoiceCount ?? 0,
+      debt: summaries.value[customer.id || legacyCustomerKey(customer)]?.debt ?? 0,
     }));
 });
 async function saveProduct(isActive: { value: boolean }) {
@@ -216,11 +227,25 @@ async function saveProduct(isActive: { value: boolean }) {
 async function loadCustomers(): Promise<void> {
   loading.value = true;
   try {
-    await customersStore.fetchCustomers();
+    const { db } = useFirebase();
+    const [_, snapshot] = await Promise.all([customersStore.fetchCustomers(), getDocs(collection(db, "invoice_debt_summaries"))]);
+    const totals: Record<string, { invoiceCount: number; debt: number }> = {};
+    for (const item of snapshot.docs) {
+      const data = item.data();
+      const key = typeof data.customer_id === "string" && data.customer_id ? data.customer_id : `legacy:${normalizeName(data.customer_name)}|${normalizePhone(data.customer_phone)}`;
+      const target = totals[key] ??= { invoiceCount: 0, debt: 0 };
+      target.invoiceCount += 1;
+      target.debt += Math.max(0, toNum(data.remaining));
+    }
+    for (const item of Object.values(totals)) item.debt = Math.round(item.debt * 100) / 100;
+    summaries.value = totals;
   } finally {
     loading.value = false;
   }
 }
+function legacyCustomerKey(customer: Customer): string { return `legacy:${normalizeName(customer.name)}|${normalizePhone(customer.phone)}`; }
+function goInvoices(customer: Customer): void { navigateTo({ path: "/invoices", query: { customer_id: customer.id || "", customer_name: customer.name, customer_phone: String(customer.phone ?? "") } }); }
+function goDebt(customer: Customer): void { navigateTo({ path: "/debts", query: { customer_id: customer.id || "", customer_name: customer.name, customer_phone: String(customer.phone ?? "") } }); }
 function editCustomer(customer: Customer): void {
   customerForm.value = { ...customer };
   customerFormState.value = true;

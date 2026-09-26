@@ -1,7 +1,7 @@
 import { collection, doc, getDocs, query, where } from "firebase/firestore";
 import type { InventoryTransaction, InventoryTransactionType } from "~/types/finance";
 import type { Product } from "~/types";
-import { applyStockGroup, round2, toNum } from "./finance";
+import { applyStockGroup, round2, round4, toNum } from "./finance";
 import { toDateSafe } from "~/types";
 
 export type RepairStatus = "OK" | "REPAIRABLE" | "STOCK_MISMATCH" | "INSUFFICIENT_HISTORY" | "INVALID_HISTORY";
@@ -55,7 +55,8 @@ interface ReplayStep {
  *  Quantities must be finite and > 0; required costs must be present,
  *  finite and non-negative (never coerced from null to 0). */
 function classify(t: InventoryTransaction): ReplayStep | { invalid: string } {
-  const qty = toNum(t.quantity);
+  const rawQty = t.base_quantity === undefined ? t.quantity : t.base_quantity;
+  const qty = Number(rawQty);
   if (!Number.isFinite(qty) || qty <= 0) return { invalid: "invalid quantity" };
   switch (t.type as InventoryTransactionType) {
     case "opening_stock":
@@ -95,6 +96,10 @@ function transactionFingerprint(transactions: InventoryTransaction[]): string {
       type: transaction.type ?? null,
       direction: transaction.direction ?? null,
       quantity: transaction.quantity ?? null,
+      unit_id: transaction.unit_id ?? null,
+      unit_name: transaction.unit_name ?? null,
+      unit_factor: transaction.unit_factor ?? null,
+      base_quantity: transaction.base_quantity ?? null,
       unit_cost: transaction.unit_cost ?? null,
       invoice_id: transaction.invoice_id ?? null,
       return_id: transaction.return_id ?? null,
@@ -264,7 +269,7 @@ export const useInventoryCostRepair = defineStore("inventoryCostRepair", () => {
     untrusted: boolean,
   ): RepairRow {
     const replayedStock = round2(stock);
-    const recomputedCost = avg === undefined ? null : round2(avg);
+    const recomputedCost = avg === undefined ? null : round4(avg);
     const storedStock = p.stock_quantity ?? null;
     const storedCost = p.cost_price ?? null;
     // Stock compare (stored null counts as 0 for matching purposes).

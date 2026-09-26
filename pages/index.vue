@@ -383,6 +383,9 @@
                     class="w-full"
                   />
                 </UFormField>
+                <UFormField v-if="unitsOf(form).length > 1" label="الوحدة">
+                  <USelectMenu :model-value="selectedUnit(form)" :items="unitsOf(form)" label-key="name" by="id" class="w-full" @update:model-value="(unit) => onPickUnit(form, unit)" />
+                </UFormField>
                 <UFormField
                   :label="
                     form.product_id
@@ -498,10 +501,11 @@
 <script setup lang="ts">
 import type { Customer, Invoice, InvoiceProductLine, Product } from "~/types";
 import { toDateSafe } from "~/types";
+import type { ProductUnit } from "~/types";
 
 definePageMeta({ title: "إنشاء فاتورة" });
 const { formatDate, formatTime12Hour, formatePrice, calcTotal } = useHelpers();
-const { isLowStock } = useFinance();
+const { isLowStock, unitsForProduct, lineBaseQuantity } = useFinance();
 const products = useProductsStore();
 const lowStockCount = computed(() => products.list.filter((p) => isLowStock(p)).length);
 const { onDocChange } = useFirebase();
@@ -525,6 +529,8 @@ function emptyLine(): InvoiceProductLine {
     total: 0,
     option: "",
     product_id: "",
+    unit_factor: 1,
+    base_quantity: 1,
   };
 }
 function emptyInvoice(): Invoice {
@@ -652,6 +658,22 @@ function selectedProd(form: InvoiceProductLine): Product | undefined {
   if (!form.product_id) return undefined;
   return products.list.find((p) => p.id === form.product_id);
 }
+function unitsOf(form: InvoiceProductLine): ProductUnit[] {
+  const product = selectedProd(form);
+  return product ? unitsForProduct(product) : [];
+}
+function selectedUnit(form: InvoiceProductLine): ProductUnit | undefined {
+  const options = unitsOf(form);
+  return options.find((unit) => unit.id === form.unit_id) ?? options.find((unit) => unit.is_base) ?? options[0];
+}
+function onPickUnit(form: InvoiceProductLine, unit?: ProductUnit): void {
+  if (!unit) return;
+  form.unit_id = unit.id;
+  form.unit_name = unit.name;
+  form.unit_factor = unit.factor;
+  form.base_quantity = Number(form.product_quantity || 0) * unit.factor;
+  form.product_price = Number(unit.selling_price ?? selectedProd(form)?.price ?? 0);
+}
 // Per-line dropdown search (object identity survives unshift/splice/move).
 const prodSearch = reactive(new Map<InvoiceProductLine, string>());
 function getProdSearch(form: InvoiceProductLine): string {
@@ -699,17 +721,19 @@ function onPickProduct(
     notify(`المنتج "${real?.name || ""}" غير متوفر بالمخزون حالياً.`, "error");
     return;
   }
-  if (wanted - available > 1e-9) {
+  const baseUnit = unitsForProduct(real).find((unit) => unit.is_base) ?? unitsForProduct(real)[0];
+  if (wanted * Number(baseUnit?.factor || 1) - available > 1e-9) {
     notify(
       `الكمية المطلوبة (${wanted}) تتجاوز المتاح بالمخزون (${available}). خفّض الكمية أولاً.`,
       "error",
     );
     return;
   }
-  form.product_price = Number(real?.price ?? 0);
+  form.product_price = Number(baseUnit?.selling_price ?? real?.price ?? 0);
   form.product_id = real?.id ?? "";
   form.product_cost_price = Number(real?.cost_price ?? 0);
   form.product_name = real?.name ?? "";
+  onPickUnit(form, baseUnit);
   // No auto-collapse: the user locks the line explicitly with collapseLine().
   prodSearch.delete(form);
   setProdSearch(form, "");
@@ -732,6 +756,7 @@ function setQtyText(form: InvoiceProductLine, v: string): void {
   if (t === "") {
     qtyDrafts.set(form, "");
     form.product_quantity = 0;
+    form.base_quantity = 0;
     return;
   }
   const n = Number(t);
@@ -740,6 +765,7 @@ function setQtyText(form: InvoiceProductLine, v: string): void {
     return;
   }
   form.product_quantity = Math.max(0, n);
+  form.base_quantity = form.product_quantity * Number(form.unit_factor || 1);
   qtyDrafts.delete(form);
 }
 // Expanded/collapsed state by object identity (never persisted to Firestore).
@@ -754,16 +780,17 @@ function expandLine(form: InvoiceProductLine): void {
 function stockOf(form: InvoiceProductLine): number {
   if (!form.product_id) return 0;
   return (
-    products.list.find((p) => p.id === form.product_id)?.stock_quantity ?? 0
+    (products.list.find((p) => p.id === form.product_id)?.stock_quantity ?? 0) / Number(form.unit_factor || 1)
   );
 }
 function qtyExceeds(form: InvoiceProductLine): boolean {
-  return Number(form.product_quantity || 0) - stockOf(form) > 1e-9;
+  return lineBaseQuantity(form) - Number(products.list.find((p) => p.id === form.product_id)?.stock_quantity ?? 0) > 1e-9;
 }
 // Quick +/- steppers in compact view (floor at 0; precise halves via edit mode).
 function changeQty(form: InvoiceProductLine, delta: number): void {
   const next = Number(form.product_quantity || 0) + delta;
   form.product_quantity = Math.max(0, Number.isFinite(next) ? next : 0);
+  form.base_quantity = form.product_quantity * Number(form.unit_factor || 1);
 }
 // Step matches the quantity shape: whole numbers step by 1,
 // fractional (KG) quantities step by 0.5.
@@ -781,7 +808,7 @@ function collapseLine(form: InvoiceProductLine): void {
   const prod = products.list.find((p) => p.id === form.product_id);
   const available = prod?.stock_quantity ?? 0;
   const wanted = Number(form.product_quantity || 0);
-  if (wanted - available > 1e-9) {
+  if (wanted * Number(form.unit_factor || 1) - available > 1e-9) {
     notify(
       `الكمية المطلوبة (${wanted}) تتجاوز المتاح بالمخزون (${available}) لمنتج ${form.product_name}.`,
       "error",
@@ -901,7 +928,14 @@ function updateProdsPrices(preserveHistoricalCosts = false): void {
   invoiceData.value.products.forEach((item) => {
     const prod = item.product_id ? productMap.get(item.product_id) : undefined;
     if (prod) {
-      item.product_price = Number(prod.price ?? 0);
+      const unit = unitsForProduct(prod).find((candidate) => candidate.id === item.unit_id) ?? unitsForProduct(prod).find((candidate) => candidate.is_base) ?? unitsForProduct(prod)[0]!;
+      if (!invoiceData.value.id) {
+        item.unit_id = unit.id;
+        item.unit_name = unit.name;
+        item.unit_factor = unit.factor;
+        item.product_price = Number(unit.selling_price ?? prod.price ?? 0);
+        item.base_quantity = Number(item.product_quantity || 0) * unit.factor;
+      }
       // Never rewrite historical line costs of a persisted invoice (§1.2).
       if (!preserveHistoricalCosts) {
         item.product_cost_price = Number(prod.cost_price ?? 0);

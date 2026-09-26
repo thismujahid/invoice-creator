@@ -1,7 +1,7 @@
 import { collection, doc, getDocs, limit as fsLimit, orderBy, query, where } from "firebase/firestore";
 import type { InvoiceReturn, InvoiceReturnItem } from "~/types/finance";
 import type { Invoice } from "~/types";
-import { applyStockGroup, lineRefundValue, netRatioOf, outstandingDebtOf, round2, splitRefund, toNum } from "./finance";
+import { applyStockGroup, lineRefundValue, lineUnitFactor, netRatioOf, outstandingDebtOf, round2, round4, splitRefund, toNum } from "./finance";
 import { summarizeInvoice, writeDebtSummary } from "./debtSummaries";
 
 export interface ReturnLineInput {
@@ -16,6 +16,9 @@ export interface ReturnRow {
   /** Representative selling price (first line of the group, display only). */
   unit_price: number;
   unit_cost: number;
+  unit_id?: string;
+  unit_name: string;
+  unit_factor: number;
   /** Sold lines backing this cost group, in invoice order. */
   lines: { index: number; price: number; qty: number; returnedQty: number }[];
   soldQty: number;
@@ -64,7 +67,7 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
     if (Array.isArray(previous)) {
       for (const r of previous) {
         for (const it of r.items ?? []) {
-          m.set(it.product_id, round2((m.get(it.product_id) ?? 0) + toNum(it.quantity)));
+          m.set(it.product_id, round2((m.get(it.product_id) ?? 0) + Number(it.base_quantity ?? toNum(it.quantity) * Number(it.unit_factor || 1))));
         }
       }
     } else {
@@ -77,8 +80,11 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
     previous: InvoiceReturn[] | Record<string, number>,
     aggregateReturned: Record<string, number> = {},
   ): ReturnRow[] {
-    const returnedByProduct = returnedMapOf(previous);
-    for (const [productId, quantity] of Object.entries(aggregateReturned)) {
+    const returnedByProduct = Array.isArray(previous) ? new Map<string, number>() : returnedMapOf(previous);
+    if (Array.isArray(previous)) for (const ret of previous) for (const item of ret.items ?? []) {
+      returnedByProduct.set(item.product_id, round2((returnedByProduct.get(item.product_id) ?? 0) + toNum(item.quantity)));
+    }
+    if (!Array.isArray(previous)) for (const [productId, quantity] of Object.entries(aggregateReturned)) {
       returnedByProduct.set(productId, Math.max(returnedByProduct.get(productId) ?? 0, round2(toNum(quantity))));
     }
     const returnedByCost = new Map<string, number>();
@@ -86,7 +92,7 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
     if (Array.isArray(previous)) {
       for (const ret of previous) {
         for (const item of ret.items ?? []) {
-          const costKey = `${item.product_id}||${round2(toNum(item.original_unit_cost))}`;
+          const costKey = `${item.product_id}||${round2(toNum(item.original_unit_cost))}||${item.unit_id ?? "legacy"}||${Number(item.unit_factor || 1)}`;
           returnedByCost.set(costKey, round2((returnedByCost.get(costKey) ?? 0) + toNum(item.quantity)));
           if (item.source_line_index !== undefined) {
             const lineKey = `${item.product_id}||${item.source_line_index}`;
@@ -99,15 +105,19 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
     const groups = new Map<string, ReturnRow>();
     for (const [index, l] of (invoice.products ?? []).entries()) {
       if (!l.product_id) continue;
-      const cost = round2(toNum(l.product_cost_price));
+      const cost = round4(toNum(l.product_cost_price));
       const price = round2(toNum(l.product_price));
-      const key = `${l.product_id}||${cost}`;
+      const factor = lineUnitFactor(l);
+      const key = `${l.product_id}||${cost}||${l.unit_id ?? "legacy"}||${factor}`;
       const g = groups.get(key) ?? {
         key,
         product_id: l.product_id,
         product_name: l.product_name || "",
         unit_price: price,
         unit_cost: cost,
+        unit_id: l.unit_id,
+        unit_name: l.unit_name || "وحدة",
+        unit_factor: factor,
         lines: [] as { index: number; price: number; qty: number; returnedQty: number }[],
         soldQty: 0,
         returnedQty: 0,
@@ -121,7 +131,8 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
         const unallocated = Math.max(0, round2(groupReturned - priorMatchingLines));
         const legacyPriceMatches = previous.reduce((sum, ret) => sum + (ret.items ?? [])
           .filter((item) => item.product_id === l.product_id && round2(toNum(item.original_unit_cost)) === cost &&
-            round2(toNum(item.original_unit_price)) === price && item.source_line_index === undefined)
+            round2(toNum(item.original_unit_price)) === price && item.source_line_index === undefined &&
+            (item.unit_id ?? "legacy") === (l.unit_id ?? "legacy") && Number(item.unit_factor || 1) === factor)
           .reduce((itemSum, item) => itemSum + toNum(item.quantity), 0), 0);
         returnedQty = Math.min(toNum(l.product_quantity), legacyPriceMatches - priorMatchingLines);
         if (unallocated <= 0) returnedQty = 0;
@@ -224,6 +235,10 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
               product_id: r.product_id,
               product_name: r.product_name,
               quantity: take,
+              unit_id: fresh.products[ln.index]?.unit_id ?? null,
+              unit_name: fresh.products[ln.index]?.unit_name ?? null,
+              unit_factor: lineUnitFactor(fresh.products[ln.index] ?? { unit_factor: 1 }),
+              base_quantity: round2(take * lineUnitFactor(fresh.products[ln.index] ?? { unit_factor: 1 })),
               original_unit_price: ln.price,
               original_unit_cost: r.unit_cost,
               source_line_index: ln.index,
@@ -293,6 +308,10 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
             product_id: it.product_id,
             product_name: it.product_name,
             quantity: it.quantity,
+            unit_id: it.unit_id ?? null,
+            unit_name: it.unit_name ?? null,
+            unit_factor: it.unit_factor ?? 1,
+            base_quantity: it.base_quantity ?? it.quantity,
             direction: "in",
             unit_cost: it.original_unit_cost,
             invoice_id: invoice.id,
@@ -307,7 +326,7 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
           const st = stocks.get(pid)!;
           const inflows = retItems
             .filter((it) => it.product_id === pid)
-            .map((it) => ({ qty: it.quantity, cost: it.original_unit_cost as number | null }));
+            .map((it) => ({ qty: Number(it.base_quantity ?? it.quantity), cost: it.original_unit_cost as number | null }));
           const applied = applyStockGroup(st.stock, st.cost, 0, inflows);
           tx.update(doc(db, "products", pid), {
             stock_quantity: applied.stock,
@@ -318,7 +337,7 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
         }
         const mergedReturned: Record<string, number> = { ...returnedMap };
         for (const it of retItems) {
-          mergedReturned[it.product_id] = round2((mergedReturned[it.product_id] ?? 0) + it.quantity);
+          mergedReturned[it.product_id] = round2((mergedReturned[it.product_id] ?? 0) + Number(it.base_quantity ?? it.quantity));
         }
         tx.update(invRef, {
           remaining: round2(remainingDebt - debtReduction),
@@ -341,6 +360,9 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
             amount: cashRefund,
             invoice_id: invoice.id,
             return_id: returnId,
+            reference_type: "return",
+            reference_id: returnId,
+            reference_label: `Invoice Return - ${String(fresh.customer_name || "Customer")}`,
             note: note ?? null,
             created_by: by,
             created_at: now,

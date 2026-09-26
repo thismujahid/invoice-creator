@@ -185,6 +185,8 @@ const tabItems = computed(() => [
     ? [{ label: "المنتجات", icon: "i-lucide-layout-grid", to: "/products" }]
     : []),
   { label: "العملاء", icon: "i-lucide-users", to: "/customers" },
+  { label: "الموردون", icon: "i-lucide-truck", to: "/suppliers" },
+  { label: "فواتير الموردين", icon: "i-lucide-receipt", to: "/supplier-invoices" },
   { label: "الفواتير", icon: "i-lucide-files", to: "/invoices" },
   { label: "الخزنة", icon: "i-lucide-vault", to: "/cashbox" },
   { label: "دفتر الديون", icon: "i-lucide-notebook-text", to: "/debts" },

@@ -422,7 +422,7 @@
         <div v-for="r in returnRows" :key="r.key" class="rounded-lg border border-gray-200 p-2.5">
           <div class="mb-1.5 flex items-center justify-between gap-2">
             <div class="min-w-0 text-sm font-bold">{{ r.product_name }}</div>
-            <div class="shrink-0 text-xs text-gray-500">سعر البيع: {{ formatePrice(r.unit_price) }} • المتاح: {{ r.maxQty }}</div>
+            <div class="shrink-0 text-xs text-gray-500">{{ r.unit_name }} • سعر البيع: {{ formatePrice(r.unit_price) }} • المتاح: {{ r.maxQty }}</div>
           </div>
           <UInputNumber v-model="r.qty" :min="0" :max="r.maxQty" :step="1" size="lg" class="w-full" />
           <div class="mt-1 text-xs text-gray-500">قيمة الاسترداد: {{ formatePrice(previewRefund(r)) }}</div>
@@ -450,6 +450,7 @@ import { toDateSafe } from "~/types";
 import type { ReturnRow } from "~/composables/useInvoiceReturns";
 
 definePageMeta({ title: "الفواتير" });
+const route = useRoute();
 const hideTotal = ref(true);
 const authStore = useAuth();
 // HOME delta: debts filter replaces the creator filter.
@@ -487,6 +488,7 @@ async function payFull(listInvs: Invoice[] | null | undefined) {
   if (!list.length) return;
   isPayingFull.value = true;
   try {
+    await customerStore.fetchCustomers();
     const groups = new Map<string, Invoice[]>();
     for (const inv of list) {
       const key = debtsApi.customerKeyOf({
@@ -500,15 +502,20 @@ async function payFull(listInvs: Invoice[] | null | undefined) {
     for (const [, invs] of groups) {
       const first = invs[0];
       if (!first) continue;
-      const customer_id =
-        first.customer_id || String(first.customer_phone ?? first.customer_name ?? "");
+      const legacyCustomer = customerStore.list.find((customer) =>
+        String(customer.name || "").trim().toLocaleLowerCase() === String(first.customer_name || "").trim().toLocaleLowerCase() &&
+        String(customer.phone ?? "").replace(/\D/g, "") === String(first.customer_phone ?? "").replace(/\D/g, ""),
+      );
+      const customer_id = first.customer_id || legacyCustomer?.id;
+      if (!customer_id) {
+        notifyToast("تعذر ربط الفاتورة القديمة بسجل العميل. لم يتم تسجيل السداد.", "error");
+        return;
+      }
+      const allocations = invs.map((inv) => ({ type: "invoice" as const, reference_id: inv.id as string, amount: outstandingDebtOf(inv) }));
       const res = await debtsApi.payDebts({
         customer_id,
-        allocations: invs.map((inv) => ({
-          type: "invoice" as const,
-          reference_id: inv.id as string,
-          amount: outstandingDebtOf(inv),
-        })),
+        amount: round2(allocations.reduce((sum, item) => sum + item.amount, 0)),
+        allocations,
       });
       if (!res.ok) {
         notifyToast(res.error, "error");
@@ -547,8 +554,9 @@ function formatTimestamp(
   return `${formattedDate} ${formattedTime}`;
 }
 const { formatePrice, calcTotal } = useHelpers();
-const { round2, lineRefundValue, netRatioOf, splitRefund, outstandingDebtOf } = useFinance();
+const { round2, lineRefundValue, netRatioOf, splitRefund, outstandingDebtOf, lineBaseQuantity, grossProfitOf } = useFinance();
 const invoicesStore = useInvoicesStore();
+const customerStore = useCustomersStore();
 const returnsApi = useInvoiceReturns();
 const productsStore = useProductsStore();
 const debtsApi = useDebts();
@@ -557,14 +565,7 @@ const { notify: notifyToast } = useAppToast();
 const toNum = (num: unknown): number => {
   return num && typeof num !== "number" ? Number(num) : (num as number) || 0;
 };
-const calcInvTotal = (inv: Invoice): number =>
-  inv.products?.reduce(
-    (total, prod) =>
-      (total +=
-        (toNum(prod.product_price) - toNum(prod.product_cost_price)) *
-        toNum(prod.product_quantity)),
-    0,
-  ) ?? 0;
+const calcInvTotal = (inv: Invoice): number => grossProfitOf(inv.products);
 const totalDebts = computed(() => {
   return formatePrice(
     filteredInvoices.value.reduce((t, i) => (t += outstandingDebtOf(i)), 0),
@@ -593,11 +594,15 @@ const isFilteredInvoicesContainsDebts = computed<Invoice[] | null>(() => {
 });
 const filteredInvoices = computed<Invoice[]>(() => {
   const q = searchText.value?.trim();
-  if (!q) return [...invoicesStore.list];
+  const customerId = String(route.query.customer_id ?? "");
+  const customerName = String(route.query.customer_name ?? "");
+  const customerPhone = String(route.query.customer_phone ?? "");
   return invoicesStore.list.filter(
     (invoice) =>
-      invoice.customer_name?.includes(q) ||
-      String(invoice.customer_phone ?? "").includes(q),
+      (!customerId || invoice.customer_id === customerId || (!invoice.customer_id && invoice.customer_name === customerName && String(invoice.customer_phone ?? "") === customerPhone)) &&
+      (!customerName || invoice.customer_name === customerName) &&
+      (!customerPhone || String(invoice.customer_phone ?? "") === customerPhone) &&
+      (!q || invoice.customer_name?.includes(q) || String(invoice.customer_phone ?? "").includes(q)),
   );
 });
 function discountAmount(invoice: Invoice): number {
@@ -666,6 +671,7 @@ async function loadInvoices() {
     loading.value = false;
   }
 }
+watch(() => [route.query.customer_id, route.query.customer_name, route.query.customer_phone], () => { currentPage.value = 1; void loadInvoices(); });
 type InvoiceRow = {
   id?: string;
   name: string | null;
@@ -685,7 +691,7 @@ async function loadReturnsMap(): Promise<void> {
   const all = await returnsApi.fetchRecentReturns(500);
   const m = new Map<string, number>();
   for (const r of all) {
-    const sum = (r.items ?? []).reduce((s, it) => s + toNum(it.quantity), 0);
+    const sum = (r.items ?? []).reduce((s, it) => s + Number(it.base_quantity ?? toNum(it.quantity) * Number(it.unit_factor || 1)), 0);
     m.set(r.invoice_id, round2((m.get(r.invoice_id) ?? 0) + sum));
   }
   returnsByInvoice.value = m;
@@ -694,7 +700,7 @@ function returnBadgeFor(inv: Invoice): string {
   if (!inv.id) return "";
   const returned = returnsByInvoice.value.get(inv.id) ?? 0;
   if (returned <= 0) return "";
-  const sold = (inv.products ?? []).reduce((s, l) => s + toNum(l.product_quantity), 0);
+  const sold = (inv.products ?? []).reduce((s, l) => s + lineBaseQuantity(l), 0);
   return returned + 1e-9 >= sold ? "مرتجع كلي" : "مرتجع جزئي";
 }
 const viewRow = ref<InvoiceRow | null>(null);

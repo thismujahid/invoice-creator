@@ -12,6 +12,9 @@ export interface PurchaseInput {
   supplier_name?: string | null;
   supplier_ref?: string | null;
   idempotencyKey?: string | null;
+  unit_id?: string | null;
+  unit_name?: string | null;
+  unit_factor?: number | null;
   note?: string | null;
 }
 
@@ -66,6 +69,9 @@ export const useInventory = defineStore("inventory", () => {
           product_id: input.product_id,
           quantity: input.quantity,
           unit_cost: input.unit_cost,
+          unit_id: input.unit_id,
+          unit_name: input.unit_name,
+          unit_factor: input.unit_factor ?? 1,
           pricing: input.pricing,
         },
       ],

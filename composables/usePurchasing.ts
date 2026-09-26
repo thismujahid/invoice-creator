@@ -4,12 +4,14 @@ import type {
   PurchaseInvoiceItem,
   SupplierPayment,
 } from "~/types/finance";
+import type { ProductUnit } from "~/types";
 import {
   MAX_PURCHASE_ITEMS,
   applyStockGroup,
   estimatePurchaseOps,
   proposedSellingPrice,
   round2,
+  round4,
   toNum,
 } from "./finance";
 import type { PriceDecision } from "./finance";
@@ -26,13 +28,22 @@ export interface PurchaseItemInput {
   price?: number | null;
   /** Stock alert threshold for new products (default 5). */
   threshold?: number | null;
+  unit_id?: string | null;
+  unit_name?: string | null;
+  unit_factor?: number | null;
+  base_unit_name?: string | null;
+  base_unit_id?: string | null;
+  units?: ProductUnit[];
 }
 
 export interface ExecutePurchaseInput {
   /** Client-generated idempotency key (dialog UUID, or `import:<hash>`). */
   idempotencyKey: string;
   supplier_name?: string | null;
+  supplier_id?: string | null;
   supplier_ref?: string | null;
+  invoice_number?: string | null;
+  source?: "manual" | "excel_import" | "repeat";
   items: PurchaseItemInput[];
   paidNow: number;
   note?: string | null;
@@ -62,7 +73,7 @@ export interface ExecutePurchaseResult {
  *  Single atomic transaction: idempotency + reads + validations + invoice
  *  doc + stock/avg updates + logs + ONE cash movement for paidNow. */
 export const usePurchasing = defineStore("purchasing", () => {
-  const { db, serverTimestamp, readFrom, getDoc } = useFirebase();
+  const { db, serverTimestamp, readFrom, getDoc, updateItem } = useFirebase();
   const authStore = useAuth();
 
   const by = () => (authStore.currentUserKey as string) || null;
@@ -124,7 +135,7 @@ export const usePurchasing = defineStore("purchasing", () => {
         }
         // 1. Fresh reads: existing products + cashbox.
         const existingIds = [...new Set(items.filter((i) => i.product_id).map((i) => i.product_id as string))];
-        const prods = new Map<string, { stock: number; cost: number; price: number; name: string }>();
+        const prods = new Map<string, { stock: number; cost: number; price: number; name: string; units: ProductUnit[]; baseUnitId: string | null; baseUnitName: string | null }>();
         for (const pid of existingIds) {
           const snap = await tx.get(doc(db, "products", pid));
           if (!snap.exists()) throw new Error(`VALIDATION:منتج غير موجود.`);
@@ -134,6 +145,9 @@ export const usePurchasing = defineStore("purchasing", () => {
             cost: toNum(d.cost_price),
             price: toNum(d.price),
             name: String(d.name || ""),
+            units: Array.isArray(d.units) ? d.units as ProductUnit[] : [],
+            baseUnitId: typeof d.base_unit_id === "string" ? d.base_unit_id : null,
+            baseUnitName: typeof d.base_unit_name === "string" ? d.base_unit_name : null,
           });
         }
         const cRef = doc(db, "cashbox", "current");
@@ -145,16 +159,25 @@ export const usePurchasing = defineStore("purchasing", () => {
         const now = serverTimestamp();
         const byWho = by();
         const builtItems: PurchaseInvoiceItem[] = [];
-        const productWrites: { id: string; isNew: boolean; name: string; stock: number; cost: number; price: number; movementId: string }[] = [];
+        const productWrites: { id: string; isNew: boolean; name: string; stock: number; cost: number; price: number; movementId: string; units?: ProductUnit[] }[] = [];
         const invLogs: Record<string, unknown>[] = [];
         let seq = 0;
         for (const it of items) {
           const qty = round2(toNum(it.quantity));
           const unitCost = round2(toNum(it.unit_cost));
+          const factor = Number(it.unit_factor ?? 1);
+          if (!(Number.isFinite(factor) && factor > 0)) throw new Error("VALIDATION:معامل تحويل الوحدة غير صالح.");
+          const baseQty = round2(qty * factor);
+          const baseCost = unitCost / factor;
           if (it.product_id) {
             const cur = prods.get(it.product_id)!;
+            const configuredUnit = cur.units.find((unit) => unit.id === it.unit_id);
+            if (cur.units.length && it.unit_id && (!configuredUnit || Math.abs(Number(configuredUnit.factor) - factor) > 1e-9)) {
+              throw new Error("VALIDATION:تغيرت وحدة المنتج — أعد مراجعة الفاتورة.");
+            }
+            if (!cur.units.length && Math.abs(factor - 1) > 1e-9) throw new Error("VALIDATION:المنتج القديم يدعم وحدة مخزون واحدة حتى يتم إعداد وحداته.");
             const movementId = doc(collection(db, "inventory_transactions")).id;
-            const applied = applyStockGroup(cur.stock, cur.cost, 0, [{ qty, cost: unitCost }]);
+            const applied = applyStockGroup(cur.stock, cur.cost, 0, [{ qty: baseQty, cost: baseCost }]);
             const newAvg = applied.avg ?? unitCost;
             // Pricing policy (§2.3): re-derive; enforce explicit approved value.
             const { rate, proposed } = proposedSellingPrice(cur.cost, cur.price, newAvg);
@@ -182,7 +205,7 @@ export const usePurchasing = defineStore("purchasing", () => {
                 if (proposed === null || rate === null) {
                   throw new Error("VALIDATION:لا توجد نسبة ربح قابلة للاشتقاق — أدخل سعر بيع يدويًا.");
                 }
-                finalPrice = proposed;
+                finalPrice = round2(it.pricing.price ?? proposed);
               } else {
                 finalPrice = round2(toNum(it.pricing.price));
               }
@@ -192,16 +215,28 @@ export const usePurchasing = defineStore("purchasing", () => {
               product_name: cur.name,
               quantity: qty,
               unit_cost: unitCost,
+              unit_id: it.unit_id ?? null,
+              unit_name: it.unit_name ?? configuredUnit?.name ?? cur.baseUnitName ?? "وحدة",
+              unit_factor: factor,
+              base_quantity: baseQty,
+              base_unit_cost: baseCost,
               line_total: round2(qty * unitCost),
             });
-            productWrites.push({ id: it.product_id, isNew: false, name: cur.name, stock: applied.stock, cost: round2(newAvg), price: finalPrice ?? cur.price, movementId });
+            const updatedUnits = finalPrice === null
+              ? cur.units
+              : cur.units.map((unit) => unit.id === (cur.baseUnitId || cur.units.find((entry) => entry.is_base)?.id) ? { ...unit, selling_price: finalPrice } : unit);
+            productWrites.push({ id: it.product_id, isNew: false, name: cur.name, stock: applied.stock, cost: round4(newAvg), price: finalPrice ?? cur.price, movementId, units: updatedUnits });
             invLogs.push({
               type: "purchase",
               product_id: it.product_id,
               product_name: cur.name,
               quantity: qty,
+              unit_id: it.unit_id ?? null,
+              unit_name: it.unit_name ?? cur.baseUnitName ?? "وحدة",
+              unit_factor: factor,
+              base_quantity: baseQty,
               direction: "in",
-              unit_cost: unitCost,
+              unit_cost: baseCost,
               purchase_invoice_id: invRef.id,
               note: input.note ?? null,
               seq: seq++,
@@ -222,17 +257,26 @@ export const usePurchasing = defineStore("purchasing", () => {
               product_name: String(it.name ?? "").trim(),
               quantity: qty,
               unit_cost: unitCost,
+              unit_id: it.unit_id ?? null,
+              unit_name: it.unit_name ?? it.base_unit_name ?? "وحدة",
+              unit_factor: factor,
+              base_quantity: baseQty,
+              base_unit_cost: baseCost,
               line_total: round2(qty * unitCost),
             });
-            productWrites.push({ id: productId, isNew: true, name: String(it.name ?? "").trim(), stock: qty, cost: unitCost, price, movementId });
+            productWrites.push({ id: productId, isNew: true, name: String(it.name ?? "").trim(), stock: baseQty, cost: round4(baseCost), price, movementId });
             (productWrites[productWrites.length - 1] as Record<string, unknown>).threshold = threshold;
             invLogs.push({
               type: "purchase",
               product_id: productId,
               product_name: String(it.name ?? "").trim(),
               quantity: qty,
+              unit_id: it.unit_id ?? null,
+              unit_name: it.unit_name ?? it.base_unit_name ?? "وحدة",
+              unit_factor: factor,
+              base_quantity: baseQty,
               direction: "in",
-              unit_cost: unitCost,
+              unit_cost: baseCost,
               purchase_invoice_id: invRef.id,
               note: input.note ?? null,
               seq: seq++,
@@ -246,7 +290,11 @@ export const usePurchasing = defineStore("purchasing", () => {
         // 3. Writes.
         tx.set(invRef, {
           supplier_name: input.supplier_name?.trim() || null,
+          supplier_id: input.supplier_id ?? null,
           supplier_ref: input.supplier_ref?.trim() || null,
+          invoice_number: input.invoice_number?.trim() || null,
+          source: input.source ?? "manual",
+          pinned: false,
           items: builtItems,
           product_ids: productWrites.map((product) => product.id),
           total_amount: total,
@@ -266,17 +314,26 @@ export const usePurchasing = defineStore("purchasing", () => {
               cost_price: w.cost,
               count: null,
               stock_quantity: w.stock,
+              base_unit_id: items.find((i) => !i.product_id && String(i.name ?? "").trim() === w.name)?.base_unit_id || "base",
+              base_unit_name: items.find((i) => !i.product_id && String(i.name ?? "").trim() === w.name)?.base_unit_name?.trim() || "وحدة",
+              units: (() => {
+                const item = items.find((i) => !i.product_id && String(i.name ?? "").trim() === w.name);
+                return item?.units?.length ? item.units : [{ id: item?.base_unit_id || "base", name: item?.base_unit_name || "وحدة", factor: 1, selling_price: w.price, is_base: true }];
+              })(),
               low_stock_threshold: (w as Record<string, unknown>).threshold ?? 5,
               last_inventory_transaction_id: w.movementId,
               last_inventory_transaction_ids: [w.movementId],
+              last_purchase_invoice_id: invRef.id,
             });
           } else {
             tx.update(doc(db, "products", w.id), {
               stock_quantity: w.stock,
               cost_price: w.cost,
               price: w.price,
+              ...("units" in w ? { units: w.units } : {}),
               last_inventory_transaction_id: w.movementId,
               last_inventory_transaction_ids: [w.movementId],
+              last_purchase_invoice_id: invRef.id,
             });
           }
         }
@@ -291,6 +348,9 @@ export const usePurchasing = defineStore("purchasing", () => {
             direction: "out",
             amount: paid,
             purchase_invoice_id: invRef.id,
+            reference_type: "supplier_invoice",
+            reference_id: invRef.id,
+            reference_label: `Supplier Invoice - ${input.supplier_name?.trim() || "Supplier"}`,
             note: input.note ?? null,
             created_by: byWho,
             created_at: now,
@@ -361,6 +421,9 @@ export const usePurchasing = defineStore("purchasing", () => {
         tx.update(invRef, { paid_amount: paid, remaining_amount: round2(remaining - pay), payment_ids: ids });
         tx.set(payRef, {
           purchase_invoice_id: invoiceId,
+          reference_type: "supplier_invoice",
+          reference_id: invoiceId,
+          reference_label: `Supplier Invoice Payment - ${String(d.supplier_name || "Supplier")}`,
           amount: pay,
           note: note ?? null,
           created_by: byWho,
@@ -371,6 +434,9 @@ export const usePurchasing = defineStore("purchasing", () => {
           direction: "out",
           amount: pay,
           purchase_invoice_id: invoiceId,
+          reference_type: "supplier_invoice",
+          reference_id: invoiceId,
+          reference_label: `Supplier Invoice Payment - ${String(d.supplier_name || "Supplier")}`,
           note: note ?? null,
           created_by: byWho,
           created_at: now,
@@ -413,5 +479,9 @@ export const usePurchasing = defineStore("purchasing", () => {
     return readFrom<SupplierPayment>("supplier_payments", { purchase_invoice_id: invoiceId });
   }
 
-  return { executePurchase, paySupplierInvoice, fetchPurchaseInvoices, fetchSupplierPayments };
+  async function setPurchaseInvoicePinned(invoiceId: string, pinned: boolean): Promise<void> {
+    await updateItem("purchase_invoices", invoiceId, { pinned });
+  }
+
+  return { executePurchase, paySupplierInvoice, fetchPurchaseInvoices, fetchSupplierPayments, setPurchaseInvoicePinned };
 });

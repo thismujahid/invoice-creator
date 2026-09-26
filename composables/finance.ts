@@ -1,10 +1,16 @@
-import type { Invoice, InvoiceProductLine, Product } from "~/types";
+import type { Invoice, InvoiceProductLine, Product, ProductUnit } from "~/types";
 
 /** Round to 2 decimals (money). Single source — use everywhere. */
 export function round2(n: unknown): number {
   const v = Number(n);
   if (!Number.isFinite(v)) return 0;
   return Math.round((v + Number.EPSILON) * 100) / 100;
+}
+
+export function round4(n: unknown): number {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return 0;
+  return Math.round((v + Number.EPSILON) * 10000) / 10000;
 }
 
 /** Lenient number coercion (mirrors legacy toNum). */
@@ -69,12 +75,29 @@ export function discountValueOf(inv: Pick<Invoice, "discount" | "discount_percen
 
 /** Gross realized profit of invoice lines: Σ(price − cost) × qty. */
 export function grossProfitOf(
-  lines: Pick<InvoiceProductLine, "product_price" | "product_cost_price" | "product_quantity">[] | null | undefined,
+  lines: Pick<InvoiceProductLine, "product_price" | "product_cost_price" | "product_quantity" | "base_quantity">[] | null | undefined,
 ): number {
   if (!Array.isArray(lines)) return 0;
   return round2(
-    lines.reduce((s, l) => s + (toNum(l.product_price) - toNum(l.product_cost_price)) * toNum(l.product_quantity), 0),
+    lines.reduce((s, l) => s + toNum(l.product_price) * toNum(l.product_quantity) - toNum(l.product_cost_price) * toNum(l.base_quantity ?? l.product_quantity), 0),
   );
+}
+
+export function unitsForProduct(product: Product): ProductUnit[] {
+  const configured = Array.isArray(product.units) ? product.units.filter((u) => u && Number.isFinite(Number(u.factor)) && Number(u.factor) > 0) : [];
+  if (configured.length) return configured;
+  const id = product.base_unit_id || "legacy-base";
+  return [{ id, name: product.base_unit_name || "وحدة", factor: 1, selling_price: product.price, is_base: true }];
+}
+
+export function lineUnitFactor(line: Pick<InvoiceProductLine, "unit_factor">): number {
+  const factor = Number(line.unit_factor);
+  return Number.isFinite(factor) && factor > 0 ? factor : 1;
+}
+
+export function lineBaseQuantity(line: Pick<InvoiceProductLine, "product_quantity" | "unit_factor" | "base_quantity">): number {
+  const snapshot = Number(line.base_quantity);
+  return round2(Number.isFinite(snapshot) && snapshot >= 0 ? snapshot : toNum(line.product_quantity) * lineUnitFactor(line));
 }
 
 /** Estimated collected (cash-in-hand) share of gross profit.
@@ -138,7 +161,7 @@ export function applyStockGroup(
   }
   let a = avg;
   if (costQty > 0) {
-    a = round2(movingAverageCost(s, a ?? 0, costQty, costVal / costQty));
+    a = round4(movingAverageCost(s, a ?? 0, costQty, costVal / costQty));
   }
   s = round2(s + costQty + plainQty);
   return { stock: s, avg: a };
@@ -162,12 +185,12 @@ export function proposedSellingPrice(
 /** Explicit selling-price decision for a purchase (S2/S5). */
 export type PriceDecision =
   | { mode: "keep" }
-  | { mode: "proposed"; approvedProposed: number }
+  | { mode: "proposed"; approvedProposed: number; price?: number }
   | { mode: "custom"; price: number; approvedProposed?: number | null };
 
 /** Firestore rule reads are limited per atomic request; keep headroom for
  *  both product→movement and movement→product links for every item. */
-export const MAX_PURCHASE_ITEMS = 8;
+export const MAX_PURCHASE_ITEMS = 100;
 export function estimatePurchaseOps(itemCount: number, newProductCount = 0): number {
   return 3 + itemCount * 3 + newProductCount;
 }
@@ -212,20 +235,23 @@ export interface RestoreGroup {
   product_name: string;
   qty: number;
   unit_cost: number;
+  unit_id?: string;
+  unit_name?: string;
+  unit_factor: number;
 }
 export function restoreGroupsForEdit(
-  oldLines: Pick<InvoiceProductLine, "product_id" | "product_name" | "product_quantity" | "product_cost_price">[],
-  newLines: Pick<InvoiceProductLine, "product_id" | "product_name" | "product_quantity">[],
+  oldLines: Pick<InvoiceProductLine, "product_id" | "product_name" | "product_quantity" | "product_cost_price" | "unit_id" | "unit_name" | "unit_factor" | "base_quantity">[],
+  newLines: Pick<InvoiceProductLine, "product_id" | "product_name" | "product_quantity" | "unit_factor" | "base_quantity">[],
 ): RestoreGroup[] {
   const oldTotal = new Map<string, number>();
   for (const l of oldLines) {
     if (!l.product_id) continue;
-    oldTotal.set(l.product_id, round2((oldTotal.get(l.product_id) ?? 0) + toNum(l.product_quantity)));
+    oldTotal.set(l.product_id, round2((oldTotal.get(l.product_id) ?? 0) + lineBaseQuantity(l)));
   }
   const newTotal = new Map<string, number>();
   for (const l of newLines) {
     if (!l.product_id) continue;
-    newTotal.set(l.product_id, round2((newTotal.get(l.product_id) ?? 0) + toNum(l.product_quantity)));
+    newTotal.set(l.product_id, round2((newTotal.get(l.product_id) ?? 0) + lineBaseQuantity(l)));
   }
   const out: RestoreGroup[] = [];
   for (const [pid, oldQty] of oldTotal) {
@@ -234,14 +260,17 @@ export function restoreGroupsForEdit(
     for (const l of oldLines) {
       if (need <= 0) break;
       if (l.product_id !== pid) continue;
-      const lineQty = toNum(l.product_quantity);
+      const lineQty = lineBaseQuantity(l);
       if (!(lineQty > 0)) continue;
       const take = Math.min(need, lineQty);
       out.push({
         product_id: pid,
         product_name: l.product_name,
         qty: round2(take),
-        unit_cost: round2(toNum(l.product_cost_price)),
+        unit_cost: round4(toNum(l.product_cost_price)),
+        unit_id: l.unit_id,
+        unit_name: l.unit_name,
+        unit_factor: lineUnitFactor(l),
       });
       need = round2(need - take);
     }
@@ -252,15 +281,15 @@ export function restoreGroupsForEdit(
 /** Diff old vs new invoice lines → per-product stock deltas.
  *  Positive delta = back to stock, negative = take from stock. */
 export function stockDeltaForEdit(
-  oldLines: Pick<InvoiceProductLine, "product_id" | "product_name" | "product_quantity" | "product_cost_price">[],
-  newLines: Pick<InvoiceProductLine, "product_id" | "product_name" | "product_quantity" | "product_cost_price">[],
+  oldLines: Pick<InvoiceProductLine, "product_id" | "product_name" | "product_quantity" | "product_cost_price" | "unit_factor" | "base_quantity">[],
+  newLines: Pick<InvoiceProductLine, "product_id" | "product_name" | "product_quantity" | "product_cost_price" | "unit_factor" | "base_quantity">[],
 ): StockDelta[] {
   const sum = (lines: typeof oldLines) => {
     const m = new Map<string, { qty: number; name: string; cost?: number }>();
     for (const l of lines) {
       if (!l.product_id) continue;
       const e = m.get(l.product_id) ?? { qty: 0, name: l.product_name, cost: toNum(l.product_cost_price) };
-      e.qty += toNum(l.product_quantity);
+      e.qty += lineBaseQuantity(l);
       m.set(l.product_id, e);
     }
     return m;
@@ -334,6 +363,7 @@ export function normalizeName(name: unknown): string {
 
 export const useFinance = () => ({
   round2,
+  round4,
   toNum,
   invoiceTotals,
   discountValueOf,
@@ -356,4 +386,7 @@ export const useFinance = () => ({
   normalizeName,
   lowStockThresholdOf,
   isLowStock,
+  lineBaseQuantity,
+  lineUnitFactor,
+  unitsForProduct,
 });

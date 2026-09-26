@@ -2,7 +2,7 @@ import * as XLSX from "xlsx/dist/xlsx.full.min.js";
 import { collection, doc, getDocs, limit as fsLimit, query, where } from "firebase/firestore";
 import type { Invoice } from "~/types";
 import { toDateSafe } from "~/types";
-import { applyStockGroup, restoreGroupsForEdit, round2, stockDeltaForEdit, toNum } from "~/composables/finance";
+import { applyStockGroup, lineBaseQuantity, restoreGroupsForEdit, round2, round4, stockDeltaForEdit, toNum } from "~/composables/finance";
 import { summarizeInvoice, writeDebtSummary } from "~/composables/debtSummaries";
 
 const STOCK_EPS = 1e-9;
@@ -50,13 +50,13 @@ export const useInvoicesStore = defineStore("invoices", () => {
           stocks.set(pid, {
             stock: toNum(snap.data().stock_quantity),
             name: String(snap.data().name || ""),
-            cost: round2(toNum(snap.data().cost_price)),
+            cost: round4(toNum(snap.data().cost_price)),
           });
         }
         const needByProduct = new Map<string, number>();
         for (const l of lines) {
           const pid = l.product_id as string;
-          needByProduct.set(pid, round2((needByProduct.get(pid) ?? 0) + toNum(l.product_quantity)));
+          needByProduct.set(pid, round2((needByProduct.get(pid) ?? 0) + lineBaseQuantity(l)));
         }
         for (const [pid, need] of needByProduct) {
           const st = stocks.get(pid)!;
@@ -80,6 +80,9 @@ export const useInvoicesStore = defineStore("invoices", () => {
         const pricedLines = lines.map((l) => ({
           ...l,
           product_cost_price: stocks.get(l.product_id as string)!.cost,
+          unit_factor: Number.isFinite(Number(l.unit_factor)) && Number(l.unit_factor) > 0 ? Number(l.unit_factor) : 1,
+          base_quantity: lineBaseQuantity(l),
+          base_cost_snapshot: stocks.get(l.product_id as string)!.cost,
         }));
         tx.set(invRef, {
           ...(payload as Record<string, unknown>),
@@ -113,8 +116,12 @@ export const useInvoicesStore = defineStore("invoices", () => {
             product_id: pid,
             product_name: l.product_name || stocks.get(pid)!.name,
             quantity: round2(toNum(l.product_quantity)),
+            unit_id: l.unit_id ?? null,
+            unit_name: l.unit_name ?? null,
+            unit_factor: l.unit_factor,
+            base_quantity: lineBaseQuantity(l),
             direction: "out",
-            unit_cost: round2(toNum(l.product_cost_price)),
+            unit_cost: round4(toNum(l.product_cost_price)),
             invoice_id: invoiceId,
             note: null,
             seq: saleSeq++,
@@ -138,6 +145,9 @@ export const useInvoicesStore = defineStore("invoices", () => {
             amount: paid,
             customer_id: (payload.customer_id as string) || null,
             invoice_id: invoiceId,
+            reference_type: "invoice",
+            reference_id: invoiceId,
+            reference_label: `Invoice - ${payload.customer_name || "Customer"}`,
             note: null,
             created_by: (authStore.currentUserKey as string) || null,
             created_at: now,
@@ -185,7 +195,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
           lineOccurrences.set(pid, occurrence + 1);
           const historicalLine = oldLinesByProduct.get(pid)?.[occurrence];
           return historicalLine
-            ? { ...line, product_cost_price: round2(toNum(historicalLine.product_cost_price)) }
+            ? { ...line, product_cost_price: round4(toNum(historicalLine.product_cost_price)), base_cost_snapshot: historicalLine.base_cost_snapshot ?? historicalLine.product_cost_price }
             : line;
         });
         const effectivePayload = { ...payload, products: effectiveLines };
@@ -256,6 +266,9 @@ export const useInvoicesStore = defineStore("invoices", () => {
             product_id: g.product_id,
             product_name: g.product_name,
             quantity: g.qty,
+            unit_name: "وحدة مخزون أساسية",
+            unit_factor: 1,
+            base_quantity: g.qty,
             direction: "in",
             unit_cost: g.unit_cost,
             invoice_id: id,
@@ -278,6 +291,9 @@ export const useInvoicesStore = defineStore("invoices", () => {
             product_id: d.product_id,
             product_name: d.product_name,
             quantity: Math.abs(d.delta),
+            unit_name: "وحدة مخزون أساسية",
+            unit_factor: 1,
+            base_quantity: Math.abs(d.delta),
             direction: "out",
             unit_cost: round2(d.unit_cost),
             invoice_id: id,
@@ -313,6 +329,9 @@ export const useInvoicesStore = defineStore("invoices", () => {
             direction: dir,
             amount: Math.abs(paidDelta),
             invoice_id: id,
+            reference_type: "invoice",
+            reference_id: id,
+            reference_label: `Invoice - ${effectivePayload.customer_name || "Customer"}`,
             note: "فرق تعديل فاتورة",
             created_by: by,
             created_at: now,
@@ -368,7 +387,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
           0
         );
         const totalCost = products.reduce(
-          (sum, p) => sum + (Number(p.product_cost_price) || 0) * (Number(p.product_quantity) || 0),
+          (sum, p) => sum + (Number(p.product_cost_price) || 0) * (Number(p.base_quantity ?? p.product_quantity) || 0),
           0
         );
         const discountValue = inv.discount_percentage
@@ -380,9 +399,10 @@ export const useInvoicesStore = defineStore("invoices", () => {
           .map((p, i) => {
             const name = p.product_name || "غير محدد";
             const qty = Number(p.product_quantity) || 0;
+            const baseQty = Number(p.base_quantity ?? qty) || 0;
             const price = Number(p.product_price) || 0;
             const cost = Number(p.product_cost_price) || 0;
-            return `(${i + 1}) ${name} - الكمية: ${qty} - السعر: ${price} - التكلفة: ${cost} - إجمالي التكلفة: ${qty * cost} - الإجمالي: ${qty * price}`;
+            return `(${i + 1}) ${name} - الكمية: ${qty} ${p.unit_name || ""} - السعر: ${price} - تكلفة الوحدة الأساسية: ${cost} - إجمالي التكلفة: ${baseQty * cost} - الإجمالي: ${qty * price}`;
           })
           .join("\n");
 

@@ -190,7 +190,7 @@
                     >{{ t.direction === "in" ? "وارد" : "صادر" }}</UBadge
                   >
                 </td>
-                <td class="p-2 text-xs text-gray-500">{{ refLabel(t) }}</td>
+                <td class="p-2 text-xs text-gray-500"><UButton v-if="canViewReference(t)" size="xs" color="neutral" variant="link" class="p-0" @click="viewReference(t)">{{ refLabel(t) }}</UButton><span v-else>{{ refLabel(t) }}</span></td>
               </tr>
             </tbody>
           </table>
@@ -211,7 +211,7 @@
                   {{ formatDateTime(t.created_at)
                   }}{{ t.note ? ` • ${t.note}` : "" }}
                 </div>
-                <div class="text-xs text-gray-400">{{ refLabel(t) }}</div>
+                <div class="text-xs text-gray-400"><UButton v-if="canViewReference(t)" size="xs" color="neutral" variant="link" class="p-0" @click="viewReference(t)">{{ refLabel(t) }}</UButton><span v-else>{{ refLabel(t) }}</span></div>
               </div>
               <div
                 class="shrink-0 font-bold"
@@ -585,6 +585,15 @@
         </div>
       </template>
     </UiAppDialog>
+    <UiAppDialog v-model:open="referenceOpen" :title="referenceTitle">
+      <USkeleton v-if="referenceLoading" class="h-24 w-full" />
+      <UAlert v-else-if="referenceError" color="error" variant="soft" :title="referenceError" />
+      <div v-else-if="referenceInvoice" class="space-y-3">
+        <p class="text-sm">{{ referenceInvoice.customer_name || 'فاتورة عميل' }} · {{ formatDateTime(referenceInvoice.date) }}</p>
+        <div class="max-h-[55vh] space-y-2 overflow-y-auto"><UCard v-for="(line, index) in referenceInvoice.products" :key="`${line.product_id}-${index}`" variant="outline"><div class="flex justify-between gap-2 text-sm"><b>{{ line.product_name }}</b><span>{{ line.product_quantity }} {{ line.unit_name || '' }}</span></div><div class="text-xs text-gray-500">{{ formatePrice(line.product_price) }} ج</div></UCard></div>
+      </div>
+      <div v-else-if="referencePurchase" class="space-y-2"><p class="font-semibold">{{ referencePurchase.supplier_name || 'فاتورة مورد' }}</p><UCard v-for="(line, index) in referencePurchase.items" :key="`${line.product_id}-${index}`" variant="outline"><div class="flex justify-between gap-2 text-sm"><b>{{ line.product_name }}</b><span>{{ line.quantity }} {{ line.unit_name || 'وحدة' }}</span></div></UCard></div>
+    </UiAppDialog>
   </div>
 </template>
 
@@ -595,6 +604,9 @@ import type { RepairRow } from "~/composables/useInventoryCostRepair";
 import { REPAIR_STATUS_LABELS } from "~/composables/useInventoryCostRepair";
 import { toDateSafe } from "~/types";
 import { collection, getCountFromServer } from "firebase/firestore";
+import { doc, getDoc } from "firebase/firestore";
+import type { Invoice } from "~/types";
+import type { CashTransaction, PurchaseInvoice } from "~/types/finance";
 
 definePageMeta({ title: "الخزنة" });
 const { formatePrice } = useHelpers();
@@ -612,6 +624,13 @@ const products = useProductsStore();
 const migration = useMigration();
 const repairApi = useInventoryCostRepair();
 const { notify } = useAppToast();
+const { db } = useFirebase();
+const referenceOpen = ref(false);
+const referenceLoading = ref(false);
+const referenceError = ref("");
+const referenceTitle = ref("");
+const referenceInvoice = ref<Invoice | null>(null);
+const referencePurchase = ref<PurchaseInvoice | null>(null);
 
 // Cost repair review state (§12).
 const repairOpen = ref(false);
@@ -929,16 +948,42 @@ function formatDateTime(v: unknown): string {
 }
 
 function refLabel(t: {
+  reference_label?: string | null;
   invoice_id?: string | null;
   return_id?: string | null;
   loan_id?: string | null;
   product_id?: string | null;
 }): string {
-  if (t.invoice_id) return `فاتورة #${String(t.invoice_id).slice(0, 6)}`;
-  if (t.return_id) return `مرتجع #${String(t.return_id).slice(0, 6)}`;
-  if (t.loan_id) return `سلفة #${String(t.loan_id).slice(0, 6)}`;
-  if (t.product_id) return `منتج #${String(t.product_id).slice(0, 6)}`;
+  if (t.reference_label) return t.reference_label;
+  if (t.invoice_id) return "Invoice - Customer";
+  if (t.return_id) return "Invoice Return";
+  if (t.loan_id) return "Customer Loan";
+  if (t.product_id) return "Product Adjustment";
   return "—";
+}
+
+function canViewReference(transaction: CashTransaction): boolean {
+  return !!((transaction.reference_type === "invoice" || transaction.invoice_id) && (transaction.reference_id || transaction.invoice_id)
+    || (transaction.reference_type === "supplier_invoice" || transaction.purchase_invoice_id) && (transaction.reference_id || transaction.purchase_invoice_id));
+}
+async function viewReference(transaction: CashTransaction): Promise<void> {
+  const isPurchase = transaction.reference_type === "supplier_invoice" || (!transaction.invoice_id && !!transaction.purchase_invoice_id);
+  const id = transaction.reference_id || (isPurchase ? transaction.purchase_invoice_id : transaction.invoice_id);
+  if (!id) return;
+  referenceOpen.value = true;
+  referenceLoading.value = true;
+  referenceError.value = "";
+  referenceInvoice.value = null;
+  referencePurchase.value = null;
+  referenceTitle.value = transaction.reference_label || (isPurchase ? "Supplier Invoice" : "Customer Invoice");
+  try {
+    const snap = await getDoc(doc(db, isPurchase ? "purchase_invoices" : "invoices", id));
+    if (!snap.exists()) { referenceError.value = "الفاتورة غير موجودة."; return; }
+    if (isPurchase) referencePurchase.value = { id: snap.id, ...(snap.data() as object) } as PurchaseInvoice;
+    else referenceInvoice.value = { id: snap.id, ...(snap.data() as object) } as Invoice;
+  } catch {
+    referenceError.value = "تعذر تحميل الفاتورة.";
+  } finally { referenceLoading.value = false; }
 }
 
 function closeForms(): void {

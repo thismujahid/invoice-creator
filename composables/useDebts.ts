@@ -191,6 +191,9 @@ export const useDebts = defineStore("debts", () => {
           amount,
           customer_id: input.customer_id,
           loan_id: loanId,
+          reference_type: "loan",
+          reference_id: loanId,
+          reference_label: `Customer Loan - ${input.customer_name}`,
           note: input.note ?? null,
           created_by: creator(),
           created_at: now,
@@ -207,25 +210,52 @@ export const useDebts = defineStore("debts", () => {
   /** Atomic debt payment with manual allocations (F18/F19/F29). */
   async function payDebts(input: {
     customer_id: string;
+    amount?: number;
     allocations: DebtPaymentAllocation[];
     note?: string | null;
   }): Promise<{ ok: true; id: string; total: number } | { ok: false; error: string }> {
-    const allocs = (input.allocations ?? [])
-      .map((a) => ({ ...a, amount: round2(toNum(a.amount)) }))
-      .filter((a) => a.reference_id && a.amount > 0 && (a.type === "invoice" || a.type === "loan"));
     if (!input.customer_id) return { ok: false, error: "حدد العميل أولاً." };
+    const rawAllocations = input.allocations ?? [];
+    if (!Array.isArray(rawAllocations) || rawAllocations.some((a) => !a.reference_id || !Number.isFinite(Number(a.amount)) || !(Number(a.amount) > 0) || (a.type !== "invoice" && a.type !== "loan"))) {
+      return { ok: false, error: "تأكد من صحة كل المبالغ والفواتير المحددة." };
+    }
+    const allocs = rawAllocations.map((a) => ({ ...a, amount: round2(Number(a.amount)) }));
     if (!allocs.length) return { ok: false, error: "حدد مبلغاً واحداً على الأقل أكبر من صفر." };
+    const allocationKeys = new Set<string>();
+    for (const a of allocs) {
+      const key = `${a.type}:${a.reference_id}`;
+      if (allocationKeys.has(key)) return { ok: false, error: "لا يمكن تكرار الفاتورة أو السلفة في دفعة واحدة." };
+      allocationKeys.add(key);
+    }
     const total = round2(allocs.reduce((s, a) => s + a.amount, 0));
+    if (input.amount !== undefined && (!Number.isFinite(Number(input.amount)) || Math.abs(total - round2(input.amount)) > 0.005)) {
+      return { ok: false, error: "مجموع التوزيعات لا يساوي مبلغ الدفعة." };
+    }
     try {
       let payId = "";
       await runTx(async (tx) => {
         // 1. Read + validate every obligation against its CURRENT remaining.
         const states: { a: DebtPaymentAllocation; remaining: number; paid: number; kind: "invoice" | "loan"; doc: Record<string, unknown> }[] = [];
+        let legacyCustomer: Record<string, unknown> | null = null;
         for (const a of allocs) {
           if (a.type === "invoice") {
             const snap = await tx.get(doc(db, "invoices", a.reference_id));
             if (!snap.exists()) throw new Error("VALIDATION:إحدى الفواتير غير موجودة.");
             const d = snap.data() as Record<string, unknown>;
+            if (typeof d.customer_id === "string" && d.customer_id !== input.customer_id) {
+              throw new Error("VALIDATION:الفاتورة المحددة لا تخص هذا العميل.");
+            }
+            if (!d.customer_id) {
+              if (!legacyCustomer) {
+                const customerSnap = await tx.get(doc(db, "customers", input.customer_id));
+                if (customerSnap.exists()) legacyCustomer = customerSnap.data() as Record<string, unknown>;
+              }
+              const legacyMatches = !!legacyCustomer
+                && normalizeName(d.customer_name) === normalizeName(legacyCustomer.name)
+                && !!normalizePhone(d.customer_phone)
+                && normalizePhone(d.customer_phone) === normalizePhone(legacyCustomer.phone);
+              if (!legacyMatches) throw new Error("VALIDATION:تعذر التحقق من ملكية الفاتورة القديمة لهذا العميل.");
+            }
             const rem = remainingOf(d);
             if (a.amount - rem > 1e-9) throw new Error("VALIDATION:مبلغ مخصص يتجاوز المتبقي على إحدى الفواتير.");
             states.push({ a, remaining: rem, paid: round2(toNum(d.paid_amount)), kind: "invoice", doc: d });
@@ -233,6 +263,7 @@ export const useDebts = defineStore("debts", () => {
             const snap = await tx.get(doc(db, "customer_loans", a.reference_id));
             if (!snap.exists()) throw new Error("VALIDATION:إحدى السلف غير موجودة.");
             const d = snap.data() as Record<string, unknown>;
+            if (d.customer_id !== input.customer_id) throw new Error("VALIDATION:السلفة المحددة لا تخص هذا العميل.");
             const rem = round2(toNum(d.remaining));
             if (a.amount - rem > 1e-9) throw new Error("VALIDATION:مبلغ مخصص يتجاوز المتبقي على إحدى السلف.");
             states.push({ a, remaining: rem, paid: round2(toNum(d.paid_amount)), kind: "loan", doc: d });
@@ -274,6 +305,8 @@ export const useDebts = defineStore("debts", () => {
               type: "invoice_payment", direction: "in", amount: s.a.amount,
               customer_id: input.customer_id, invoice_id: s.a.reference_id,
               debt_payment_id: payId, note: input.note ?? null, created_by: by, created_at: now,
+              reference_type: "invoice", reference_id: s.a.reference_id,
+              reference_label: `Debt Payment - ${String(s.doc.customer_name || "Customer")}`,
             });
           } else {
             tx.update(doc(db, "customer_loans", s.a.reference_id), {
@@ -283,6 +316,8 @@ export const useDebts = defineStore("debts", () => {
               type: "loan_payment", direction: "in", amount: s.a.amount,
               customer_id: input.customer_id, loan_id: s.a.reference_id,
               debt_payment_id: payId, note: input.note ?? null, created_by: by, created_at: now,
+              reference_type: "loan", reference_id: s.a.reference_id,
+              reference_label: `Loan Payment - ${String(s.doc.customer_name || "Customer")}`,
             });
           }
         }
