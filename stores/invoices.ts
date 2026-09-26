@@ -2,7 +2,7 @@ import * as XLSX from "xlsx/dist/xlsx.full.min.js";
 import { collection, doc, getDocs, limit as fsLimit, query, where } from "firebase/firestore";
 import type { Invoice } from "~/types";
 import { toDateSafe } from "~/types";
-import { round2, movingAverageCost, stockDeltaForEdit, toNum } from "~/composables/finance";
+import { applyStockGroup, restoreGroupsForEdit, round2, stockDeltaForEdit, toNum } from "~/composables/finance";
 import { summarizeInvoice, writeDebtSummary } from "~/composables/debtSummaries";
 
 const STOCK_EPS = 1e-9;
@@ -32,20 +32,26 @@ export const useInvoicesStore = defineStore("invoices", () => {
   async function createInvoiceWithAccounting(
     payload: Omit<Invoice, "id">,
   ): Promise<{ ok: true; id: string; cashSkipped: boolean } | { ok: false; error: string }> {
-    const lines = (payload.products ?? []).filter((l) => l.product_id);
+    const lines = (payload.products ?? []).filter((l) => l.product_id && toNum(l.product_quantity) > 0);
     if (!lines.length) return { ok: false, error: "لا يمكن حفظ فاتورة فارغة." };
     const paid = round2(toNum(payload.paid_amount));
     try {
       let invoiceId = "";
       let cashSkipped = false;
       await runTx(async (tx) => {
-        // 1. Read stock + validate aggregated need per product.
+        // 1. Read stock + CURRENT cost + validate aggregated need per product.
+        // Sale-line costs are snapshotted from these txn reads (never the
+        // possibly-stale form), so later cost changes can't rewrite history.
         const ids = [...new Set(lines.map((l) => l.product_id as string))];
-        const stocks = new Map<string, { stock: number; name: string }>();
+        const stocks = new Map<string, { stock: number; name: string; cost: number }>();
         for (const pid of ids) {
           const snap = await tx.get(doc(db, "products", pid));
           if (!snap.exists()) throw new Error("VALIDATION:منتج غير موجود بالمخزون.");
-          stocks.set(pid, { stock: toNum(snap.data().stock_quantity), name: String(snap.data().name || "") });
+          stocks.set(pid, {
+            stock: toNum(snap.data().stock_quantity),
+            name: String(snap.data().name || ""),
+            cost: round2(toNum(snap.data().cost_price)),
+          });
         }
         const needByProduct = new Map<string, number>();
         for (const l of lines) {
@@ -66,12 +72,18 @@ export const useInvoicesStore = defineStore("invoices", () => {
         const cashBal = cashReady ? round2(Number(cashSnap.data()?.balance || 0)) : 0;
         cashSkipped = paid > 0 && !cashReady;
         // 3. Invoice doc (id known upfront for log references).
+        // Line costs are snapshotted from the txn-read products above —
+        // form costs may predate a newer purchase and must not leak in.
         const invRef = doc(collection(db, "invoices"));
         invoiceId = invRef.id;
         const now = serverTimestamp();
+        const pricedLines = lines.map((l) => ({
+          ...l,
+          product_cost_price: stocks.get(l.product_id as string)!.cost,
+        }));
         tx.set(invRef, {
           ...(payload as Record<string, unknown>),
-          products: lines,
+          products: pricedLines,
           inventory_applied: true,
           cashbox_applied: !(paid > 0 && !cashReady),
         });
@@ -85,21 +97,36 @@ export const useInvoicesStore = defineStore("invoices", () => {
           ...summarizeInvoice(payload as Invoice),
         });
         // 4. Stock (final balances from step 1) + per-line inventory logs.
-        for (const l of lines) {
+        // Logs carry the same txn-fresh snapshot cost as the saved lines.
+        let saleSeq = 0;
+        const saleMovements = pricedLines.map(() => doc(collection(db, "inventory_transactions")));
+        const lastSaleMovementByProduct = new Map<string, string>();
+        const saleMovementIdsByProduct = new Map<string, string[]>();
+        for (const [index, l] of pricedLines.entries()) {
           const pid = l.product_id as string;
-          const st = stocks.get(pid)!;
-          tx.update(doc(db, "products", pid), { stock_quantity: st.stock });
-          tx.set(doc(collection(db, "inventory_transactions")), {
+          lastSaleMovementByProduct.set(pid, saleMovements[index]!.id);
+          const movementIds = saleMovementIdsByProduct.get(pid) ?? [];
+          movementIds.push(saleMovements[index]!.id);
+          saleMovementIdsByProduct.set(pid, movementIds);
+          tx.set(saleMovements[index]!, {
             type: "sale",
             product_id: pid,
-            product_name: l.product_name || st.name,
+            product_name: l.product_name || stocks.get(pid)!.name,
             quantity: round2(toNum(l.product_quantity)),
             direction: "out",
             unit_cost: round2(toNum(l.product_cost_price)),
             invoice_id: invoiceId,
             note: null,
+            seq: saleSeq++,
             created_by: (authStore.currentUserKey as string) || null,
             created_at: now,
+          });
+        }
+        for (const [pid, st] of stocks) {
+          tx.update(doc(db, "products", pid), {
+            stock_quantity: st.stock,
+            last_inventory_transaction_id: lastSaleMovementByProduct.get(pid),
+            last_inventory_transaction_ids: saleMovementIdsByProduct.get(pid) ?? [],
           });
         }
         // 5. Cash (paid only, never zero-value txns).
@@ -133,7 +160,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
     id: string,
     payload: Omit<Invoice, "id">,
   ): Promise<{ ok: true; cashSkipped: boolean } | { ok: false; error: string }> {
-    const lines = (payload.products ?? []).filter((l) => l.product_id);
+    const lines = (payload.products ?? []).filter((l) => l.product_id && toNum(l.product_quantity) > 0);
     if (!lines.length) return { ok: false, error: "لا يمكن حفظ فاتورة فارغة." };
     try {
       let cashSkipped = false;
@@ -144,22 +171,47 @@ export const useInvoicesStore = defineStore("invoices", () => {
         if (!invSnap.exists()) throw new Error("VALIDATION:الفاتورة غير موجودة.");
         const orig = invSnap.data() as Record<string, unknown>;
         const oldLines = (Array.isArray(orig.products) ? orig.products : []) as Invoice["products"];
+        const oldLinesByProduct = new Map<string, typeof oldLines>();
+        for (const line of oldLines) {
+          if (!line.product_id) continue;
+          const productLines = oldLinesByProduct.get(line.product_id) ?? [];
+          productLines.push(line);
+          oldLinesByProduct.set(line.product_id, productLines);
+        }
+        const lineOccurrences = new Map<string, number>();
+        const effectiveLines = lines.map((line) => {
+          const pid = line.product_id as string;
+          const occurrence = lineOccurrences.get(pid) ?? 0;
+          lineOccurrences.set(pid, occurrence + 1);
+          const historicalLine = oldLinesByProduct.get(pid)?.[occurrence];
+          return historicalLine
+            ? { ...line, product_cost_price: round2(toNum(historicalLine.product_cost_price)) }
+            : line;
+        });
+        const effectivePayload = { ...payload, products: effectiveLines };
         const oldPaid = round2(toNum(orig.paid_amount));
         const newPaid = round2(toNum(payload.paid_amount));
         const paidDelta = round2(newPaid - oldPaid);
-        // 2. Stock deltas (positive = back to stock).
-        const deltas = stockDeltaForEdit(oldLines, lines);
+        // 2. Takes aggregated per product; restores grouped per
+        // (product, historical cost) — never collapsed to one cost.
+        const deltas = stockDeltaForEdit(oldLines, effectiveLines);
+        const takes = deltas.filter((d) => d.delta < 0);
+        const restores = restoreGroupsForEdit(oldLines, effectiveLines);
+        const pids = [...new Set([...takes.map((d) => d.product_id), ...restores.map((g) => g.product_id)])];
         const stocks = new Map<string, { stock: number; cost: number }>();
-        for (const d of deltas) {
-          const pRef = doc(db, "products", d.product_id);
+        for (const pid of pids) {
+          const pRef = doc(db, "products", pid);
           const pSnap = await tx.get(pRef);
-          if (!pSnap.exists()) throw new Error(`VALIDATION:المنتج ${d.product_name} غير موجود بالمخزون.`);
-          stocks.set(d.product_id, {
+          const pname = takes.find((d) => d.product_id === pid)?.product_name
+            ?? restores.find((g) => g.product_id === pid)?.product_name
+            ?? "";
+          if (!pSnap.exists()) throw new Error(`VALIDATION:المنتج ${pname} غير موجود بالمخزون.`);
+          stocks.set(pid, {
             stock: toNum(pSnap.data().stock_quantity),
             cost: toNum(pSnap.data().cost_price),
           });
         }
-        for (const d of deltas) {
+        for (const d of takes) {
           if (-d.delta - (stocks.get(d.product_id)?.stock ?? 0) > STOCK_EPS) {
             throw new Error(`VALIDATION:الكمية المطلوبة تتجاوز المخزون المتاح لمنتج ${d.product_name}.`);
           }
@@ -174,44 +226,83 @@ export const useInvoicesStore = defineStore("invoices", () => {
         const by = (authStore.currentUserKey as string) || null;
         // 4. Invoice doc.
         tx.update(invRef, {
-          ...(payload as Record<string, unknown>),
-          products: lines,
+          ...(effectivePayload as Record<string, unknown>),
+          products: effectiveLines,
           inventory_applied: true,
           cashbox_applied: !(paidDelta !== 0 && !cashReady),
         });
         writeDebtSummary(tx, db, {
           invoice_id: id,
-          customer_id: (payload.customer_id as string) || null,
-          customer_name: payload.customer_name ?? null,
-          customer_phone: (payload.customer_phone as string | number | null) ?? null,
-          date: (payload.date as unknown) ?? null,
-          ...summarizeInvoice(payload as Invoice),
+          customer_id: (effectivePayload.customer_id as string) || null,
+          customer_name: effectivePayload.customer_name ?? null,
+          customer_phone: (effectivePayload.customer_phone as string | number | null) ?? null,
+          date: (effectivePayload.date as unknown) ?? null,
+          ...summarizeInvoice(effectivePayload as Invoice),
         });
-        // 5. Stock + logs. Restored units re-enter at their historical cost
-        // via the moving average; taken units leave cost untouched.
-        for (const d of deltas) {
-          const st = stocks.get(d.product_id)!;
-          const patch: Record<string, unknown> = {
-            stock_quantity: round2(st.stock + d.delta),
-          };
-          if (d.delta > 0) {
-            patch.cost_price = round2(
-              movingAverageCost(st.stock, st.cost, d.delta, d.unit_cost),
-            );
+        // 5. Stock + logs. Takes leave cost untouched; each restore group
+        // re-enters at its own historical cost with its own log. Product
+        // updates go through the canonical applyStockGroup (mirrors replay).
+        let seq = 0;
+        const lastMovementByProduct = new Map<string, string>();
+        const movementIdsByProduct = new Map<string, string[]>();
+        for (const g of restores) {
+          const movementRef = doc(collection(db, "inventory_transactions"));
+          lastMovementByProduct.set(g.product_id, movementRef.id);
+          const movementIds = movementIdsByProduct.get(g.product_id) ?? [];
+          movementIds.push(movementRef.id);
+          movementIdsByProduct.set(g.product_id, movementIds);
+          tx.set(movementRef, {
+            type: "sale",
+            product_id: g.product_id,
+            product_name: g.product_name,
+            quantity: g.qty,
+            direction: "in",
+            unit_cost: g.unit_cost,
+            invoice_id: id,
+            note: "تعديل فاتورة",
+            seq: seq++,
+            created_by: by,
+            created_at: now,
+          });
+        }
+        for (const d of takes) {
+          const movementRef = doc(collection(db, "inventory_transactions"));
+          if (!lastMovementByProduct.has(d.product_id)) {
+            lastMovementByProduct.set(d.product_id, movementRef.id);
           }
-          tx.update(doc(db, "products", d.product_id), patch);
-          tx.set(doc(collection(db, "inventory_transactions")), {
+          const movementIds = movementIdsByProduct.get(d.product_id) ?? [];
+          movementIds.push(movementRef.id);
+          movementIdsByProduct.set(d.product_id, movementIds);
+          tx.set(movementRef, {
             type: "sale",
             product_id: d.product_id,
             product_name: d.product_name,
             quantity: Math.abs(d.delta),
-            direction: d.delta > 0 ? "in" : "out",
+            direction: "out",
             unit_cost: round2(d.unit_cost),
             invoice_id: id,
             note: "تعديل فاتورة",
+            seq: seq++,
             created_by: by,
             created_at: now,
           });
+        }
+        for (const pid of pids) {
+          const st = stocks.get(pid)!;
+          const takeQty = round2(-(takes.find((d) => d.product_id === pid)?.delta ?? 0));
+          const inflows = restores
+            .filter((g) => g.product_id === pid)
+            .map((g) => ({ qty: g.qty, cost: g.unit_cost as number | null }));
+          const r = applyStockGroup(st.stock, st.cost, takeQty, inflows);
+          const patch: Record<string, unknown> = {
+            stock_quantity: r.stock,
+            last_inventory_transaction_id: lastMovementByProduct.get(pid),
+            last_inventory_transaction_ids: movementIdsByProduct.get(pid) ?? [],
+          };
+          if (inflows.length > 0 && r.avg !== undefined) {
+            patch.cost_price = r.avg;
+          }
+          tx.update(doc(db, "products", pid), patch);
         }
         // 6. Cash delta (corrective dir + matching log).
         if (paidDelta !== 0 && cashReady) {

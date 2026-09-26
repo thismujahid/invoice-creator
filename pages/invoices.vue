@@ -550,6 +550,7 @@ const { formatePrice, calcTotal } = useHelpers();
 const { round2, lineRefundValue, netRatioOf, splitRefund, outstandingDebtOf } = useFinance();
 const invoicesStore = useInvoicesStore();
 const returnsApi = useInvoiceReturns();
+const productsStore = useProductsStore();
 const debtsApi = useDebts();
 const { notify: notifyToast } = useAppToast();
 // HOME delta: debts/profit math (preserved from home branch).
@@ -766,16 +767,27 @@ async function openReturn(inv: Invoice): Promise<void> {
   const prev = await returnsApi.fetchReturnsForInvoice(inv.id as string);
   returnRows.value = returnsApi.buildReturnRows(inv, prev);
 }
+/** Exact preview refund for a cost-group row: spread over its own lines. */
+function rowRefundValue(r: ReturnRow, ratio: number): number {
+  let need = Math.min(round2(toNum(r.qty)), r.maxQty);
+  let total = 0;
+  for (const ln of r.lines) {
+    if (need <= 0) break;
+    const take = Math.min(need, ln.qty - ln.returnedQty);
+    if (take <= 0) continue;
+    need = round2(need - take);
+    total = round2(total + lineRefundValue(ln.price, take, ratio));
+  }
+  return total;
+}
 function previewRefund(r: ReturnRow): number {
   if (!returnInvoice.value) return 0;
-  return lineRefundValue(r.unit_price, Math.min(toNum(r.qty), r.maxQty), netRatioOf(returnInvoice.value));
+  return rowRefundValue(r, netRatioOf(returnInvoice.value));
 }
 const returnPreviewSplit = computed(() => {
   if (!returnInvoice.value) return { debtReduction: 0, cashRefund: 0, total: 0 };
   const ratio = netRatioOf(returnInvoice.value);
-  const total = round2(
-    returnRows.value.reduce((s, r) => s + lineRefundValue(r.unit_price, Math.min(toNum(r.qty), r.maxQty), ratio), 0),
-  );
+  const total = round2(returnRows.value.reduce((s, r) => s + rowRefundValue(r, ratio), 0));
   const split = splitRefund(total, outstandingDebtOf(returnInvoice.value));
   return { ...split, total };
 });
@@ -788,7 +800,7 @@ async function submitReturn(): Promise<void> {
     const res = await returnsApi.createReturn(
       returnInvoice.value,
       returnRows.value
-        .map((r) => ({ product_id: r.product_id, quantity: Math.min(round2(toNum(r.qty)), r.maxQty) }))
+        .map((r) => ({ rowKey: r.key, quantity: Math.min(round2(toNum(r.qty)), r.maxQty) }))
         .filter((i) => i.quantity > 0),
       returnNote.value.trim() || null,
     );
@@ -801,7 +813,7 @@ async function submitReturn(): Promise<void> {
       "success",
     );
     returnInvoice.value = null;
-    await Promise.all([loadInvoices(), loadReturnsMap()]);
+    await Promise.all([loadInvoices(), loadReturnsMap(), productsStore.fetchProducts()]);
   } finally {
     returnBusy.value = false;
   }

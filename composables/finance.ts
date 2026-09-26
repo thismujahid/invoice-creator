@@ -110,6 +110,68 @@ export function movingAverageCost(
   return (cur * toNum(currentCost) + add * toNum(addedCost)) / (cur + add);
 }
 
+/** One atomic batch applied to a single product. THE canonical stock math —
+ *  used by runtime writers AND by replay, so both produce bit-identical
+ *  results. Takes leave cost untouched; cost-bearing inflows blend via the
+ *  moving average using one combined rounding. */
+export interface StockGroupEffect {
+  takeQty: number;
+  inflows: { qty: number; cost: number | null }[];
+}
+export function applyStockGroup(
+  stock: number,
+  avg: number | undefined,
+  takeQty: number,
+  inflows: { qty: number; cost: number | null }[],
+): { stock: number; avg: number | undefined } {
+  let s = round2(stock - takeQty);
+  let costQty = 0;
+  let costVal = 0;
+  let plainQty = 0;
+  for (const f of inflows) {
+    if (f.cost === null || f.cost === undefined) {
+      plainQty = round2(plainQty + f.qty);
+    } else {
+      costQty = round2(costQty + f.qty);
+      costVal += f.qty * f.cost;
+    }
+  }
+  let a = avg;
+  if (costQty > 0) {
+    a = round2(movingAverageCost(s, a ?? 0, costQty, costVal / costQty));
+  }
+  s = round2(s + costQty + plainQty);
+  return { stock: s, avg: a };
+}
+
+/** Selling-price policy after a purchase (S2): keep the old markup rate
+ *  over the new average. Returns nulls when no rate is derivable. */
+export function proposedSellingPrice(
+  oldCost: unknown,
+  oldPrice: unknown,
+  newAvg: unknown,
+): { rate: number | null; proposed: number | null } {
+  const oc = toNum(oldCost);
+  const op = toNum(oldPrice);
+  const na = toNum(newAvg);
+  if (!(oc > 0) || !(op >= 0)) return { rate: null, proposed: null };
+  const rate = (op - oc) / oc;
+  return { rate, proposed: round2(na * (1 + rate)) };
+}
+
+/** Explicit selling-price decision for a purchase (S2/S5). */
+export type PriceDecision =
+  | { mode: "keep" }
+  | { mode: "proposed"; approvedProposed: number }
+  | { mode: "custom"; price: number; approvedProposed?: number | null };
+
+/** Firestore rule reads are limited per atomic request; keep headroom for
+ *  both product→movement and movement→product links for every item. */
+export const MAX_PURCHASE_ITEMS = 8;
+export function estimatePurchaseOps(itemCount: number, newProductCount = 0): number {
+  return 3 + itemCount * 3 + newProductCount;
+}
+
 /** Net ratio used to allocate discounts proportionally on returns. */
 export function netRatioOf(inv: Parameters<typeof invoiceTotals>[0]): number {
   const t = invoiceTotals(inv);
@@ -140,6 +202,51 @@ export interface StockDelta {
   product_name: string;
   delta: number; // +in / -out
   unit_cost?: number;
+}
+
+/** Restored units grouped by (product, historical cost), allocated from the
+ *  OLD saved lines in order. Each group re-enters stock at its own cost —
+ *  lines are never collapsed into a single cost. */
+export interface RestoreGroup {
+  product_id: string;
+  product_name: string;
+  qty: number;
+  unit_cost: number;
+}
+export function restoreGroupsForEdit(
+  oldLines: Pick<InvoiceProductLine, "product_id" | "product_name" | "product_quantity" | "product_cost_price">[],
+  newLines: Pick<InvoiceProductLine, "product_id" | "product_name" | "product_quantity">[],
+): RestoreGroup[] {
+  const oldTotal = new Map<string, number>();
+  for (const l of oldLines) {
+    if (!l.product_id) continue;
+    oldTotal.set(l.product_id, round2((oldTotal.get(l.product_id) ?? 0) + toNum(l.product_quantity)));
+  }
+  const newTotal = new Map<string, number>();
+  for (const l of newLines) {
+    if (!l.product_id) continue;
+    newTotal.set(l.product_id, round2((newTotal.get(l.product_id) ?? 0) + toNum(l.product_quantity)));
+  }
+  const out: RestoreGroup[] = [];
+  for (const [pid, oldQty] of oldTotal) {
+    let need = round2(oldQty - (newTotal.get(pid) ?? 0));
+    if (!(need > 0)) continue;
+    for (const l of oldLines) {
+      if (need <= 0) break;
+      if (l.product_id !== pid) continue;
+      const lineQty = toNum(l.product_quantity);
+      if (!(lineQty > 0)) continue;
+      const take = Math.min(need, lineQty);
+      out.push({
+        product_id: pid,
+        product_name: l.product_name,
+        qty: round2(take),
+        unit_cost: round2(toNum(l.product_cost_price)),
+      });
+      need = round2(need - take);
+    }
+  }
+  return out;
 }
 
 /** Diff old vs new invoice lines → per-product stock deltas.
@@ -204,6 +311,19 @@ export function normalizePhone(phone: unknown): string {
   return String(phone ?? "").replace(/\D/g, "");
 }
 
+/** Low-stock threshold with default 5 for legacy products (S3). */
+export function lowStockThresholdOf(p: Pick<Product, "low_stock_threshold">): number {
+  const v = (p as { low_stock_threshold?: unknown }).low_stock_threshold;
+  if (v === null || v === undefined || v === "") return 5;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : 5;
+}
+
+/** Unified shortage rule (S3): stock < threshold. Never uses `count`. */
+export function isLowStock(p: Pick<Product, "stock_quantity" | "low_stock_threshold">): boolean {
+  return toNum(p.stock_quantity) - lowStockThresholdOf(p) < -1e-9;
+}
+
 /** Normalize a customer name: strip diacritics, collapse whitespace, trim. */
 export function normalizeName(name: unknown): string {
   return String(name ?? "")
@@ -220,13 +340,20 @@ export const useFinance = () => ({
   outstandingDebtOf,
   netRatioOf,
   movingAverageCost,
+  applyStockGroup,
   grossProfitOf,
   collectedProfitOf,
   lineRefundValue,
   splitRefund,
   stockDeltaForEdit,
+  restoreGroupsForEdit,
   loanStatusOf,
+  proposedSellingPrice,
+  MAX_PURCHASE_ITEMS,
+  estimatePurchaseOps,
   inventoryAggregates,
   normalizePhone,
   normalizeName,
+  lowStockThresholdOf,
+  isLowStock,
 });

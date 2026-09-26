@@ -29,6 +29,9 @@
       <UFormField label="العدد" :error="errors.count">
         <UInputNumber :model-value="numOrUndef(productForm.count)" placeholder="العدد" :min="0" size="lg" class="w-full" :disabled="saving" @update:model-value="(v) => (productForm.count = v ?? null)" />
       </UFormField>
+      <UFormField label="مؤشر نقص المخزون" :error="errors.low_stock_threshold" hint="يظهر تنبيه عندما يقل المخزون عن هذا الرقم (الافتراضي 5)">
+        <UInputNumber :model-value="productForm.low_stock_threshold ?? 5" placeholder="5" :min="0" :step="0.5" size="lg" class="w-full" :disabled="saving" @update:model-value="(v) => (productForm.low_stock_threshold = v ?? null)" />
+      </UFormField>
       <UAlert v-if="submitError" color="error" variant="soft" :title="submitError" />
     </div>
     <template #footer>
@@ -56,10 +59,10 @@ const productsStore = useProductsStore();
 const auth = useAuth();
 const { notify } = useAppToast();
 const { formatePrice } = useHelpers();
-const productForm = ref<Product>({ name: "", price: null, cost_price: null, count: null });
+const productForm = ref<Product>({ name: "", price: null, cost_price: null, count: null, low_stock_threshold: 5 });
 const saving = ref(false);
 const submitError = ref("");
-const errors = ref<{ name?: string; price?: string; cost_price?: string; count?: string }>({});
+const errors = ref<{ name?: string; price?: string; cost_price?: string; count?: string; low_stock_threshold?: string }>({});
 
 const internalOpen = ref(false);
 const open = computed({
@@ -117,6 +120,13 @@ function validate(): boolean {
   }
   const countNeg = positiveNumberRule(productForm.value.count);
   if (countNeg !== true) e.count = countNeg;
+  const thr: unknown = productForm.value.low_stock_threshold;
+  if (thr !== null && thr !== undefined && thr !== "") {
+    const thrNum = Number(thr);
+    if (!Number.isFinite(thrNum) || thrNum < 0) {
+      e.low_stock_threshold = "مؤشر النقص يجب أن يكون صفرًا أو رقمًا موجبًا.";
+    }
+  }
   errors.value = e;
   return Object.keys(e).length === 0;
 }
@@ -136,14 +146,15 @@ async function saveProduct() {
       // Edit mode never writes cost_price (§7: system-managed).
       const { cost_price: _locked, ...editData } = productForm.value;
       void _locked;
+      editData.low_stock_threshold = productForm.value.low_stock_threshold ?? 5;
       await productsStore.updateProduct(productForm.value.id, { ...editData });
     } else {
-      const created = (await productsStore.addProduct({ ...productForm.value })) as { id?: string } | null;
+      const created = (await productsStore.addProduct({ ...productForm.value, low_stock_threshold: productForm.value.low_stock_threshold ?? 5 })) as { id?: string } | null;
       id = created?.id;
     }
     await props.refresher();
     emit("done", productsStore.list.find((prod) => prod.id === id));
-    productForm.value = { name: "", price: null, cost_price: null, count: null };
+    productForm.value = { name: "", price: null, cost_price: null, count: null, low_stock_threshold: 5 };
     closeDialog();
   } catch (err) {
     submitError.value = String(err);
@@ -155,7 +166,7 @@ async function saveProduct() {
 watch(
   () => props.edit,
   () => {
-    productForm.value = props.edit ? { ...props.edit } : { name: "", price: null, cost_price: null, count: null };
+  productForm.value = props.edit ? { low_stock_threshold: 5, ...props.edit } : { name: "", price: null, cost_price: null, count: null, low_stock_threshold: 5 };
   },
   { immediate: true }
 );

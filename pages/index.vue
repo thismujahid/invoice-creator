@@ -35,6 +35,15 @@
             title="برجاء تأكيد هويتك لتتمكن من عرض القيمة"
           />
         </div>
+        <UAlert
+          v-if="lowStockCount > 0"
+          color="warning"
+          variant="soft"
+          icon="i-lucide-triangle-alert"
+          :title="`تنبيه: ${lowStockCount} منتجات قليلة الكمية بالمخزون`"
+          :actions="[{ label: 'عرضها في المنتجات', color: 'warning', variant: 'soft', onClick: () => navigateTo('/products') }]"
+          class="mb-3"
+        />
 
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <UFormField label="اسم العميل" class="min-w-0">
@@ -492,7 +501,9 @@ import { toDateSafe } from "~/types";
 
 definePageMeta({ title: "إنشاء فاتورة" });
 const { formatDate, formatTime12Hour, formatePrice, calcTotal } = useHelpers();
+const { isLowStock } = useFinance();
 const products = useProductsStore();
+const lowStockCount = computed(() => products.list.filter((p) => isLowStock(p)).length);
 const { onDocChange } = useFirebase();
 const invoices = useInvoicesStore();
 const customers = useCustomersStore();
@@ -885,13 +896,16 @@ function addNewForm(): void {
   expandedLines.add(line);
   nextTick(scrollToTop);
 }
-function updateProdsPrices(): void {
+function updateProdsPrices(preserveHistoricalCosts = false): void {
   const productMap = new Map(products.list.map((p) => [p.id, p]));
   invoiceData.value.products.forEach((item) => {
     const prod = item.product_id ? productMap.get(item.product_id) : undefined;
     if (prod) {
       item.product_price = Number(prod.price ?? 0);
-      item.product_cost_price = Number(prod.cost_price ?? 0);
+      // Never rewrite historical line costs of a persisted invoice (§1.2).
+      if (!preserveHistoricalCosts) {
+        item.product_cost_price = Number(prod.cost_price ?? 0);
+      }
       item.product_name = prod.name;
     }
   });
@@ -910,7 +924,8 @@ async function updateInvoiceData(): Promise<void> {
     await loadProds();
     invoiceData.value.date = new Date();
     invoiceData.value.time = new Date();
-    updateProdsPrices();
+    // Editing a persisted invoice: refresh prices/names but keep line costs.
+    updateProdsPrices(!!invoiceData.value.id);
   } finally {
     updating.value = false;
   }

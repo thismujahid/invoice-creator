@@ -105,7 +105,7 @@ export const useMigration = defineStore("migration", () => {
   /** Explicit opening-stock entry (R4): sets stock_quantity only for products
    *  lacking it, plus one opening_stock audit record each. Idempotent. */
   async function setOpeningStocks(
-    entries: { product_id: string; quantity: number; unit_cost?: number | null }[],
+    entries: { product_id: string; quantity: number; unit_cost?: number | null; low_stock_threshold?: number | null }[],
     onProgress?: (done: number, total: number) => void,
   ): Promise<{ total: number; set: number; skipped: number }> {
     const valid = entries.filter((e) => e.product_id && Number.isFinite(e.quantity) && e.quantity >= 0);
@@ -123,21 +123,41 @@ export const useMigration = defineStore("migration", () => {
         const p = byId.get(e.product_id);
         if (!p) continue;
         if (p.stock_quantity !== null && p.stock_quantity !== undefined) continue;
-        batch.update(doc(db, "products", e.product_id), { stock_quantity: round2(toNum(e.quantity)) });
+        const threshold = e.low_stock_threshold ?? p.low_stock_threshold ?? 5;
+        if (!Number.isFinite(threshold) || threshold < 0) continue;
         if (!seeded.has(e.product_id)) {
-          const ref = doc(collection(db, "inventory_transactions"));
-          batch.set(ref, {
-            type: "opening_stock",
-            product_id: e.product_id,
-            product_name: p.name,
-            quantity: round2(toNum(e.quantity)),
-            direction: "in",
-            unit_cost: e.unit_cost ?? toNum(p.cost_price),
-            note: "رصيد افتتاحي",
-            created_by: by(),
-            created_at: now,
-          });
+          const quantity = round2(toNum(e.quantity));
+          if (quantity > 0) {
+            const ref = doc(collection(db, "inventory_transactions"));
+            batch.update(doc(db, "products", e.product_id), {
+              stock_quantity: quantity,
+              low_stock_threshold: threshold,
+              last_inventory_transaction_id: ref.id,
+              last_inventory_transaction_ids: [ref.id],
+            });
+            batch.set(ref, {
+              type: "opening_stock",
+              product_id: e.product_id,
+              product_name: p.name,
+              quantity,
+              direction: "in",
+              unit_cost: e.unit_cost ?? toNum(p.cost_price),
+              note: "رصيد افتتاحي",
+              created_by: by(),
+              created_at: now,
+            });
+          } else {
+            batch.update(doc(db, "products", e.product_id), {
+              stock_quantity: 0,
+              low_stock_threshold: threshold,
+            });
+          }
           seeded.add(e.product_id);
+        } else {
+          batch.update(doc(db, "products", e.product_id), {
+            stock_quantity: round2(toNum(e.quantity)),
+            low_stock_threshold: threshold,
+          });
         }
         set += 1;
       }

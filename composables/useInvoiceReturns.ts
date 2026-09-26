@@ -1,11 +1,11 @@
 import { collection, doc, getDocs, limit as fsLimit, orderBy, query, where } from "firebase/firestore";
 import type { InvoiceReturn, InvoiceReturnItem } from "~/types/finance";
 import type { Invoice } from "~/types";
-import { lineRefundValue, movingAverageCost, netRatioOf, outstandingDebtOf, round2, splitRefund, toNum } from "./finance";
+import { applyStockGroup, lineRefundValue, netRatioOf, outstandingDebtOf, round2, splitRefund, toNum } from "./finance";
 import { summarizeInvoice, writeDebtSummary } from "./debtSummaries";
 
 export interface ReturnLineInput {
-  product_id: string;
+  rowKey: string;
   quantity: number;
 }
 
@@ -13,8 +13,11 @@ export interface ReturnRow {
   key: string;
   product_id: string;
   product_name: string;
+  /** Representative selling price (first line of the group, display only). */
   unit_price: number;
   unit_cost: number;
+  /** Sold lines backing this cost group, in invoice order. */
+  lines: { index: number; price: number; qty: number; returnedQty: number }[];
   soldQty: number;
   returnedQty: number;
   maxQty: number;
@@ -69,42 +72,95 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
     }
     return m;
   }
-  function buildReturnRows(invoice: Invoice, previous: InvoiceReturn[] | Record<string, number>): ReturnRow[] {
+  function buildReturnRows(
+    invoice: Invoice,
+    previous: InvoiceReturn[] | Record<string, number>,
+    aggregateReturned: Record<string, number> = {},
+  ): ReturnRow[] {
     const returnedByProduct = returnedMapOf(previous);
+    for (const [productId, quantity] of Object.entries(aggregateReturned)) {
+      returnedByProduct.set(productId, Math.max(returnedByProduct.get(productId) ?? 0, round2(toNum(quantity))));
+    }
+    const returnedByCost = new Map<string, number>();
+    const returnedByLine = new Map<string, number>();
+    if (Array.isArray(previous)) {
+      for (const ret of previous) {
+        for (const item of ret.items ?? []) {
+          const costKey = `${item.product_id}||${round2(toNum(item.original_unit_cost))}`;
+          returnedByCost.set(costKey, round2((returnedByCost.get(costKey) ?? 0) + toNum(item.quantity)));
+          if (item.source_line_index !== undefined) {
+            const lineKey = `${item.product_id}||${item.source_line_index}`;
+            returnedByLine.set(lineKey, round2((returnedByLine.get(lineKey) ?? 0) + toNum(item.quantity)));
+          }
+        }
+      }
+    }
+    // Group by (product, HISTORICAL cost) — never by selling price alone.
     const groups = new Map<string, ReturnRow>();
-    for (const l of invoice.products ?? []) {
+    for (const [index, l] of (invoice.products ?? []).entries()) {
       if (!l.product_id) continue;
+      const cost = round2(toNum(l.product_cost_price));
       const price = round2(toNum(l.product_price));
-      const key = `${l.product_id}||${price}`;
+      const key = `${l.product_id}||${cost}`;
       const g = groups.get(key) ?? {
         key,
         product_id: l.product_id,
         product_name: l.product_name || "",
         unit_price: price,
-        unit_cost: round2(toNum(l.product_cost_price)),
+        unit_cost: cost,
+        lines: [] as { index: number; price: number; qty: number; returnedQty: number }[],
         soldQty: 0,
         returnedQty: 0,
         maxQty: 0,
         qty: 0,
       };
+      let returnedQty = returnedByLine.get(`${l.product_id}||${index}`) ?? 0;
+      if (Array.isArray(previous) && returnedQty === 0) {
+        const groupReturned = returnedByCost.get(key) ?? 0;
+        const priorMatchingLines = g.lines.reduce((sum, line) => sum + line.returnedQty, 0);
+        const unallocated = Math.max(0, round2(groupReturned - priorMatchingLines));
+        const legacyPriceMatches = previous.reduce((sum, ret) => sum + (ret.items ?? [])
+          .filter((item) => item.product_id === l.product_id && round2(toNum(item.original_unit_cost)) === cost &&
+            round2(toNum(item.original_unit_price)) === price && item.source_line_index === undefined)
+          .reduce((itemSum, item) => itemSum + toNum(item.quantity), 0), 0);
+        returnedQty = Math.min(toNum(l.product_quantity), legacyPriceMatches - priorMatchingLines);
+        if (unallocated <= 0) returnedQty = 0;
+      }
+      g.lines.push({ index, price, qty: toNum(l.product_quantity), returnedQty: Math.max(0, round2(returnedQty)) });
       g.soldQty = round2(g.soldQty + toNum(l.product_quantity));
       groups.set(key, g);
     }
-    // Cap: product-level (sold − returned) distributed across its price rows.
-    const usedByProduct = new Map<string, number>();
     const rows = [...groups.values()];
+    const legacyReturned = new Map(returnedByProduct);
+    if (Array.isArray(previous)) {
+      for (const [productId, returned] of returnedByProduct) {
+        const exactReturned = [...returnedByCost.entries()]
+          .filter(([key]) => key.startsWith(`${productId}||`))
+          .reduce((sum, [, qty]) => sum + qty, 0);
+        legacyReturned.set(productId, Math.max(0, round2(returned - exactReturned)));
+      }
+    }
+    const legacyAllocated = new Map<string, number>();
     for (const r of rows) {
-      const returned = returnedByProduct.get(r.product_id) ?? 0;
-      const productMax = Math.max(0, round2(totalSoldFor(rows, r.product_id) - returned - (usedByProduct.get(r.product_id) ?? 0)));
-      r.returnedQty = round2(Math.min(returned, totalSoldFor(rows, r.product_id)));
-      r.maxQty = round2(Math.min(r.soldQty, productMax));
-      usedByProduct.set(r.product_id, round2((usedByProduct.get(r.product_id) ?? 0) + r.maxQty));
+      const lineReturned = r.lines.reduce((sum, line) => sum + line.returnedQty, 0);
+      const knownGroupReturned = Array.isArray(previous) ? returnedByCost.get(r.key) ?? 0 : 0;
+      const legacy = legacyReturned.get(r.product_id) ?? 0;
+      const legacyUsed = legacyAllocated.get(r.product_id) ?? 0;
+      const legacyTake = Math.min(Math.max(0, round2(legacy - legacyUsed)), Math.max(0, r.soldQty - lineReturned - knownGroupReturned));
+      if (legacyTake > 0 && r.lines.length) {
+        let remaining = legacyTake;
+        for (const line of r.lines) {
+          const take = Math.min(remaining, line.qty - line.returnedQty);
+          line.returnedQty = round2(line.returnedQty + take);
+          remaining = round2(remaining - take);
+          if (remaining <= EPS) break;
+        }
+      }
+      legacyAllocated.set(r.product_id, round2(legacyUsed + legacyTake));
+      r.returnedQty = round2(r.lines.reduce((sum, line) => sum + line.returnedQty, 0));
+      r.maxQty = Math.max(0, round2(r.soldQty - r.returnedQty));
     }
     return rows.filter((r) => r.soldQty > 0);
-  }
-
-  function totalSoldFor(rows: ReturnRow[], product_id: string): number {
-    return round2(rows.filter((r) => r.product_id === product_id).reduce((s, r) => s + r.soldQty, 0));
   }
 
   /** Atomic return (F14/F29): return doc + restock + logs + debt-first
@@ -115,9 +171,11 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
     note?: string | null,
   ): Promise<{ ok: true; id: string; debtReduction: number; cashRefund: number } | { ok: false; error: string }> {
     if (!invoice.id) return { ok: false, error: "الفاتورة غير صالحة." };
-    const wanted = items.filter((i) => i.product_id && toNum(i.quantity) > 0);
+    const wanted = items.filter((i) => i.rowKey && toNum(i.quantity) > 0);
     if (!wanted.length) return { ok: false, error: "حدد صنفاً واحداً على الأقل بكمية أكبر من صفر." };
     try {
+      const priorReturnsSnapshot = await getDocs(query(collection(db, "invoice_returns"), where("invoice_id", "==", invoice.id)));
+      const priorReturns = priorReturnsSnapshot.docs.map((d) => ({ id: d.id, ...(d.data() as object) }) as InvoiceReturn);
       let returnId = "";
       let debtReduction = 0;
       let cashRefund = 0;
@@ -128,31 +186,48 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
         if (!invSnap.exists()) throw new Error("VALIDATION:الفاتورة غير موجودة.");
         const fresh = { ...(invSnap.data() as object), id: invSnap.id } as Invoice;
         // Authoritative returned map lives on the invoice doc (transactional).
-        const returnedMap: Record<string, number> = { ...((fresh.returned ?? {}) as Record<string, number>) };
-        const rows = buildReturnRows(fresh, returnedMap);
-        const ratio = netRatioOf(fresh);
-        // 2. Validate + price from ORIGINAL sale lines (F12), discount-aware (F13).
-        const retItems: InvoiceReturnItem[] = [];
-        for (const w of wanted) {
-          const candidates = rows.filter((r) => r.product_id === w.product_id);
-          if (!candidates.length) throw new Error("VALIDATION:صنف غير موجود بالفاتورة الأصلية.");
-          let need = round2(toNum(w.quantity));
-          const productMax = round2(candidates.reduce((s, r) => s + r.maxQty, 0));
-          if (need - productMax > EPS) {
-            throw new Error(`VALIDATION:الكمية المطلوبة تتجاوز المتاح للإرجاع (${productMax}).`);
+        const storedReturned = { ...((fresh.returned ?? {}) as Record<string, number>) };
+        const returnedFromDocs = returnedMapOf(priorReturns);
+        for (const [productId, storedQty] of Object.entries(storedReturned)) {
+          if (Math.abs(toNum(storedQty) - (returnedFromDocs.get(productId) ?? 0)) > EPS) {
+            throw new Error("VALIDATION:تغيّر سجل المرتجعات — أعد فتح الفاتورة ثم حاول مرة أخرى.");
           }
-          for (const r of candidates) {
+        }
+        const returnedMap = { ...storedReturned };
+        for (const [productId, returnedQty] of returnedFromDocs) {
+          returnedMap[productId] = Math.max(toNum(returnedMap[productId]), returnedQty);
+        }
+        const rows = buildReturnRows(fresh, priorReturns, returnedMap);
+        const ratio = netRatioOf(fresh);
+        // 2. Validate per cost-group row, price from ORIGINAL sale LINES
+        // (F12): a row's qty is spread over its own lines in order, so each
+        // slice refunds at its exact historical selling price (F13).
+        const retItems: InvoiceReturnItem[] = [];
+        const byRowKey = new Map(rows.map((r) => [r.key, r]));
+        const acceptedByRow = new Map<string, number>();
+        for (const w of wanted) {
+          const r = byRowKey.get(w.rowKey);
+          if (!r) throw new Error("VALIDATION:صنف غير موجود بالفاتورة الأصلية.");
+          const want = round2(toNum(w.quantity));
+          const remainingForRow = round2(r.maxQty - (acceptedByRow.get(r.key) ?? 0));
+          if (want - remainingForRow > EPS) {
+            throw new Error(`VALIDATION:الكمية المطلوبة تتجاوز المتاح للإرجاع (${remainingForRow}).`);
+          }
+          acceptedByRow.set(r.key, round2((acceptedByRow.get(r.key) ?? 0) + want));
+          let need = want;
+          for (const ln of r.lines) {
             if (need <= EPS) break;
-            const take = Math.min(need, r.maxQty);
+            const take = Math.min(need, ln.qty - ln.returnedQty);
             if (take <= EPS) continue;
             need = round2(need - take);
             retItems.push({
               product_id: r.product_id,
               product_name: r.product_name,
               quantity: take,
-              original_unit_price: r.unit_price,
+              original_unit_price: ln.price,
               original_unit_cost: r.unit_cost,
-              refund_amount: lineRefundValue(r.unit_price, take, ratio),
+              source_line_index: ln.index,
+              refund_amount: lineRefundValue(ln.price, take, ratio),
             });
           }
         }
@@ -201,18 +276,19 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
           created_by: by,
           created_at: now,
         });
+        // Restored stock applies per product through the canonical helper
+        // (same math replay uses); every slice keeps its own audit log.
+        const restoredPids = [...new Set(retItems.map((it) => it.product_id))];
+        let retSeq = 0;
+        const lastMovementByProduct = new Map<string, string>();
+        const movementIdsByProduct = new Map<string, string[]>();
         for (const it of retItems) {
-          const st = stocks.get(it.product_id)!;
-          // Restored units re-enter at their ORIGINAL invoice cost (§5).
-          const newCost = round2(movingAverageCost(st.stock, st.cost, it.quantity, it.original_unit_cost));
-          st.stock = round2(st.stock + it.quantity);
-          st.cost = newCost;
-          stocks.set(it.product_id, st);
-          tx.update(doc(db, "products", it.product_id), {
-            stock_quantity: st.stock,
-            cost_price: st.cost,
-          });
-          tx.set(doc(collection(db, "inventory_transactions")), {
+          const movementRef = doc(collection(db, "inventory_transactions"));
+          lastMovementByProduct.set(it.product_id, movementRef.id);
+          const movementIds = movementIdsByProduct.get(it.product_id) ?? [];
+          movementIds.push(movementRef.id);
+          movementIdsByProduct.set(it.product_id, movementIds);
+          tx.set(movementRef, {
             type: "refund",
             product_id: it.product_id,
             product_name: it.product_name,
@@ -222,8 +298,22 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
             invoice_id: invoice.id,
             return_id: returnId,
             note: null,
+            seq: retSeq++,
             created_by: by,
             created_at: now,
+          });
+        }
+        for (const pid of restoredPids) {
+          const st = stocks.get(pid)!;
+          const inflows = retItems
+            .filter((it) => it.product_id === pid)
+            .map((it) => ({ qty: it.quantity, cost: it.original_unit_cost as number | null }));
+          const applied = applyStockGroup(st.stock, st.cost, 0, inflows);
+          tx.update(doc(db, "products", pid), {
+            stock_quantity: applied.stock,
+            cost_price: applied.avg ?? st.cost,
+            last_inventory_transaction_id: lastMovementByProduct.get(pid),
+            last_inventory_transaction_ids: movementIdsByProduct.get(pid) ?? [],
           });
         }
         const mergedReturned: Record<string, number> = { ...returnedMap };

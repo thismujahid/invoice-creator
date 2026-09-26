@@ -15,6 +15,101 @@ service cloud.firestore {
         && request.resource.data.products.size() > 0;
     }
 
+    function hasFreshInventoryMovement(productId) {
+      let movementId = request.resource.data.get('last_inventory_transaction_id', null);
+      let movementIds = request.resource.data.get('last_inventory_transaction_ids', []);
+      let movementPath = /databases/$(database)/documents/inventory_transactions/$(movementId);
+      return movementId is string && movementIds is list
+        && movementIds.hasAny([movementId])
+        && !exists(movementPath)
+        && existsAfter(movementPath)
+        && getAfter(movementPath).data.product_id == productId
+        && getAfter(movementPath).data.quantity is number
+        && getAfter(movementPath).data.quantity > 0
+        && getAfter(movementPath).data.direction in ['in', 'out'];
+    }
+
+    function hasFreshCostMovement(productId) {
+      let movementId = request.resource.data.get('last_inventory_transaction_id', null);
+      let movementPath = /databases/$(database)/documents/inventory_transactions/$(movementId);
+      let movementIds = request.resource.data.get('last_inventory_transaction_ids', []);
+      return movementId is string && movementIds is list
+        && movementIds.hasAny([movementId])
+        && !exists(movementPath)
+        && existsAfter(movementPath)
+        && getAfter(movementPath).data.product_id == productId
+        && getAfter(movementPath).data.direction == 'in'
+        && getAfter(movementPath).data.unit_cost is number;
+    }
+
+    function hasFreshCostAdjustment(productId) {
+      let adjustmentId = request.resource.data.get('last_cost_adjustment_id', null);
+      let adjustmentPath = /databases/$(database)/documents/inventory_cost_adjustments/$(adjustmentId);
+      return adjustmentId is string
+        && !exists(adjustmentPath)
+        && existsAfter(adjustmentPath)
+        && getAfter(adjustmentPath).data.product_id == productId
+        && getAfter(adjustmentPath).data.new_cost == request.resource.data.cost_price;
+    }
+
+    function hasProductMovementLink(productId, movementId) {
+      let productPath = /databases/$(database)/documents/products/$(productId);
+      return existsAfter(productPath)
+        && getAfter(productPath).data.get('last_inventory_transaction_ids', []).hasAny([movementId]);
+    }
+
+    function validNewPurchaseInvoice() {
+      return request.resource.data.keys().hasAll([
+          'items', 'product_ids', 'total_amount', 'paid_amount', 'remaining_amount',
+          'payment_ids', 'created_by', 'created_at'
+        ])
+        && request.resource.data.items is list
+        && request.resource.data.items.size() > 0
+        && request.resource.data.product_ids is list
+        && request.resource.data.total_amount is number
+        && request.resource.data.paid_amount is number
+        && request.resource.data.remaining_amount is number
+        && request.resource.data.paid_amount >= 0
+        && request.resource.data.remaining_amount >= 0
+        && request.resource.data.paid_amount <= request.resource.data.total_amount
+        && request.resource.data.paid_amount + request.resource.data.remaining_amount >= request.resource.data.total_amount - 0.005
+        && request.resource.data.paid_amount + request.resource.data.remaining_amount <= request.resource.data.total_amount + 0.005
+        && request.resource.data.payment_ids is list
+        && request.resource.data.payment_ids.size() == 0;
+    }
+
+    function validSupplierPaymentUpdate(invoiceId) {
+      let paymentIds = request.resource.data.get('payment_ids', []);
+      let paymentId = paymentIds[paymentIds.size() - 1];
+      let paymentPath = /databases/$(database)/documents/supplier_payments/$(paymentId);
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'paid_amount', 'remaining_amount', 'payment_ids'
+        ])
+        && paymentIds is list
+        && paymentIds.size() == resource.data.payment_ids.size() + 1
+        && request.resource.data.paid_amount is number
+        && request.resource.data.remaining_amount is number
+        && request.resource.data.paid_amount > resource.data.paid_amount
+        && request.resource.data.remaining_amount < resource.data.remaining_amount
+        && request.resource.data.remaining_amount >= 0
+        && request.resource.data.paid_amount + request.resource.data.remaining_amount >= resource.data.total_amount - 0.005
+        && request.resource.data.paid_amount + request.resource.data.remaining_amount <= resource.data.total_amount + 0.005
+        && !exists(paymentPath)
+        && existsAfter(paymentPath)
+        && getAfter(paymentPath).data.purchase_invoice_id == invoiceId
+        && getAfter(paymentPath).data.amount == request.resource.data.paid_amount - resource.data.paid_amount;
+    }
+
+    function validSupplierPaymentRecord(id) {
+      let invoiceId = request.resource.data.get('purchase_invoice_id', null);
+      let invoicePath = /databases/$(database)/documents/purchase_invoices/$(invoiceId);
+      return request.resource.data.amount is number
+        && request.resource.data.amount > 0
+        && invoiceId is string
+        && existsAfter(invoicePath)
+        && getAfter(invoicePath).data.payment_ids.hasAny([id]);
+    }
+
     match /invoices/{id} {
       allow read: if isStaff();
       allow create: if isStaff() && validInvoice();
@@ -24,7 +119,21 @@ service cloud.firestore {
     }
     match /products/{id} {
       allow read: if isStaff();
-      allow create, update: if isStaff();
+      allow create: if isStaff()
+        && request.resource.data.price is number
+        && request.resource.data.cost_price is number
+        && request.resource.data.get('stock_quantity', 0) is number
+        && request.resource.data.get('stock_quantity', 0) >= 0
+        && request.resource.data.get('low_stock_threshold', 5) is number
+        && request.resource.data.get('low_stock_threshold', 5) >= 0;
+      allow update: if isAdmin() || (isStaff()
+        && (request.resource.data.get('stock_quantity', null) == resource.data.get('stock_quantity', null)
+          || hasFreshInventoryMovement(id))
+        && (request.resource.data.get('cost_price', null) == resource.data.get('cost_price', null)
+          || hasFreshCostMovement(id)
+          || hasFreshCostAdjustment(id))
+        && request.resource.data.get('low_stock_threshold', 5) is number
+        && request.resource.data.get('low_stock_threshold', 5) >= 0);
       allow delete: if isAdmin();
     }
     match /customers/{id} {
@@ -37,22 +146,38 @@ service cloud.firestore {
     // via compensating docs, never silent rewrites (delete = admin).
     match /cashbox/{id} {
       allow read: if isStaff();
-      allow create, update: if isStaff();
+      allow create, update: if isStaff()
+        && request.resource.data.keys().hasOnly(['balance', 'updated_at'])
+        && request.resource.data.balance is number
+        && request.resource.data.balance >= 0;
       allow delete: if isAdmin();
     }
     match /cash_transactions/{id} {
       allow read: if isStaff();
-      allow create: if isStaff();
+      allow create: if isStaff()
+        && request.resource.data.amount is number
+        && request.resource.data.amount > 0
+        && request.resource.data.direction in ['in', 'out'];
       allow update, delete: if isAdmin();
     }
     match /inventory_transactions/{id} {
       allow read: if isStaff();
-      allow create: if isStaff();
+      allow create: if isAdmin() || (isStaff()
+        && request.resource.data.product_id is string
+        && request.resource.data.quantity is number
+        && request.resource.data.quantity > 0
+        && request.resource.data.direction in ['in', 'out']
+        && hasProductMovementLink(request.resource.data.product_id, id));
       allow update, delete: if isAdmin();
     }
     match /inventory_cost_adjustments/{id} {
       allow read: if isStaff();
-      allow create: if isStaff();
+      allow create: if isStaff()
+        && request.resource.data.product_id is string
+        && request.resource.data.new_cost is number
+        && existsAfter(/databases/$(database)/documents/products/$(request.resource.data.product_id))
+        && getAfter(/databases/$(database)/documents/products/$(request.resource.data.product_id)).data.last_cost_adjustment_id == id
+        && getAfter(/databases/$(database)/documents/products/$(request.resource.data.product_id)).data.cost_price == request.resource.data.new_cost;
       allow update, delete: if isAdmin();
     }
     match /invoice_returns/{id} {
@@ -74,6 +199,17 @@ service cloud.firestore {
       allow read: if isStaff();
       allow create, update: if isStaff();
       allow delete: if isAdmin();
+    }
+    match /purchase_invoices/{id} {
+      allow read: if isStaff();
+      allow create: if isStaff() && validNewPurchaseInvoice();
+      allow update: if isAdmin() || (isStaff() && validSupplierPaymentUpdate(id));
+      allow delete: if isAdmin();
+    }
+    match /supplier_payments/{id} {
+      allow read: if isStaff();
+      allow create: if isStaff() && validSupplierPaymentRecord(id);
+      allow update, delete: if isAdmin();
     }
     match /{document=**} {
       allow read, write: if false;

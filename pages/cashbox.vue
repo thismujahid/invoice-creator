@@ -334,7 +334,7 @@
               </div>
               <p class="mb-2 text-xs text-gray-500">
                 للمنتجات التي لم يُدخل رصيدها بعد فقط — يُحفظ مرة واحدة لكل
-                منتج.
+                منتج. مؤشر الكمية القليلة افتراضيًا 5 ويمكن تغييره لكل منتج.
                 {{ migStockMsg }}
               </p>
             </div>
@@ -354,21 +354,35 @@
             <div
               v-for="p in visibleMissingStock"
               :key="p.id"
-              class="flex items-center gap-2 rounded-lg border border-gray-200 p-2"
+              class="space-y-2 rounded-lg border border-gray-200 p-2"
             >
-              <div class="min-w-0 flex-1">
+              <div class="min-w-0">
                 <div class="truncate text-sm font-semibold">{{ p.name }}</div>
                 <div class="text-xs text-gray-500">
                   التكلفة: {{ formatePrice(p.cost_price) }}
                 </div>
               </div>
-              <UInputNumber
-                v-model="openingQtys[p.id as string]"
-                :min="0"
-                :step="1"
-                placeholder="0"
-                class="w-28 shrink-0"
-              />
+              <div class="grid grid-cols-2 gap-2">
+                <UFormField label="الرصيد الافتتاحي">
+                  <UInputNumber
+                    v-model="openingQtys[p.id as string]"
+                    :min="0"
+                    :step="1"
+                    placeholder="الكمية"
+                    class="w-full"
+                  />
+                </UFormField>
+                <UFormField label="مؤشر الكمية القليلة">
+                  <UInputNumber
+                    :model-value="openingThresholds[p.id as string] ?? p.low_stock_threshold ?? 5"
+                    :min="0"
+                    :step="0.5"
+                    placeholder="5"
+                    class="w-full"
+                    @update:model-value="(value) => (openingThresholds[p.id as string] = value ?? 5)"
+                  />
+                </UFormField>
+              </div>
             </div>
             <div
               v-if="!filteredMissingStock.length"
@@ -402,7 +416,7 @@
             :disabled="!missingStock.length"
             icon="i-lucide-archive"
             @click="runStockEntry"
-            >حفظ الأرصدة</UButton
+            >حفظ الأرصدة والمؤشرات</UButton
           >
         </UCard>
       </div>
@@ -706,6 +720,7 @@ const migSumBusy = ref(false);
 const migSumPct = ref(0);
 const migSumMsg = ref("");
 const openingQtys = ref<Record<string, number | undefined>>({});
+const openingThresholds = ref<Record<string, number | undefined>>({});
 const stockSearch = ref("");
 const missingStock = computed(() =>
   products.list.filter(
@@ -781,15 +796,24 @@ async function runSumBackfill(): Promise<void> {
   }
 }
 async function runStockEntry(): Promise<void> {
-  const entries = missingStock.value
+  const selectedEntries = missingStock.value
+    .filter((p) => p.id && openingQtys.value[p.id] !== undefined)
     .map((p) => ({
       product_id: p.id as string,
       quantity: round2(openingQtys.value[p.id as string] ?? 0),
       unit_cost: toNum(p.cost_price),
-    }))
-    .filter((e) => e.quantity > 0);
+      low_stock_threshold: openingThresholds.value[p.id as string] ?? p.low_stock_threshold ?? 5,
+    }));
+  if (selectedEntries.some((entry) =>
+    !Number.isFinite(entry.quantity) || entry.quantity < 0 ||
+    !Number.isFinite(entry.low_stock_threshold) || entry.low_stock_threshold < 0
+  )) {
+    migStockMsg.value = "راجع الرصيد ومؤشر الكمية القليلة؛ يجب أن يكونا صفرًا أو أكبر.";
+    return;
+  }
+  const entries = selectedEntries;
   if (!entries.length) {
-    migStockMsg.value = "أدخل كمية أكبر من صفر لمنتج واحد على الأقل.";
+    migStockMsg.value = "أدخل رصيدًا افتتاحيًا لمنتج واحد على الأقل؛ يمكن أن تكون الكمية صفرًا.";
     return;
   }
   migStockBusy.value = true;
@@ -801,6 +825,7 @@ async function runStockEntry(): Promise<void> {
     migStockMsg.value = `تم: حُفظ ${res.set} من ${res.total} منتج.`;
     notify(`اكتمل إدخال الأرصدة: ${res.set} منتج.`, "success");
     openingQtys.value = {};
+    openingThresholds.value = {};
     await products.fetchProducts();
   } catch (e) {
     migStockMsg.value = "فشل الحفظ.";

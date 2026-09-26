@@ -15,6 +15,14 @@ export interface Product {
   count?: number | null;
   /** Real on-hand stock. Unset/zero until opening stock is entered. */
   stock_quantity?: number | null;
+  /** Low-stock alert threshold (default 5 when missing). Fractional allowed. */
+  low_stock_threshold?: number | null;
+  /** Latest inventory movement linked to a stock change. */
+  last_inventory_transaction_id?: string | null;
+  /** All movement documents written for the latest atomic stock change. */
+  last_inventory_transaction_ids?: string[];
+  /** Latest audited cost correction. */
+  last_cost_adjustment_id?: string | null;
   date?: Date | FirestoreTimestampLike | string | null;
 }
 
