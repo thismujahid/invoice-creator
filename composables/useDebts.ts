@@ -1,9 +1,10 @@
-import { collection, doc, getDocs } from "firebase/firestore";
+import { collection, doc, getDocs, query, where } from "firebase/firestore";
 import type { CustomerLoan, DebtPaymentAllocation } from "~/types/finance";
 import type { Customer, Invoice } from "~/types";
 import { loanStatusOf, normalizePhone, normalizeName, round2, toNum, outstandingDebtOf } from "./finance";
 import { summarizeInvoice, writeDebtSummary } from "./debtSummaries";
 import { toDateSafe } from "~/types";
+import { writeCustomerSummaryDelta, writeStoreStatsDelta } from "./performanceSummaries";
 
 export interface Obligation {
   kind: "invoice" | "loan";
@@ -68,8 +69,8 @@ export const useDebts = defineStore("debts", () => {
    *  Each summary is a tiny doc maintained transactionally by every flow. */
   async function fetchDebtsBook(): Promise<CustomerDebt[]> {
     const [sumSnap, loans] = await Promise.all([
-      getDocs(collection(db, "invoice_debt_summaries")),
-      readFrom<CustomerLoan>("customer_loans"),
+      getDocs(query(collection(db, "invoice_debt_summaries"), where("remaining", ">", 0))),
+      readFrom<CustomerLoan>("customer_loans", { remaining_gt_zero: true }),
     ]);
     const map = new Map<string, CustomerDebt>();
     const ensure = (
@@ -301,6 +302,12 @@ export const useDebts = defineStore("debts", () => {
               date: (s.doc.date as unknown) ?? null,
               ...summarizeInvoice({ ...(s.doc as object), paid_amount: paid, remaining: left } as Invoice),
             });
+            writeStoreStatsDelta(tx, db, { outstanding_customer_debt: -s.a.amount });
+            writeCustomerSummaryDelta(tx, db, {
+              customer_id: s.doc.customer_id as string | null,
+              customer_name: s.doc.customer_name as string | null,
+              customer_phone: s.doc.customer_phone as string | number | null,
+            }, { outstanding_debt: -s.a.amount });
             tx.set(doc(collection(db, "cash_transactions")), {
               type: "invoice_payment", direction: "in", amount: s.a.amount,
               customer_id: input.customer_id, invoice_id: s.a.reference_id,

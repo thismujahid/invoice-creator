@@ -2,11 +2,15 @@
   <UApp>
     <UToaster />
     <div v-if="!initFirebase" dir="rtl">
-      <FormsAuthScreen :is-in-login="true" @success="(v) => (isAuthed = v)" v-if="!isAuthed" />
+      <FormsAuthScreen
+        :is-in-login="true"
+        @success="(v) => (isAuthed = v)"
+        v-if="!isAuthed"
+      />
       <div id="printableArea" class="printable-area"></div>
-      <NuxtLayout v-if="isAuthed">
+      <NuxtLayout>
         <NuxtRouteAnnouncer />
-        <NuxtPage />
+        <NuxtPage v-if="isAuthed" />
       </NuxtLayout>
     </div>
     <div v-else class="flex h-screen w-full items-center justify-center gap-3">
@@ -39,10 +43,15 @@ watch(
     if (!t) return;
     toast.add({
       title: t,
-      color: authStore.snackBarColor === "error" ? "error" : authStore.snackBarColor === "primary" ? "primary" : "success",
+      color:
+        authStore.snackBarColor === "error"
+          ? "error"
+          : authStore.snackBarColor === "primary"
+            ? "primary"
+            : "success",
     });
     authStore.snackBarText = "";
-  }
+  },
 );
 auth.onAuthStateChanged(
   (user: User | null) => {
@@ -65,7 +74,7 @@ auth.onAuthStateChanged(
   (err: unknown) => {
     initFirebase.value = false;
     console.error(err);
-  }
+  },
 );
 </script>
 <style>

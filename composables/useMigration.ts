@@ -2,8 +2,10 @@ import { collection, doc, getDoc, getDocs, query, where } from "firebase/firesto
 import type { Customer } from "~/types";
 import type { Invoice } from "~/types";
 import type { Product } from "~/types";
+import type { PurchaseInvoice, Supplier } from "~/types/finance";
 import { normalizeName, normalizePhone, round2, toNum } from "./finance";
 import { summarizeInvoice } from "./debtSummaries";
+import { customerSummaryId } from "./performanceSummaries";
 
 const CHUNK = 100;
 const MIN_PHONE_DIGITS = 7;
@@ -202,5 +204,122 @@ export const useMigration = defineStore("migration", () => {
     return { total: invoices.length, created: targets.length, skipped: invoices.length - targets.length };
   }
 
-  return { backfillCustomerIds, repairCustomerLinks, setOpeningStocks, backfillDebtSummaries };
+  /** Explicit admin-only UI action: initializes aggregate documents from a complete historical scan. */
+  async function backfillPerformanceSummaries(
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ invoices: number; customers: number; customerSummaries: number; debtSummaries: number; supplierInvoices: number; suppliers: number }> {
+    const [invoices, customers, purchaseInvoices, suppliers, existingDebtSummaries] = await Promise.all([
+      readFrom<Invoice>("invoices"),
+      readFrom<Customer>("customers"),
+      readFrom<PurchaseInvoice>("purchase_invoices"),
+      readFrom<Supplier>("suppliers"),
+      getDocs(collection(db, "invoice_debt_summaries")),
+    ]);
+    const existingDebtIds = new Set(existingDebtSummaries.docs.map((d) => d.id));
+    const missingDebtSummaries = invoices.filter((invoice) => invoice.id && !existingDebtIds.has(invoice.id));
+    const aggregates = new Map<string, { customer_id: string | null; customer_name: string | null; customer_phone: string | number | null; invoice_count: number; total_sales: number; outstanding_debt: number }>();
+    for (const customer of customers) {
+      if (!customer.id) continue;
+      aggregates.set(customer.id, { customer_id: customer.id, customer_name: customer.name, customer_phone: customer.phone ?? null, invoice_count: 0, total_sales: 0, outstanding_debt: 0 });
+    }
+    let totalSales = 0;
+    let totalDebt = 0;
+    let totalProfit = 0;
+    for (const invoice of invoices) {
+      const totals = summarizeInvoice(invoice);
+      totalSales = round2(totalSales + totals.total);
+      totalDebt = round2(totalDebt + totals.remaining);
+      totalProfit = round2(totalProfit + totals.profit);
+      const id = customerSummaryId(invoice);
+      if (!id) continue;
+      const aggregate = aggregates.get(id) ?? {
+        customer_id: invoice.customer_id ?? null,
+        customer_name: invoice.customer_name ?? null,
+        customer_phone: invoice.customer_phone ?? null,
+        invoice_count: 0,
+        total_sales: 0,
+        outstanding_debt: 0,
+      };
+      aggregate.invoice_count += 1;
+      aggregate.total_sales = round2(aggregate.total_sales + totals.total);
+      aggregate.outstanding_debt = round2(aggregate.outstanding_debt + totals.remaining);
+      aggregates.set(id, aggregate);
+    }
+    const supplierAggregates = new Map<string, { supplier_id: string; supplier_name: string; invoice_count: number; total_purchases: number; outstanding_payable: number }>();
+    for (const supplier of suppliers) if (supplier.id) supplierAggregates.set(supplier.id, { supplier_id: supplier.id, supplier_name: supplier.name, invoice_count: 0, total_purchases: 0, outstanding_payable: 0 });
+    const suppliersByName = new Map<string, Supplier[]>();
+    for (const supplier of suppliers) {
+      const name = normalizeName(supplier.name);
+      if (!name) continue;
+      const matches = suppliersByName.get(name) ?? [];
+      matches.push(supplier);
+      suppliersByName.set(name, matches);
+    }
+    for (const invoice of purchaseInvoices) {
+      const supplier = invoice.supplier_id
+        ? suppliers.find((item) => item.id === invoice.supplier_id)
+        : (suppliersByName.get(normalizeName(invoice.supplier_name)) ?? []).length === 1
+          ? suppliersByName.get(normalizeName(invoice.supplier_name))?.[0]
+          : undefined;
+      if (!supplier?.id) continue;
+      const aggregate = supplierAggregates.get(supplier.id) ?? { supplier_id: supplier.id, supplier_name: supplier.name, invoice_count: 0, total_purchases: 0, outstanding_payable: 0 };
+      aggregate.invoice_count += 1;
+      aggregate.total_purchases = round2(aggregate.total_purchases + toNum(invoice.total_amount));
+      aggregate.outstanding_payable = round2(aggregate.outstanding_payable + toNum(invoice.remaining_amount));
+      supplierAggregates.set(supplier.id, aggregate);
+    }
+    const docs = [...aggregates.entries()];
+    const supplierDocs = [...supplierAggregates.entries()];
+    const totalWrites = docs.length + supplierDocs.length + missingDebtSummaries.length + 1;
+    let completed = 0;
+    for (let i = 0; i < docs.length; i += CHUNK) {
+      const batch = writeBatch(db);
+      for (const [id, data] of docs.slice(i, i + CHUNK)) {
+        batch.set(doc(db, "customer_summaries", id), { ...data, initialized: true, updated_at: serverTimestamp() });
+      }
+      await batch.commit();
+      completed += Math.min(CHUNK, docs.length - i);
+      onProgress?.(completed, totalWrites);
+    }
+    for (let i = 0; i < supplierDocs.length; i += CHUNK) {
+      const batch = writeBatch(db);
+      for (const [id, data] of supplierDocs.slice(i, i + CHUNK)) batch.set(doc(db, "supplier_summaries", id), { ...data, initialized: true, updated_at: serverTimestamp() });
+      await batch.commit();
+      completed += Math.min(CHUNK, supplierDocs.length - i);
+      onProgress?.(completed, totalWrites);
+    }
+    for (let i = 0; i < missingDebtSummaries.length; i += CHUNK) {
+      const batch = writeBatch(db);
+      for (const invoice of missingDebtSummaries.slice(i, i + CHUNK)) {
+        const totals = summarizeInvoice(invoice);
+        batch.set(doc(db, "invoice_debt_summaries", invoice.id as string), {
+          invoice_id: invoice.id,
+          customer_id: invoice.customer_id || null,
+          customer_name: invoice.customer_name ?? null,
+          customer_phone: (invoice.customer_phone as string | number | null) ?? null,
+          date: (invoice.date as unknown) ?? null,
+          ...totals,
+          created_at: serverTimestamp(),
+        });
+      }
+      await batch.commit();
+      completed += Math.min(CHUNK, missingDebtSummaries.length - i);
+      onProgress?.(completed, totalWrites);
+    }
+    const statsBatch = writeBatch(db);
+    statsBatch.set(doc(db, "store_stats", "current"), {
+      total_sales: totalSales,
+      outstanding_customer_debt: totalDebt,
+      total_profit: totalProfit,
+      invoice_count: invoices.length,
+      customer_count: customers.length,
+      initialized: true,
+      updated_at: serverTimestamp(),
+    });
+    await statsBatch.commit();
+    onProgress?.(totalWrites, totalWrites);
+    return { invoices: invoices.length, customers: customers.length, customerSummaries: docs.length, debtSummaries: missingDebtSummaries.length, supplierInvoices: purchaseInvoices.length, suppliers: suppliers.length };
+  }
+
+  return { backfillCustomerIds, repairCustomerLinks, setOpeningStocks, backfillDebtSummaries, backfillPerformanceSummaries };
 });

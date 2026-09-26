@@ -43,7 +43,7 @@
       class="mx-auto flex w-full max-w-6xl min-w-0 flex-1 items-start gap-3 px-3 py-4 md:px-4"
     >
       <aside
-        class="sticky top-18 bottom-none z-20 hidden w-32 shrink-0 flex-col items-center rounded-lg border border-gray-200 bg-white py-3 md:py-0 shadow-sm sm:flex"
+        class="sticky top-18 bottom-none z-20 hidden w-38 shrink-0 flex-col items-center rounded-lg border border-gray-200 bg-white py-3 md:py-0 shadow-sm sm:flex"
         aria-label="التنقل الرئيسي"
       >
         <UButton
@@ -181,15 +181,19 @@ const todayLine = computed(() =>
 
 const tabItems = computed(() => [
   { label: "إنشاء فاتورة", icon: "i-lucide-file-plus", to: "/" },
+  { label: "دفتر الديون", icon: "i-lucide-notebook-text", to: "/debts" },
+  { label: "الفواتير", icon: "i-lucide-files", to: "/invoices" },
+  { label: "الخزنة", icon: "i-lucide-vault", to: "/cashbox" },
   ...(isAdmin.value
     ? [{ label: "المنتجات", icon: "i-lucide-layout-grid", to: "/products" }]
     : []),
   { label: "العملاء", icon: "i-lucide-users", to: "/customers" },
   { label: "الموردون", icon: "i-lucide-truck", to: "/suppliers" },
-  { label: "فواتير الموردين", icon: "i-lucide-receipt", to: "/supplier-invoices" },
-  { label: "الفواتير", icon: "i-lucide-files", to: "/invoices" },
-  { label: "الخزنة", icon: "i-lucide-vault", to: "/cashbox" },
-  { label: "دفتر الديون", icon: "i-lucide-notebook-text", to: "/debts" },
+  {
+    label: "فواتير الموردين",
+    icon: "i-lucide-receipt",
+    to: "/supplier-invoices",
+  },
 ]);
 
 function isActiveTab(to: string): boolean {

@@ -106,6 +106,7 @@
       <!-- Store-wide totals from the same source + formulas as /invoices -->
       <p class="mb-2 mt-4 text-xs font-bold text-gray-400">إجماليات المحل</p>
       <USkeleton v-if="statsLoading" class="mb-3 h-24 w-full" />
+      <UAlert v-else-if="!statsReady" color="warning" variant="soft" class="mb-3" title="إجماليات المبيعات تحتاج تهيئة لمرة واحدة من أدوات المدير أدناه." />
       <div v-else class="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-5">
         <UCard variant="outline">
           <div class="text-lg font-bold text-emerald-700 sm:text-xl">
@@ -233,20 +234,11 @@
         </div>
       </template>
       <div class="mt-3 flex items-center justify-between gap-2">
-        <USelect
-          v-model="currentPerPage"
-          :items="[10, 25, 50, 100]"
-          size="sm"
-          class="w-24"
-        />
-        <UPagination
-          v-model:page="currentPage"
-          :total="filtered.length"
-          dir="ltr"
-          :items-per-page="currentPerPage"
-          :sibling-count="1"
-          size="sm"
-        />
+        <span class="text-xs text-gray-500">صفحة {{ cashbox.transactionsPage }} · 25 عملية</span>
+        <div class="flex gap-2" dir="ltr">
+          <UButton size="sm" color="neutral" variant="outline" icon="i-lucide-chevron-left" aria-label="الصفحة التالية" :disabled="cashbox.loadingTxns || !cashbox.transactionsHasMore" @click="cashbox.nextTransactionsPage(25)" />
+          <UButton size="sm" color="neutral" variant="outline" icon="i-lucide-chevron-right" aria-label="الصفحة السابقة" :disabled="cashbox.loadingTxns || cashbox.transactionsPage <= 1" @click="cashbox.previousTransactionsPage(25)" />
+        </div>
       </div>
     </template>
 
@@ -295,9 +287,9 @@
           >
         </UCard>
         <UCard variant="outline">
-          <div class="mb-1 text-sm font-bold">تهيئة ملخصات الديون</div>
+          <div class="mb-1 text-sm font-bold">تهيئة الملخصات والإجماليات</div>
           <p class="mb-2 text-xs text-gray-500">
-            للدفتر الخفيف وإجماليات الخزنة: كل الفواتير الناقصة. {{ migSumMsg }}
+            إعداد ملخصات الديون والعملاء وإجماليات الخزنة من سجل الفواتير مرة واحدة. {{ migSumMsg }}
           </p>
           <UProgress v-if="migSumBusy" :value="migSumPct" class="mb-2" />
           <UButton
@@ -603,7 +595,6 @@ import { CASH_TYPE_LABELS } from "~/types/finance";
 import type { RepairRow } from "~/composables/useInventoryCostRepair";
 import { REPAIR_STATUS_LABELS } from "~/composables/useInventoryCostRepair";
 import { toDateSafe } from "~/types";
-import { collection, getCountFromServer } from "firebase/firestore";
 import { doc, getDoc } from "firebase/firestore";
 import type { Invoice } from "~/types";
 import type { CashTransaction, PurchaseInvoice } from "~/types/finance";
@@ -614,11 +605,7 @@ const {
   inventoryAggregates,
   round2,
   toNum,
-  invoiceTotals,
-  grossProfitOf,
-  outstandingDebtOf,
 } = useFinance();
-const invoicesStore = useInvoicesStore();
 const cashbox = useCashbox();
 const products = useProductsStore();
 const migration = useMigration();
@@ -801,11 +788,11 @@ async function runSumBackfill(): Promise<void> {
   migSumBusy.value = true;
   migSumMsg.value = "";
   try {
-    const res = await migration.backfillDebtSummaries((d, t) => {
+    const performance = await migration.backfillPerformanceSummaries((d, t) => {
       migSumPct.value = t ? Math.round((d / t) * 100) : 100;
     });
-    migSumMsg.value = `تم: هُيئ ${res.created} من ${res.total} فاتورة.`;
-    notify(`اكتملت التهيئة: ${res.created} فاتورة.`, "success");
+    migSumMsg.value = `ملخصات الديون ${performance.debtSummaries}؛ وإجماليات ${performance.invoices} فاتورة و${performance.customers} عميل.`;
+    notify("اكتملت تهيئة الملخصات والإجماليات.", "success");
     await fetchStats();
   } catch (e) {
     migSumMsg.value = "فشلت التهيئة.";
@@ -881,11 +868,8 @@ const typeOptions = computed(() => [
     value,
   })),
 ]);
-const currentPage = ref(1);
-const currentPerPage = ref(25);
-watch([typeFilter], () => {
-  currentPage.value = 1;
-});
+const currentPerPage = 25;
+watch(typeFilter, (value) => { void cashbox.fetchTransactions(currentPerPage, true, value); });
 
 const agg = computed(() => inventoryAggregates(products.list));
 
@@ -893,6 +877,7 @@ const agg = computed(() => inventoryAggregates(products.list));
 // so the numbers always match. Counts stay server-side (cheap).
 // Loaded in onMounted (never top-level await) so navigation never blocks.
 const statsLoading = ref(false);
+const statsReady = ref(false);
 const stats = ref({
   sales: 0,
   debts: 0,
@@ -903,27 +888,16 @@ const stats = ref({
 async function fetchStats(): Promise<void> {
   statsLoading.value = true;
   try {
-    const { db } = useFirebase();
-    const [all, invCount, cusCount] = await Promise.all([
-      invoicesStore.fetchInvoices().then(() => invoicesStore.list),
-      getCountFromServer(collection(db, "invoices")),
-      getCountFromServer(collection(db, "customers")),
-    ]);
-    let sales = 0;
-    let debts = 0;
-    let profits = 0;
-    for (const inv of all) {
-      const t = invoiceTotals(inv);
-      sales = round2(sales + t.net);
-      debts = round2(debts + outstandingDebtOf(inv));
-      profits = round2(profits + grossProfitOf(inv.products));
-    }
+    const snapshot = await getDoc(doc(db, "store_stats", "current"));
+    const data = snapshot.exists() ? snapshot.data() : null;
+    statsReady.value = data?.initialized === true;
+    if (!statsReady.value || !data) return;
     stats.value = {
-      sales,
-      debts,
-      profits,
-      invoices: invCount.data().count,
-      customers: cusCount.data().count,
+      sales: round2(toNum(data.total_sales)),
+      debts: round2(toNum(data.outstanding_customer_debt)),
+      profits: round2(toNum(data.total_profit)),
+      invoices: Math.max(0, Math.floor(toNum(data.invoice_count))),
+      customers: Math.max(0, Math.floor(toNum(data.customer_count))),
     };
   } catch (e) {
     console.error(e);
@@ -931,15 +905,7 @@ async function fetchStats(): Promise<void> {
     statsLoading.value = false;
   }
 }
-const filtered = computed(() =>
-  typeFilter.value
-    ? cashbox.transactions.filter((t) => t.type === typeFilter.value)
-    : [...cashbox.transactions],
-);
-const paged = computed(() => {
-  const s = (currentPage.value - 1) * currentPerPage.value;
-  return filtered.value.slice(s, s + currentPerPage.value);
-});
+const paged = computed(() => cashbox.transactions);
 
 function formatDateTime(v: unknown): string {
   const d = toDateSafe(v);

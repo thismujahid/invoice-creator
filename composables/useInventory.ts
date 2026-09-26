@@ -78,7 +78,7 @@ export const useInventory = defineStore("inventory", () => {
       paidNow: paid,
       note: input.note ?? null,
     });
-    if (res.ok) await products.fetchProducts();
+    if (res.ok) products.invalidateCache();
     return res;
   }
 
@@ -114,7 +114,7 @@ export const useInventory = defineStore("inventory", () => {
           created_at: serverTimestamp(),
         });
       });
-      await products.fetchProducts();
+      products.patchCached(input.product_id, { stock_quantity: target });
       return { ok: true };
     } catch (e) {
       if (e instanceof Error && e.message === "PRODUCT_MISSING") return { ok: false, error: "المنتج غير موجود." };

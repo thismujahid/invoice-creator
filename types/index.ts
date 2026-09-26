@@ -84,6 +84,8 @@ export interface Invoice {
   cashbox_applied?: boolean;
   // Returned quantities per product (maintained transactionally by returns flow).
   returned?: Record<string, number> | null;
+  return_status?: "none" | "partial" | "full";
+  returned_base_quantity?: number;
   created_by?: UserKey | null;
   products: InvoiceProductLine[];
   date?: InvoiceDate;

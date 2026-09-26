@@ -508,7 +508,6 @@ const { formatDate, formatTime12Hour, formatePrice, calcTotal } = useHelpers();
 const { isLowStock, unitsForProduct, lineBaseQuantity } = useFinance();
 const products = useProductsStore();
 const lowStockCount = computed(() => products.list.filter((p) => isLowStock(p)).length);
-const { onDocChange } = useFirebase();
 const invoices = useInvoicesStore();
 const customers = useCustomersStore();
 const authStore = useAuth();
@@ -964,8 +963,6 @@ async function updateInvoiceData(): Promise<void> {
     updating.value = false;
   }
 }
-const unSubCustomers = ref<(() => void) | undefined>();
-const usSubProds = ref<(() => void) | undefined>();
 onMounted(async () => {
   if (invoices.invoiceToEdit) {
     // HOME delta: don't let the autosync overwrite a stored paid_amount.
@@ -989,11 +986,5 @@ onMounted(async () => {
     }, 100);
   }
   await Promise.all([loadCustomers(), loadProds()]);
-  unSubCustomers.value = await onDocChange("customers", loadCustomers);
-  usSubProds.value = await onDocChange("products", () => loadProds());
-});
-onUnmounted(() => {
-  unSubCustomers.value?.();
-  usSubProds.value?.();
 });
 </script>

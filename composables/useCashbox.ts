@@ -1,4 +1,4 @@
-import { collection, doc, getDocs, limit as fsLimit, orderBy, query } from "firebase/firestore";
+import { collection, doc, getDocs, limit as fsLimit, orderBy, query, startAfter, where, type QueryDocumentSnapshot } from "firebase/firestore";
 import type { CashDirection, CashTransaction, CashTransactionType, Cashbox } from "~/types/finance";
 import { round2 } from "./finance";
 
@@ -24,6 +24,10 @@ export const useCashbox = defineStore("cashbox", () => {
   const loading = ref(false);
   const transactions = ref<CashTransaction[]>([]);
   const loadingTxns = ref(false);
+  const transactionsPage = ref(1);
+  const transactionsHasMore = ref(false);
+  const transactionCursors = ref<(QueryDocumentSnapshot | null)[]>([null]);
+  const transactionFilter = ref<string | null>(null);
 
   const CASHBOX_REF = () => doc(db, "cashbox", "current");
 
@@ -40,17 +44,42 @@ export const useCashbox = defineStore("cashbox", () => {
     }
   }
 
-  async function fetchTransactions(max = 200): Promise<void> {
+  async function fetchTransactions(max = 25, reset = true, type = transactionFilter.value): Promise<void> {
     loadingTxns.value = true;
     try {
-      const q = query(collection(db, "cash_transactions"), orderBy("created_at", "desc"), fsLimit(max));
+      if (reset) {
+        transactionFilter.value = type ?? null;
+        transactionsPage.value = 1;
+        transactionCursors.value = [null];
+      }
+      let q = query(collection(db, "cash_transactions"));
+      if (transactionFilter.value) q = query(q, where("type", "==", transactionFilter.value));
+      q = query(q, orderBy("created_at", "desc"));
+      const cursor = transactionCursors.value[transactionsPage.value - 1];
+      if (cursor) q = query(q, startAfter(cursor));
+      q = query(q, fsLimit(max + 1));
       const snap = await getDocs(q);
-      transactions.value = snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) }) as CashTransaction);
+      const docs = snap.docs.slice(0, max);
+      transactions.value = docs.map((d) => ({ id: d.id, ...(d.data() as object) }) as CashTransaction);
+      transactionsHasMore.value = snap.docs.length > max;
+      if (docs.length && transactionsHasMore.value) transactionCursors.value[transactionsPage.value] = docs.at(-1) ?? null;
     } catch (e) {
       notify("تعذر تحميل سجل الخزنة.", "error");
     } finally {
       loadingTxns.value = false;
     }
+  }
+
+  async function nextTransactionsPage(max = 25): Promise<void> {
+    if (loadingTxns.value || !transactionsHasMore.value) return;
+    transactionsPage.value += 1;
+    await fetchTransactions(max, false);
+  }
+
+  async function previousTransactionsPage(max = 25): Promise<void> {
+    if (loadingTxns.value || transactionsPage.value <= 1) return;
+    transactionsPage.value -= 1;
+    await fetchTransactions(max, false);
   }
 
   /** Atomic balance mutation + immutable ledger record (F29).
@@ -61,6 +90,7 @@ export const useCashbox = defineStore("cashbox", () => {
       return { ok: false, error: "المبلغ يجب أن يكون أكبر من صفر." };
     }
     try {
+      let resultingBalance = balance.value;
       await runTx(async (tx) => {
         const ref = CASHBOX_REF();
         const snap = await tx.get(ref);
@@ -69,10 +99,11 @@ export const useCashbox = defineStore("cashbox", () => {
           throw new Error("INSUFFICIENT_FUNDS");
         }
         const now = serverTimestamp();
+        resultingBalance = round2(input.direction === "in" ? current + amount : current - amount);
         tx.set(
           ref,
           {
-            balance: round2(input.direction === "in" ? current + amount : current - amount),
+            balance: resultingBalance,
             updated_at: now,
           },
           { merge: true },
@@ -95,7 +126,9 @@ export const useCashbox = defineStore("cashbox", () => {
           created_at: now,
         });
       });
-      await Promise.all([fetchCashbox(), fetchTransactions()]);
+      balance.value = resultingBalance;
+      initialized.value = true;
+      await fetchTransactions(25, true);
       return { ok: true };
     } catch (e) {
       if (e instanceof Error && e.message === "INSUFFICIENT_FUNDS") {
@@ -112,5 +145,5 @@ export const useCashbox = defineStore("cashbox", () => {
     return adjustCash({ type: "opening_balance", direction: "in", amount, note: note || "رصيد افتتاحي" });
   }
 
-  return { balance, initialized, loading, transactions, loadingTxns, fetchCashbox, fetchTransactions, adjustCash, ensureOpeningBalance };
+  return { balance, initialized, loading, transactions, loadingTxns, transactionsPage, transactionsHasMore, fetchCashbox, fetchTransactions, nextTransactionsPage, previousTransactionsPage, adjustCash, ensureOpeningBalance };
 });

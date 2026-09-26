@@ -1,8 +1,9 @@
 import { collection, doc, getDocs, limit as fsLimit, orderBy, query, where } from "firebase/firestore";
 import type { InvoiceReturn, InvoiceReturnItem } from "~/types/finance";
 import type { Invoice } from "~/types";
-import { applyStockGroup, lineRefundValue, lineUnitFactor, netRatioOf, outstandingDebtOf, round2, round4, splitRefund, toNum } from "./finance";
+import { applyStockGroup, lineBaseQuantity, lineRefundValue, lineUnitFactor, netRatioOf, outstandingDebtOf, round2, round4, splitRefund, toNum } from "./finance";
 import { summarizeInvoice, writeDebtSummary } from "./debtSummaries";
+import { writeCustomerSummaryDelta, writeStoreStatsDelta } from "./performanceSummaries";
 
 export interface ReturnLineInput {
   rowKey: string;
@@ -339,9 +340,13 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
         for (const it of retItems) {
           mergedReturned[it.product_id] = round2((mergedReturned[it.product_id] ?? 0) + Number(it.base_quantity ?? it.quantity));
         }
+        const returnedBaseQuantity = round2(Object.values(mergedReturned).reduce((sum, quantity) => sum + toNum(quantity), 0));
+        const soldBaseQuantity = round2((fresh.products ?? []).reduce((sum, line) => sum + lineBaseQuantity(line), 0));
         tx.update(invRef, {
           remaining: round2(remainingDebt - debtReduction),
           returned: mergedReturned,
+          returned_base_quantity: returnedBaseQuantity,
+          return_status: returnedBaseQuantity + EPS >= soldBaseQuantity ? "full" : "partial",
         });
         writeDebtSummary(tx, db, {
           invoice_id: invoice.id as string,
@@ -351,6 +356,8 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
           date: (fresh.date as unknown) ?? null,
           ...summarizeInvoice({ ...fresh, remaining: round2(remainingDebt - debtReduction) }),
         });
+        writeStoreStatsDelta(tx, db, { outstanding_customer_debt: -debtReduction });
+        writeCustomerSummaryDelta(tx, db, fresh, { outstanding_debt: -debtReduction });
         if (cashRefund > 0) {
           const cRef = doc(db, "cashbox", "current");
           tx.set(cRef, { balance: round2(cashBal - cashRefund), updated_at: now }, { merge: true });
@@ -369,6 +376,7 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
           });
         }
       });
+      useProductsStore().invalidateCache();
       return { ok: true, id: returnId, debtReduction, cashRefund };
     } catch (e) {
       if (e instanceof Error && e.message.startsWith("VALIDATION:")) {

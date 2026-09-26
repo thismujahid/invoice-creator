@@ -54,7 +54,7 @@
     <div class="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
       <UInput
         v-model="searchText"
-        placeholder="بحث بالاسم أو الهاتف"
+        placeholder="بحث في الصفحة بالاسم أو الهاتف"
         icon="i-lucide-search"
         size="lg"
         class="w-full"
@@ -66,7 +66,6 @@
         placeholder="الديون"
         size="lg"
         class="w-full"
-        @update:model-value="loadInvoices"
       />
       <div class="flex gap-2">
         <UiAppDateField
@@ -82,10 +81,7 @@
           size="xs"
           class="flex shrink-0 items-center justify-center"
           aria-label="مسح التاريخ"
-          @click="
-            selectedDate = null;
-            loadInvoices();
-          "
+          @click="selectedDate = null"
         />
       </div>
     </div>
@@ -97,7 +93,7 @@
             <div class="truncate text-base font-bold sm:text-lg">
               {{ hideTotal ? "***********" : totalPaidInvs }}
             </div>
-            <div class="text-xs text-gray-500">إجمالي المبيعات</div>
+            <div class="text-xs text-gray-500">مبيعات الصفحة الحالية</div>
           </div>
           <UIcon
             name="i-lucide-banknote"
@@ -111,7 +107,7 @@
             <div class="truncate text-base font-bold sm:text-lg">
               {{ hideTotal ? "***********" : totalProfit }}
             </div>
-            <div class="text-xs text-gray-500">إجمالي الأرباح <span class="text-gray-400">(شامل الديون)</span></div>
+              <div class="text-xs text-gray-500">أرباح الصفحة الحالية <span class="text-gray-400">(شامل الديون)</span></div>
           </div>
           <UIcon
             name="i-lucide-trending-up"
@@ -125,7 +121,7 @@
             <div class="truncate text-base font-bold sm:text-lg">
               {{ totalDebts }}
             </div>
-            <div class="text-xs text-gray-500">إجمالي الديون</div>
+            <div class="text-xs text-gray-500">ديون الصفحة الحالية</div>
           </div>
           <UIcon
             name="i-lucide-trending-down"
@@ -139,7 +135,7 @@
             <div class="truncate text-base font-bold sm:text-lg">
               {{ totalInvoices }}
             </div>
-            <div class="text-xs text-gray-500">إجمالي الفواتير</div>
+            <div class="text-xs text-gray-500">فواتير الصفحة الحالية</div>
           </div>
           <UIcon
             name="i-lucide-files"
@@ -354,20 +350,8 @@
       </div>
     </template>
     <div class="mt-3 flex items-center justify-between gap-2">
-      <USelect
-        v-model="currentPerPage"
-        :items="[10, 25, 50, 100, 150]"
-        size="sm"
-        class="w-24"
-      />
-      <UPagination
-        dir="ltr"
-        v-model:page="currentPage"
-        :total="filteredInvoices.length"
-        :items-per-page="currentPerPage"
-        :sibling-count="1"
-        size="sm"
-      />
+      <USelect v-model="currentPerPage" :items="[25, 50, 100]" size="sm" class="w-24" />
+      <div class="flex items-center gap-2"><span class="text-xs text-gray-500">صفحة {{ currentPage }}</span><div class="flex gap-2" dir="ltr"><UButton size="sm" color="neutral" variant="outline" icon="i-lucide-chevron-left" aria-label="الصفحة التالية" :disabled="loading || !hasMoreInvoices" @click="nextInvoicePage" /><UButton size="sm" color="neutral" variant="outline" icon="i-lucide-chevron-right" aria-label="الصفحة السابقة" :disabled="loading || currentPage <= 1" @click="previousInvoicePage" /></div></div>
     </div>
     <!-- View invoice -->
     <UiAppDialog v-model:open="viewOpen" title="عرض الفاتورة">
@@ -448,6 +432,7 @@
 import type { Invoice } from "~/types";
 import { toDateSafe } from "~/types";
 import type { ReturnRow } from "~/composables/useInvoiceReturns";
+import type { QueryDocumentSnapshot } from "firebase/firestore";
 
 definePageMeta({ title: "الفواتير" });
 const route = useRoute();
@@ -465,21 +450,19 @@ const selectedDate = ref<Date | null>(null);
 const startViewTotal = ref(false);
 const searchText = ref<string>("");
 const currentPage = ref(1);
-const currentPerPage = ref(10);
+const currentPerPage = ref(25);
+const invoiceCursors = ref<(QueryDocumentSnapshot | null)[]>([null]);
+const hasMoreInvoices = ref(false);
 const loading = ref(false);
 const exporting = ref(false);
 const deleting = ref(false);
 
 // Native date input applies immediately.
 watch(selectedDate, () => {
-  currentPage.value = 1;
-  void loadInvoices();
+  void loadInvoices(true);
 });
-
-// FLAG [B4-FIXED]: page reset moved to watcher — no side-effects inside computed.
-watch(searchText, () => {
-  currentPage.value = 1;
-});
+watch(paid_amount_filter, () => { void loadInvoices(true); });
+watch(currentPerPage, () => { void loadInvoices(true); });
 
 // HOME delta: settle debts in full (single or bulk) — preserved from home.
 async function payFull(listInvs: Invoice[] | null | undefined) {
@@ -523,7 +506,7 @@ async function payFull(listInvs: Invoice[] | null | undefined) {
       }
     }
     notifyToast("تم تسجيل السداد وتحديث الخزنة.", "success");
-    await Promise.all([loadInvoices(), loadReturnsMap()]);
+    await loadInvoices();
   } finally {
     isPayingFull.value = false;
   }
@@ -619,10 +602,7 @@ const sortedInvoices = computed<Invoice[]>(() =>
   }),
 );
 const paginateArray = computed(() => {
-  const startIndex = (currentPage.value - 1) * currentPerPage.value;
-  return sortedInvoices.value
-    .slice(startIndex, startIndex + currentPerPage.value)
-    .map((invoice) => ({
+  return sortedInvoices.value.map((invoice) => ({
       id: invoice.id,
       name: invoice.customer_name,
       phone: invoice.customer_phone,
@@ -640,7 +620,7 @@ const paginateArray = computed(() => {
         (invoice.date as { seconds?: number })?.seconds,
         true,
       ),
-    }));
+  }));
 });
 // FLAG [B1-FIXED]: clone before stripping id — never mutate the store row.
 // NOTE: Firestore Timestamp class instances are NOT structuredClone-able
@@ -659,19 +639,30 @@ function copyInvoiceForEdit(source: Invoice, stripId: boolean): void {
   invoicesStore.invoiceToEdit = clone;
   navigateTo("/");
 }
-async function loadInvoices() {
+function invoiceFilters() {
+  return {
+    remaining: paid_amount_filter.value ?? undefined,
+    date: selectedDate.value ?? undefined,
+    customer_id: route.query.customer_id ? String(route.query.customer_id) : undefined,
+    customer_name: route.query.customer_name ? String(route.query.customer_name) : undefined,
+    customer_phone: route.query.customer_phone ? String(route.query.customer_phone) : undefined,
+  };
+}
+async function loadInvoices(reset = false) {
   loading.value = true;
   try {
-    // HOME delta: debts filter (remaining >= 0.1) replaces creator filter.
-    await invoicesStore.fetchInvoices({
-      remaining: paid_amount_filter.value ?? undefined,
-      date: selectedDate.value ?? undefined,
-    });
+    if (reset) { currentPage.value = 1; invoiceCursors.value = [null]; }
+    const page = await invoicesStore.fetchInvoicePage(invoiceFilters(), invoiceCursors.value[currentPage.value - 1] ?? null, currentPerPage.value);
+    invoicesStore.list = page.items;
+    hasMoreInvoices.value = page.hasMore;
+    if (page.cursor) invoiceCursors.value[currentPage.value] = page.cursor;
   } finally {
     loading.value = false;
   }
 }
-watch(() => [route.query.customer_id, route.query.customer_name, route.query.customer_phone], () => { currentPage.value = 1; void loadInvoices(); });
+async function nextInvoicePage(): Promise<void> { if (!hasMoreInvoices.value || loading.value) return; currentPage.value += 1; await loadInvoices(); }
+async function previousInvoicePage(): Promise<void> { if (currentPage.value <= 1 || loading.value) return; currentPage.value -= 1; await loadInvoices(); }
+watch(() => [route.query.customer_id, route.query.customer_name, route.query.customer_phone], () => { void loadInvoices(true); });
 type InvoiceRow = {
   id?: string;
   name: string | null;
@@ -685,23 +676,10 @@ type InvoiceRow = {
   invoice: Invoice;
   created_at_object: Date;
 };
-// Derived return state per invoice (from invoice_returns, never mutating lines).
-const returnsByInvoice = ref(new Map<string, number>());
-async function loadReturnsMap(): Promise<void> {
-  const all = await returnsApi.fetchRecentReturns(500);
-  const m = new Map<string, number>();
-  for (const r of all) {
-    const sum = (r.items ?? []).reduce((s, it) => s + Number(it.base_quantity ?? toNum(it.quantity) * Number(it.unit_factor || 1)), 0);
-    m.set(r.invoice_id, round2((m.get(r.invoice_id) ?? 0) + sum));
-  }
-  returnsByInvoice.value = m;
-}
 function returnBadgeFor(inv: Invoice): string {
-  if (!inv.id) return "";
-  const returned = returnsByInvoice.value.get(inv.id) ?? 0;
-  if (returned <= 0) return "";
-  const sold = (inv.products ?? []).reduce((s, l) => s + lineBaseQuantity(l), 0);
-  return returned + 1e-9 >= sold ? "مرتجع كلي" : "مرتجع جزئي";
+  if (inv.return_status === "full") return "مرتجع كلي";
+  if (inv.return_status === "partial") return "مرتجع جزئي";
+  return "";
 }
 const viewRow = ref<InvoiceRow | null>(null);
 const viewOpen = computed({
@@ -740,9 +718,10 @@ async function handleSuccess(isSuccess: boolean) {
   }
   exporting.value = true;
   try {
-    const res = await invoicesStore.exportInvoicesToExcel(
-      filteredInvoices.value,
-    );
+    const allFiltered = await invoicesStore.fetchInvoicesForExport(invoiceFilters());
+    const queryText = searchText.value.trim().toLocaleLowerCase();
+    const matching = queryText ? allFiltered.filter((invoice) => `${invoice.customer_name ?? ""} ${invoice.customer_phone ?? ""}`.toLocaleLowerCase().includes(queryText)) : allFiltered;
+    const res = await invoicesStore.exportInvoicesToExcel(matching);
     authStore.snackBarText = res;
     authStore.snackBarColor = "success";
   } catch (err) {
@@ -819,11 +798,10 @@ async function submitReturn(): Promise<void> {
       "success",
     );
     returnInvoice.value = null;
-    await Promise.all([loadInvoices(), loadReturnsMap(), productsStore.fetchProducts()]);
+    await Promise.all([loadInvoices(), productsStore.fetchProducts()]);
   } finally {
     returnBusy.value = false;
   }
 }
 void loadInvoices();
-void loadReturnsMap();
 </script>

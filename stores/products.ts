@@ -6,19 +6,42 @@ export const useProductsStore = defineStore("products", () => {
   const { readFrom, saveDataTo, updateItem, deleteItem, db, serverTimestamp } = useFirebase();
   const authStore = useAuth();
   const list = ref<Product[]>([]);
+  const loaded = ref(false);
+  const lastFetchedAt = ref(0);
 
-  const fetchProducts = async (filters?: Record<string, string | number | boolean | Date | null | undefined>): Promise<boolean> => {
+  const fetchProducts = async (filters?: Record<string, string | number | boolean | Date | null | undefined>, force = false): Promise<boolean> => {
+    const filtered = !!filters && Object.values(filters).some((value) => value !== undefined && value !== null && value !== "");
+    if (!filtered && !force && loaded.value && Date.now() - lastFetchedAt.value < 30_000) return true;
     list.value = await readFrom<Product>("products", filters ?? {});
+    if (!filtered) { loaded.value = true; lastFetchedAt.value = Date.now(); }
     return true;
   };
 
   const addProduct = async (product: Omit<Product, "id">) => {
-    return await saveDataTo("products", product as Record<string, unknown>);
+    const ref = await saveDataTo("products", product as Record<string, unknown>);
+    if (ref) list.value.push({ ...product, id: ref.id });
+    return ref;
   };
 
   const updateProduct = async (id: string, updatedFields: Partial<Product>) => {
-    return await updateItem("products", id, updatedFields as Record<string, unknown>);
+    const result = await updateItem("products", id, updatedFields as Record<string, unknown>);
+    if (result !== null) patchCached(id, updatedFields);
+    return result;
   };
+
+  function patchCached(id: string, changes: Partial<Product>): void {
+    list.value = list.value.map((product) => product.id === id ? { ...product, ...changes } : product);
+  }
+
+  function upsertCached(product: Product): void {
+    const index = list.value.findIndex((item) => item.id === product.id);
+    if (index < 0) list.value = [...list.value, product];
+    else list.value = list.value.map((item) => item.id === product.id ? { ...item, ...product } : item);
+  }
+
+  function invalidateCache(): void {
+    loaded.value = false;
+  }
 
   const deleteProduct = async (id: string): Promise<boolean> => {
     const ok = await deleteItem("products", id);
@@ -88,5 +111,5 @@ export const useProductsStore = defineStore("products", () => {
     }
   }
 
-  return { list, fetchProducts, addProduct, updateProduct, deleteProduct, deleteProductWithRecovery };
+  return { list, loaded, lastFetchedAt, fetchProducts, addProduct, updateProduct, patchCached, upsertCached, invalidateCache, deleteProduct, deleteProductWithRecovery };
 });

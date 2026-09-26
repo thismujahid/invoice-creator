@@ -1,10 +1,10 @@
-import { collection, doc } from "firebase/firestore";
+import { collection, doc, getDocs, limit, orderBy, query, startAfter, where, type QueryDocumentSnapshot } from "firebase/firestore";
 import type {
   PurchaseInvoice,
   PurchaseInvoiceItem,
   SupplierPayment,
 } from "~/types/finance";
-import type { ProductUnit } from "~/types";
+import type { Product, ProductUnit } from "~/types";
 import {
   MAX_PURCHASE_ITEMS,
   applyStockGroup,
@@ -15,6 +15,7 @@ import {
   toNum,
 } from "./finance";
 import type { PriceDecision } from "./finance";
+import { writeSupplierSummaryDelta } from "./performanceSummaries";
 
 export interface PurchaseItemInput {
   /** Existing product id; null/undefined for brand-new products. */
@@ -69,11 +70,25 @@ export interface ExecutePurchaseResult {
   };
 }
 
+export interface PurchaseInvoicePageOptions {
+  supplierId?: string | null;
+  status?: "all" | "paid" | "partial" | "unpaid";
+  pageSize?: number;
+  cursor?: QueryDocumentSnapshot | null;
+}
+
+export interface PurchaseInvoicePage {
+  items: PurchaseInvoice[];
+  pinned: PurchaseInvoice[];
+  cursor: QueryDocumentSnapshot | null;
+  hasMore: boolean;
+}
+
 /** Unified purchase core: single dialog, bulk import — one code path (S5).
  *  Single atomic transaction: idempotency + reads + validations + invoice
  *  doc + stock/avg updates + logs + ONE cash movement for paidNow. */
 export const usePurchasing = defineStore("purchasing", () => {
-  const { db, serverTimestamp, readFrom, getDoc, updateItem } = useFirebase();
+  const { db, serverTimestamp, getDoc, updateItem } = useFirebase();
   const authStore = useAuth();
 
   const by = () => (authStore.currentUserKey as string) || null;
@@ -116,6 +131,8 @@ export const usePurchasing = defineStore("purchasing", () => {
     }
     try {
       let out: ExecutePurchaseResult = { ok: false, error: "خطأ غير متوقع." };
+      let cachedProductWrites: Product[] = [];
+      let cashBalanceAfterPurchase: number | null = null;
       await runTx(async (tx) => {
         // 0. Idempotency: same key twice = same intent → return existing.
         const invRef = doc(db, "purchase_invoices", input.idempotencyKey);
@@ -155,11 +172,12 @@ export const usePurchasing = defineStore("purchasing", () => {
         const cashReady = cSnap.exists();
         const bal = cashReady ? round2(Number(cSnap.data()?.balance || 0)) : 0;
         if (paid - bal > 1e-9) throw new Error("VALIDATION:المدفوع الآن يتجاوز رصيد الخزنة المتاح.");
+        if (paid > 0) cashBalanceAfterPurchase = round2(bal - paid);
         // 2. Per-item math (average + pricing decisions, re-derived fresh).
         const now = serverTimestamp();
         const byWho = by();
         const builtItems: PurchaseInvoiceItem[] = [];
-        const productWrites: { id: string; isNew: boolean; name: string; stock: number; cost: number; price: number; movementId: string; units?: ProductUnit[] }[] = [];
+        const productWrites: { id: string; isNew: boolean; name: string; stock: number; cost: number; price: number; movementId: string; units?: ProductUnit[]; base_unit_id?: string; base_unit_name?: string; low_stock_threshold?: number }[] = [];
         const invLogs: Record<string, unknown>[] = [];
         let seq = 0;
         for (const it of items) {
@@ -264,8 +282,19 @@ export const usePurchasing = defineStore("purchasing", () => {
               base_unit_cost: baseCost,
               line_total: round2(qty * unitCost),
             });
-            productWrites.push({ id: productId, isNew: true, name: String(it.name ?? "").trim(), stock: baseQty, cost: round4(baseCost), price, movementId });
-            (productWrites[productWrites.length - 1] as Record<string, unknown>).threshold = threshold;
+            productWrites.push({
+              id: productId,
+              isNew: true,
+              name: String(it.name ?? "").trim(),
+              stock: baseQty,
+              cost: round4(baseCost),
+              price,
+              movementId,
+              units: it.units?.length ? it.units : [{ id: it.base_unit_id || "base", name: it.base_unit_name || "وحدة", factor: 1, selling_price: price, is_base: true }],
+              base_unit_id: it.base_unit_id || "base",
+              base_unit_name: it.base_unit_name?.trim() || "وحدة",
+              low_stock_threshold: threshold,
+            });
             invLogs.push({
               type: "purchase",
               product_id: productId,
@@ -305,6 +334,11 @@ export const usePurchasing = defineStore("purchasing", () => {
           created_by: byWho,
           created_at: now,
         });
+        writeSupplierSummaryDelta(tx, db, { supplier_id: input.supplier_id, supplier_name: input.supplier_name }, {
+          invoice_count: 1,
+          total_purchases: total,
+          outstanding_payable: remaining,
+        });
         for (const w of productWrites) {
           if (w.isNew) {
             const ref = doc(db, "products", w.id);
@@ -316,11 +350,8 @@ export const usePurchasing = defineStore("purchasing", () => {
               stock_quantity: w.stock,
               base_unit_id: items.find((i) => !i.product_id && String(i.name ?? "").trim() === w.name)?.base_unit_id || "base",
               base_unit_name: items.find((i) => !i.product_id && String(i.name ?? "").trim() === w.name)?.base_unit_name?.trim() || "وحدة",
-              units: (() => {
-                const item = items.find((i) => !i.product_id && String(i.name ?? "").trim() === w.name);
-                return item?.units?.length ? item.units : [{ id: item?.base_unit_id || "base", name: item?.base_unit_name || "وحدة", factor: 1, selling_price: w.price, is_base: true }];
-              })(),
-              low_stock_threshold: (w as Record<string, unknown>).threshold ?? 5,
+              units: w.units,
+              low_stock_threshold: w.low_stock_threshold ?? 5,
               last_inventory_transaction_id: w.movementId,
               last_inventory_transaction_ids: [w.movementId],
               last_purchase_invoice_id: invRef.id,
@@ -337,6 +368,17 @@ export const usePurchasing = defineStore("purchasing", () => {
             });
           }
         }
+        cachedProductWrites = productWrites.map((w) => ({
+          id: w.id,
+          name: w.name,
+          price: w.price,
+          cost_price: w.cost,
+          stock_quantity: w.stock,
+          ...(w.units ? { units: w.units } : {}),
+          ...(w.base_unit_id ? { base_unit_id: w.base_unit_id } : {}),
+          ...(w.base_unit_name ? { base_unit_name: w.base_unit_name } : {}),
+          ...(w.low_stock_threshold !== undefined ? { low_stock_threshold: w.low_stock_threshold } : {}),
+        }));
         for (const movement of invLogs) {
           const { id, ...data } = movement;
           tx.set(doc(db, "inventory_transactions", String(id)), data);
@@ -358,8 +400,9 @@ export const usePurchasing = defineStore("purchasing", () => {
         }
         out = { ok: true, id: invRef.id, total, paid, remaining, fullyPaid: remaining <= 0 };
       });
-      await useProductsStore().fetchProducts();
-      await useCashbox().fetchCashbox();
+      const productsStore = useProductsStore();
+      for (const product of cachedProductWrites) productsStore.upsertCached(product);
+      if (cashBalanceAfterPurchase !== null) useCashbox().balance = cashBalanceAfterPurchase;
       return out;
     } catch (e) {
       if (e instanceof Error && e.message === "STALE_PRICING") {
@@ -390,6 +433,7 @@ export const usePurchasing = defineStore("purchasing", () => {
         error: "خطأ غير متوقع.",
       };
       let isDuplicate = false;
+      let resultingBalance: number | null = null;
       await runTx(async (tx) => {
         const payRef = doc(db, "supplier_payments", key);
         const paySnap = await tx.get(payRef);
@@ -417,8 +461,10 @@ export const usePurchasing = defineStore("purchasing", () => {
         const now = serverTimestamp();
         const byWho = by();
         const paid = round2(toNum(d.paid_amount) + pay);
+        resultingBalance = round2(bal - pay);
         const ids = [...((d.payment_ids as string[]) ?? []), key];
         tx.update(invRef, { paid_amount: paid, remaining_amount: round2(remaining - pay), payment_ids: ids });
+        writeSupplierSummaryDelta(tx, db, { supplier_id: d.supplier_id as string | null, supplier_name: d.supplier_name as string | null }, { outstanding_payable: -pay });
         tx.set(payRef, {
           purchase_invoice_id: invoiceId,
           reference_type: "supplier_invoice",
@@ -441,17 +487,16 @@ export const usePurchasing = defineStore("purchasing", () => {
           created_by: byWho,
           created_at: now,
         });
-        tx.set(cRef, { balance: round2(bal - pay), updated_at: now }, { merge: true });
+        tx.set(cRef, { balance: resultingBalance as number, updated_at: now }, { merge: true });
         out = { ok: true, remaining: round2(remaining - pay) };
       });
       if (isDuplicate) {
         // Already recorded: report current state instead of re-executing.
         const invSnap = await getDoc(doc(db, "purchase_invoices", invoiceId));
         const rem = invSnap.exists() ? round2(toNum((invSnap.data() as Record<string, unknown>).remaining_amount)) : 0;
-        await useCashbox().fetchCashbox();
         return { ok: true, remaining: rem, duplicate: true };
       }
-      await useCashbox().fetchCashbox();
+      if (resultingBalance !== null) useCashbox().balance = resultingBalance;
       return out;
     } catch (e) {
       if (e instanceof Error && e.message.startsWith("VALIDATION:")) {
@@ -462,26 +507,45 @@ export const usePurchasing = defineStore("purchasing", () => {
     }
   }
 
-  async function fetchPurchaseInvoices(): Promise<PurchaseInvoice[]> {
-    const list = (await readFrom<PurchaseInvoice>("purchase_invoices")) || [];
-    return [...list].sort((a, b) => {
-      const da = a.created_at && typeof a.created_at === "object" && "seconds" in (a.created_at as object)
-        ? Number((a.created_at as { seconds: number }).seconds)
-        : 0;
-      const db2 = b.created_at && typeof b.created_at === "object" && "seconds" in (b.created_at as object)
-        ? Number((b.created_at as { seconds: number }).seconds)
-        : 0;
-      return db2 - da;
-    });
+  async function fetchPurchaseInvoice(invoiceId: string): Promise<PurchaseInvoice | null> {
+    const snapshot = await getDoc(doc(db, "purchase_invoices", invoiceId));
+    return snapshot.exists() ? ({ id: snapshot.id, ...(snapshot.data() as object) }) as PurchaseInvoice : null;
+  }
+
+  async function fetchPurchaseInvoices(options: PurchaseInvoicePageOptions = {}): Promise<PurchaseInvoicePage> {
+    const pageSize = Math.min(100, Math.max(1, options.pageSize ?? 25));
+    const buildQuery = (pinnedOnly: boolean) => {
+      let q = query(collection(db, "purchase_invoices"));
+      if (options.supplierId) q = query(q, where("supplier_id", "==", options.supplierId));
+      if (pinnedOnly) q = query(q, where("pinned", "==", true));
+      if (options.status === "paid") q = query(q, where("remaining_amount", "==", 0));
+      if (options.status === "unpaid") q = query(q, where("paid_amount", "==", 0), where("remaining_amount", ">", 0));
+      if (options.status === "partial") q = query(q, where("paid_amount", ">", 0), where("remaining_amount", ">", 0));
+      q = query(q, orderBy("created_at", "desc"));
+      if (!pinnedOnly && options.cursor) q = query(q, startAfter(options.cursor));
+      return query(q, limit(pageSize + 1));
+    };
+    const [pageSnapshot, pinnedSnapshot] = await Promise.all([
+      getDocs(buildQuery(false)),
+      getDocs(buildQuery(true)),
+    ]);
+    const pageDocs = pageSnapshot.docs.slice(0, pageSize);
+    return {
+      items: pageDocs.map((d) => ({ id: d.id, ...(d.data() as object) }) as PurchaseInvoice),
+      pinned: pinnedSnapshot.docs.slice(0, pageSize).map((d) => ({ id: d.id, ...(d.data() as object) }) as PurchaseInvoice),
+      cursor: pageDocs.at(-1) ?? null,
+      hasMore: pageSnapshot.docs.length > pageSize,
+    };
   }
 
   async function fetchSupplierPayments(invoiceId: string): Promise<SupplierPayment[]> {
-    return readFrom<SupplierPayment>("supplier_payments", { purchase_invoice_id: invoiceId });
+    const snapshot = await getDocs(query(collection(db, "supplier_payments"), where("purchase_invoice_id", "==", invoiceId), orderBy("created_at", "desc"), limit(50)));
+    return snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as object) }) as SupplierPayment);
   }
 
   async function setPurchaseInvoicePinned(invoiceId: string, pinned: boolean): Promise<void> {
     await updateItem("purchase_invoices", invoiceId, { pinned });
   }
 
-  return { executePurchase, paySupplierInvoice, fetchPurchaseInvoices, fetchSupplierPayments, setPurchaseInvoicePinned };
+  return { executePurchase, paySupplierInvoice, fetchPurchaseInvoice, fetchPurchaseInvoices, fetchSupplierPayments, setPurchaseInvoicePinned };
 });

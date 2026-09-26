@@ -4,7 +4,7 @@
       <div><h1 class="text-xl font-bold">فواتير الموردين</h1><p class="text-sm text-gray-500">مشتريات ومستحقات الموردين مستقلة عن دفتر ديون العملاء.</p></div>
       <UButton color="success" icon="i-lucide-plus" @click="startDraft()">فاتورة مورد جديدة</UButton>
     </header>
-    <div class="grid gap-3 sm:grid-cols-3"><UCard variant="outline"><p class="text-xs text-gray-500">فواتير الموردين</p><b class="text-xl">{{ visibleInvoices.length }}</b></UCard><UCard variant="outline"><p class="text-xs text-gray-500">إجمالي المشتريات</p><b class="text-xl">{{ formatePrice(totalPurchases) }} ج</b></UCard><UCard variant="outline"><p class="text-xs text-gray-500">إجمالي المستحق</p><b class="text-xl text-red-600">{{ formatePrice(totalPayable) }} ج</b></UCard></div>
+    <div class="grid gap-3 sm:grid-cols-3"><UCard variant="outline"><p class="text-xs text-gray-500">فواتير الصفحة</p><b class="text-xl">{{ pageInvoices.length }}</b></UCard><UCard variant="outline"><p class="text-xs text-gray-500">مشتريات الصفحة</p><b class="text-xl">{{ formatePrice(totalPurchases) }} ج</b></UCard><UCard variant="outline"><p class="text-xs text-gray-500">مستحق الصفحة</p><b class="text-xl text-red-600">{{ formatePrice(totalPayable) }} ج</b></UCard></div>
     <div class="flex flex-wrap gap-2"><UInput v-model="search" icon="i-lucide-search" placeholder="بحث بالمورد أو رقم الفاتورة" class="w-full sm:max-w-sm" /><USelect v-model="statusFilter" :items="[{ label: 'كل الحالات', value: 'all' }, { label: 'غير مسددة', value: 'unpaid' }, { label: 'مسددة جزئيًا', value: 'partial' }, { label: 'مسددة', value: 'paid' }]" value-key="value" label-key="label" class="w-full sm:w-44" /></div>
     <USkeleton v-if="loading" class="h-24 w-full" />
     <div v-else class="space-y-3">
@@ -15,6 +15,7 @@
         </div>
       </UCard>
       <UEmpty v-if="!visibleInvoices.length" icon="i-lucide-receipt" title="لا توجد فواتير موردين" />
+      <div class="flex items-center justify-between gap-2 pt-2"><span class="text-xs text-gray-500">صفحة {{ pageNumber }} · حتى 25 فاتورة</span><div class="flex gap-2" dir="ltr"><UButton size="sm" color="neutral" variant="outline" icon="i-lucide-chevron-left" aria-label="الصفحة التالية" :disabled="loading || !hasMore" @click="nextPage" /><UButton size="sm" color="neutral" variant="outline" icon="i-lucide-chevron-right" aria-label="الصفحة السابقة" :disabled="loading || pageNumber <= 1" @click="previousPage" /></div></div>
     </div>
 
     <UiAppDialog v-model:open="draftOpen" :title="draftSource ? 'مسودة فاتورة جديدة من فاتورة سابقة' : 'فاتورة مورد جديدة'">
@@ -59,6 +60,7 @@
 <script setup lang="ts">
 import type { Product, ProductUnit } from "~/types";
 import type { PurchaseInvoice, PurchaseInvoiceItem, Supplier, SupplierPayment } from "~/types/finance";
+import type { QueryDocumentSnapshot } from "firebase/firestore";
 import { supplierInvoiceStatus } from "~/types/finance";
 import { proposedSellingPrice, round2, toNum, unitsForProduct } from "~/composables/finance";
 import { toDateSafe } from "~/types";
@@ -73,7 +75,11 @@ const productsStore = useProductsStore();
 const suppliers = useSuppliersStore();
 const purchasing = usePurchasing();
 const cashbox = useCashbox();
-const invoices = ref<PurchaseInvoice[]>([]);
+const pinnedInvoices = ref<PurchaseInvoice[]>([]);
+const pageInvoices = ref<PurchaseInvoice[]>([]);
+const pageNumber = ref(1);
+const hasMore = ref(false);
+const pageCursors = ref<(QueryDocumentSnapshot | null)[]>([null]);
 const loading = ref(true);
 const search = ref("");
 const statusFilter = ref("all");
@@ -91,15 +97,14 @@ const priceModeItems = [{ label: "الإبقاء على السعر الحالي"
 const draftTotal = computed(() => round2(draftLines.value.reduce((sum, line) => sum + toNum(line.quantity) * toNum(line.unit_cost), 0)));
 const draftReady = computed(() => !savingDraft.value && !!(draftSupplier.value?.id || (draftSource.value && supplierName.value.trim())) && draftLines.value.length > 0 && draftLines.value.every((line) => line.product?.id && line.quantity > 0 && line.unit_cost >= 0 && (!pricePolicyApplies(line) || line.priceMode !== "keep") && (line.priceMode !== "proposed" || previewLine(line).proposed !== null && Number(line.approvedProposal) >= 0) && (line.priceMode !== "custom" || Number(line.customPrice) >= 0)) && toNum(paidNow.value) >= 0 && toNum(paidNow.value) <= draftTotal.value && toNum(paidNow.value) <= cashbox.balance);
 const draftMessage = computed(() => draftError.value);
-const visibleInvoices = computed(() => invoices.value.filter((invoice) => {
+const visibleInvoices = computed(() => [...new Map([...pinnedInvoices.value, ...pageInvoices.value].map((invoice) => [invoice.id, invoice])).values()].filter((invoice) => {
   const query = search.value.trim().toLocaleLowerCase();
   const matchesSearch = !query || `${invoice.supplier_name ?? ""} ${invoice.invoice_number ?? ""} ${invoice.supplier_ref ?? ""}`.toLocaleLowerCase().includes(query);
   const matchesSupplier = !route.query.supplier || invoice.supplier_id === String(route.query.supplier);
-  const status = supplierInvoiceStatus(invoice);
-  return matchesSearch && matchesSupplier && (statusFilter.value === "all" || status === statusFilter.value);
+  return matchesSearch && matchesSupplier;
 }));
-const totalPurchases = computed(() => round2(visibleInvoices.value.reduce((sum, invoice) => sum + toNum(invoice.total_amount), 0)));
-const totalPayable = computed(() => round2(visibleInvoices.value.reduce((sum, invoice) => sum + toNum(invoice.remaining_amount), 0)));
+const totalPurchases = computed(() => round2(pageInvoices.value.reduce((sum, invoice) => sum + toNum(invoice.total_amount), 0)));
+const totalPayable = computed(() => round2(pageInvoices.value.reduce((sum, invoice) => sum + toNum(invoice.remaining_amount), 0)));
 const detailsOpen = ref(false);
 const selectedInvoice = ref<PurchaseInvoice | null>(null);
 const paymentOpen = ref(false);
@@ -160,7 +165,6 @@ function startDraft(source?: PurchaseInvoice): void {
   paidNow.value = 0;
   draftError.value = "";
   requestKey.value = id();
-  void cashbox.fetchCashbox();
   draftOpen.value = true;
 }
 function priceDecision(line: DraftLine): { mode: "keep" } | { mode: "proposed"; approvedProposed: number; price?: number } | { mode: "custom"; price: number; approvedProposed?: number | null } {
@@ -195,17 +199,39 @@ async function confirmDraft(): Promise<void> {
     if (!result.ok) { draftError.value = result.error || "تعذر حفظ الفاتورة."; return; }
     notify(result.remaining ? `فاتورة الشراء سُجلت، والمتبقي للمورد ${formatePrice(result.remaining)} ج.` : "تم تسجيل فاتورة الشراء مدفوعة بالكامل.", "success");
     draftOpen.value = false;
-    await reload();
+    await reload(true);
   } finally { savingDraft.value = false; }
 }
 function openDetails(invoice: PurchaseInvoice): void { selectedInvoice.value = invoice; detailsOpen.value = true; }
 function printInvoice(): void { if (import.meta.client) window.print(); }
-async function togglePin(invoice: PurchaseInvoice): Promise<void> { if (!invoice.id) return; await purchasing.setPurchaseInvoicePinned(invoice.id, !invoice.pinned); await reload(); }
-function openPayment(invoice: PurchaseInvoice): void { paymentTarget.value = invoice; paymentAmount.value = undefined; paymentNote.value = ""; paymentKey.value = id(); void cashbox.fetchCashbox(); paymentOpen.value = true; }
-async function submitPayment(): Promise<void> { if (!paymentTarget.value?.id || paymentError.value || paying.value) return; paying.value = true; try { const result = await purchasing.paySupplierInvoice(paymentTarget.value.id, Number(paymentAmount.value), paymentNote.value.trim() || null, paymentKey.value); if (!result.ok) { notify(result.error, "error"); return; } notify(result.remaining ? `تم تسجيل السداد، والمتبقي ${formatePrice(result.remaining)} ج.` : "تم سداد فاتورة المورد بالكامل.", "success"); paymentOpen.value = false; await reload(); } finally { paying.value = false; } }
+async function togglePin(invoice: PurchaseInvoice): Promise<void> { if (!invoice.id) return; await purchasing.setPurchaseInvoicePinned(invoice.id, !invoice.pinned); await reload(true); }
+function openPayment(invoice: PurchaseInvoice): void { paymentTarget.value = invoice; paymentAmount.value = undefined; paymentNote.value = ""; paymentKey.value = id(); paymentOpen.value = true; }
+async function submitPayment(): Promise<void> { if (!paymentTarget.value?.id || paymentError.value || paying.value) return; paying.value = true; try { const amount = Number(paymentAmount.value); const result = await purchasing.paySupplierInvoice(paymentTarget.value.id, amount, paymentNote.value.trim() || null, paymentKey.value); if (!result.ok) { notify(result.error, "error"); return; } const update = (items: PurchaseInvoice[]) => items.map((item) => item.id === paymentTarget.value?.id ? { ...item, paid_amount: round2(item.paid_amount + amount), remaining_amount: result.remaining } : item); pageInvoices.value = update(pageInvoices.value); pinnedInvoices.value = update(pinnedInvoices.value); notify(result.remaining ? `تم تسجيل السداد، والمتبقي ${formatePrice(result.remaining)} ج.` : "تم سداد فاتورة المورد بالكامل.", "success"); paymentOpen.value = false; } finally { paying.value = false; } }
 async function loadPayments(invoice: PurchaseInvoice): Promise<void> { if (!invoice.id) return; paymentsOpen.value = true; payments.value = await purchasing.fetchSupplierPayments(invoice.id); }
-async function reload(): Promise<void> { loading.value = true; try { const [items] = await Promise.all([purchasing.fetchPurchaseInvoices(), productsStore.fetchProducts(), suppliers.fetchSuppliers(), cashbox.fetchCashbox()]); invoices.value = items.sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned)); } finally { loading.value = false; } }
-onMounted(async () => { await reload(); if (route.query.new === "1") startDraft(); else if (route.query.invoice) { const target = invoices.value.find((invoice) => invoice.id === String(route.query.invoice)); if (target) openDetails(target); } });
+async function reload(reset = false): Promise<void> {
+  loading.value = true;
+  try {
+    if (reset) { pageNumber.value = 1; pageCursors.value = [null]; }
+    const page = await purchasing.fetchPurchaseInvoices({ supplierId: route.query.supplier ? String(route.query.supplier) : null, status: statusFilter.value as "all" | "paid" | "partial" | "unpaid", pageSize: 25, cursor: pageCursors.value[pageNumber.value - 1] });
+    pageInvoices.value = page.items;
+    pinnedInvoices.value = page.pinned;
+    hasMore.value = page.hasMore;
+    if (page.cursor) pageCursors.value[pageNumber.value] = page.cursor;
+  } finally { loading.value = false; }
+}
+async function nextPage(): Promise<void> { if (!hasMore.value || loading.value) return; pageNumber.value += 1; await reload(); }
+async function previousPage(): Promise<void> { if (pageNumber.value <= 1 || loading.value) return; pageNumber.value -= 1; await reload(); }
+watch(statusFilter, () => { void reload(true); });
+watch(() => route.query.supplier, () => { void reload(true); });
+onMounted(async () => {
+  await Promise.all([reload(true), productsStore.fetchProducts(), suppliers.fetchSuppliers(), cashbox.fetchCashbox()]);
+  if (route.query.new === "1") startDraft();
+  else if (route.query.invoice) {
+    const invoiceId = String(route.query.invoice);
+    const target = [...pinnedInvoices.value, ...pageInvoices.value].find((invoice) => invoice.id === invoiceId) ?? await purchasing.fetchPurchaseInvoice(invoiceId);
+    if (target) openDetails(target);
+  }
+});
 </script>
 
 <style scoped>

@@ -1,11 +1,13 @@
 import * as XLSX from "xlsx/dist/xlsx.full.min.js";
-import { collection, doc, getDocs, limit as fsLimit, query, where } from "firebase/firestore";
+import { and, collection, doc, getDocs, limit as fsLimit, orderBy, or, query, startAfter, Timestamp, where, type Query, type QueryDocumentSnapshot } from "firebase/firestore";
 import type { Invoice } from "~/types";
 import { toDateSafe } from "~/types";
 import { applyStockGroup, lineBaseQuantity, restoreGroupsForEdit, round2, round4, stockDeltaForEdit, toNum } from "~/composables/finance";
 import { summarizeInvoice, writeDebtSummary } from "~/composables/debtSummaries";
+import { customerSummaryId, invoiceSummaryDelta, writeCustomerSummaryDelta, writeStoreStatsDelta } from "~/composables/performanceSummaries";
 
 const STOCK_EPS = 1e-9;
+const INVOICE_PAGE_SIZE = 25;
 
 export const useInvoicesStore = defineStore("invoices", () => {
   const { readFrom, saveDataTo, updateItem, deleteItem, db, serverTimestamp, getDoc } = useFirebase();
@@ -13,6 +15,56 @@ export const useInvoicesStore = defineStore("invoices", () => {
   const { notify } = useAppToast();
   const list = ref<Invoice[]>([]);
   const invoiceToEdit = ref<Invoice | undefined>(undefined);
+
+  function invoicesQuery(filters: Record<string, string | number | boolean | Date | null | undefined>) {
+    let q: Query = collection(db, "invoices");
+    if (filters.date instanceof Date) {
+      const start = new Date(filters.date); start.setHours(0, 0, 0, 0);
+      const end = new Date(filters.date); end.setHours(23, 59, 59, 999);
+      q = query(q, where("date", ">=", Timestamp.fromDate(start)), where("date", "<=", Timestamp.fromDate(end)));
+    }
+    if (filters.remaining) q = query(q, where("remaining", ">=", 0.1));
+    const customerId = String(filters.customer_id ?? "");
+    const customerName = String(filters.customer_name ?? "");
+    const customerPhone = filters.customer_phone;
+    if (customerId && customerName && customerPhone !== undefined && customerPhone !== "") {
+      q = query(q, or(where("customer_id", "==", customerId), and(where("customer_name", "==", customerName), where("customer_phone", "==", customerPhone))));
+    } else if (customerId) q = query(q, where("customer_id", "==", customerId));
+    else if (customerName && customerPhone !== undefined && customerPhone !== "") q = query(q, and(where("customer_name", "==", customerName), where("customer_phone", "==", customerPhone)));
+    return q;
+  }
+
+  async function fetchInvoicePage(
+    filters: Record<string, string | number | boolean | Date | null | undefined>,
+    cursor: QueryDocumentSnapshot | null,
+    pageSize = INVOICE_PAGE_SIZE,
+  ): Promise<{ items: Invoice[]; cursor: QueryDocumentSnapshot | null; hasMore: boolean }> {
+    try {
+      let q = query(invoicesQuery(filters), orderBy("date", "desc"));
+      if (cursor) q = query(q, startAfter(cursor));
+      q = query(q, fsLimit(pageSize + 1));
+      const snapshot = await getDocs(q);
+      const docs = snapshot.docs.slice(0, pageSize);
+      return {
+        items: docs.map((d) => ({ id: d.id, ...(d.data() as object) }) as Invoice),
+        cursor: docs.at(-1) ?? null,
+        hasMore: snapshot.docs.length > pageSize,
+      };
+    } catch (error) {
+      console.error("Unable to load invoice page:", error);
+      return { items: [], cursor: null, hasMore: false };
+    }
+  }
+
+  async function fetchInvoicesForExport(filters: Record<string, string | number | boolean | Date | null | undefined>): Promise<Invoice[]> {
+    try {
+      const snapshot = await getDocs(query(invoicesQuery(filters), orderBy("date", "desc")));
+      return snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as object) }) as Invoice);
+    } catch (error) {
+      console.error("Unable to load invoices for explicit export:", error);
+      return [];
+    }
+  }
 
   const fetchInvoices = async (filters: Record<string, string | number | boolean | Date | null | undefined> = {}): Promise<boolean> => {
     list.value = await readFrom<Invoice>("invoices", filters);
@@ -99,6 +151,13 @@ export const useInvoicesStore = defineStore("invoices", () => {
           date: (payload.date as unknown) ?? null,
           ...summarizeInvoice(payload as Invoice),
         });
+        writeStoreStatsDelta(tx, db, invoiceSummaryDelta(payload as Invoice, 1));
+        const newSummary = summarizeInvoice(payload as Invoice);
+        writeCustomerSummaryDelta(tx, db, payload as Invoice, {
+          invoice_count: 1,
+          total_sales: newSummary.total,
+          outstanding_debt: newSummary.remaining,
+        });
         // 4. Stock (final balances from step 1) + per-line inventory logs.
         // Logs carry the same txn-fresh snapshot cost as the saved lines.
         let saleSeq = 0;
@@ -154,6 +213,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
           });
         }
       });
+      useProductsStore().invalidateCache();
       return { ok: true, id: invoiceId, cashSkipped };
     } catch (e) {
       if (e instanceof Error && e.message.startsWith("VALIDATION:")) {
@@ -249,6 +309,32 @@ export const useInvoicesStore = defineStore("invoices", () => {
           date: (effectivePayload.date as unknown) ?? null,
           ...summarizeInvoice(effectivePayload as Invoice),
         });
+        const oldSummary = summarizeInvoice(orig as unknown as Invoice);
+        const newSummary = summarizeInvoice(effectivePayload as Invoice);
+        writeStoreStatsDelta(tx, db, {
+          total_sales: round2(newSummary.total - oldSummary.total),
+          outstanding_customer_debt: round2(newSummary.remaining - oldSummary.remaining),
+          total_profit: round2(newSummary.profit - oldSummary.profit),
+        });
+        const oldCustomerSummaryId = customerSummaryId(orig as unknown as Invoice);
+        const newCustomerSummaryId = customerSummaryId(effectivePayload as Invoice);
+        if (oldCustomerSummaryId === newCustomerSummaryId) {
+          writeCustomerSummaryDelta(tx, db, effectivePayload as Invoice, {
+            total_sales: round2(newSummary.total - oldSummary.total),
+            outstanding_debt: round2(newSummary.remaining - oldSummary.remaining),
+          });
+        } else {
+          writeCustomerSummaryDelta(tx, db, orig as unknown as Invoice, {
+            invoice_count: -1,
+            total_sales: -oldSummary.total,
+            outstanding_debt: -oldSummary.remaining,
+          });
+          writeCustomerSummaryDelta(tx, db, effectivePayload as Invoice, {
+            invoice_count: 1,
+            total_sales: newSummary.total,
+            outstanding_debt: newSummary.remaining,
+          });
+        }
         // 5. Stock + logs. Takes leave cost untouched; each restore group
         // re-enters at its own historical cost with its own log. Product
         // updates go through the canonical applyStockGroup (mirrors replay).
@@ -338,6 +424,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
           });
         }
       });
+      useProductsStore().invalidateCache();
       return { ok: true, cashSkipped };
     } catch (e) {
       if (e instanceof Error && e.message.startsWith("VALIDATION:")) {
@@ -487,6 +574,8 @@ export const useInvoicesStore = defineStore("invoices", () => {
     list,
     invoiceToEdit,
     fetchInvoices,
+    fetchInvoicePage,
+    fetchInvoicesForExport,
     addInvoice,
     updateInvoice,
     createInvoiceWithAccounting,

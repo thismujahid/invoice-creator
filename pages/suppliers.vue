@@ -13,9 +13,9 @@
           <div class="flex gap-1"><UButton size="xs" color="neutral" variant="soft" icon="i-lucide-pencil" aria-label="تعديل" @click="openEditor(supplier)" /><UButton size="xs" color="error" variant="soft" icon="i-lucide-trash-2" aria-label="حذف" :disabled="deleting === supplier.id" @click="removeSupplier(supplier)" /></div>
         </div>
         <div class="mt-4 grid grid-cols-3 gap-2 border-t border-gray-100 pt-3 text-center text-xs">
-          <div><b class="block text-sm">{{ summaries[supplier.id || '']?.count ?? 0 }}</b><span class="text-gray-500">فواتير شراء</span></div>
-          <div><b class="block text-sm">{{ formatePrice(summaries[supplier.id || '']?.total ?? 0) }} ج</b><span class="text-gray-500">إجمالي المشتريات</span></div>
-          <div><b class="block text-sm text-red-600">{{ formatePrice(summaries[supplier.id || '']?.remaining ?? 0) }} ج</b><span class="text-gray-500">مستحق للمورد</span></div>
+          <div><b class="block text-sm">{{ summaries[supplier.id || '']?.initialized ? summaries[supplier.id || '']?.count : '—' }}</b><span class="text-gray-500">فواتير شراء</span></div>
+          <div><b class="block text-sm">{{ summaries[supplier.id || '']?.initialized ? `${formatePrice(summaries[supplier.id || '']?.total)} ج` : '—' }}</b><span class="text-gray-500">إجمالي المشتريات</span></div>
+          <div><b class="block text-sm text-red-600">{{ summaries[supplier.id || '']?.initialized ? `${formatePrice(summaries[supplier.id || '']?.remaining)} ج` : '—' }}</b><span class="text-gray-500">مستحق للمورد</span></div>
         </div>
         <div class="mt-3 flex gap-2"><UButton size="sm" color="neutral" variant="soft" icon="i-lucide-files" class="flex-1" :to="`/supplier-invoices?supplier=${supplier.id}`">عرض الفواتير</UButton><UButton size="sm" color="success" variant="soft" icon="i-lucide-plus" class="flex-1" :to="`/supplier-invoices?supplier=${supplier.id}&new=1`">فاتورة جديدة</UButton></div>
       </UCard>
@@ -29,37 +29,24 @@
 </template>
 
 <script setup lang="ts">
-import type { Supplier, PurchaseInvoice } from "~/types/finance";
-import { toNum } from "~/composables/finance";
+import type { Supplier } from "~/types/finance";
+import { collection, getDocs } from "firebase/firestore";
 import { useSuppliersStore } from "~/stores/suppliers";
 
 definePageMeta({ title: "الموردون" });
 const store = useSuppliersStore();
-const purchasing = usePurchasing();
 const { formatePrice } = useHelpers();
 const { notify } = useAppToast();
 const loading = ref(true);
 const saving = ref(false);
 const deleting = ref("");
 const search = ref("");
-const invoices = ref<PurchaseInvoice[]>([]);
+const summaries = ref<Record<string, { count: number; total: number; remaining: number; initialized: boolean }>>({});
 const editorOpen = ref(false);
 const editing = ref<Supplier | null>(null);
 const error = ref("");
 const form = reactive({ name: "", phone: "", address: "", notes: "" });
 const filtered = computed(() => store.list.filter((supplier) => !search.value || supplier.name.toLocaleLowerCase().includes(search.value.trim().toLocaleLowerCase())));
-const summaries = computed(() => {
-  const result: Record<string, { count: number; total: number; remaining: number }> = {};
-  for (const invoice of invoices.value) {
-    const supplierId = invoice.supplier_id || store.list.find((supplier) => supplier.name.trim().toLocaleLowerCase() === String(invoice.supplier_name ?? "").trim().toLocaleLowerCase())?.id;
-    if (!supplierId) continue;
-    const sum = result[supplierId] ??= { count: 0, total: 0, remaining: 0 };
-    sum.count += 1;
-    sum.total += toNum(invoice.total_amount);
-    sum.remaining += toNum(invoice.remaining_amount);
-  }
-  return result;
-});
 function openEditor(supplier?: Supplier): void {
   editing.value = supplier ?? null;
   form.name = supplier?.name ?? "";
@@ -94,7 +81,21 @@ async function removeSupplier(supplier: Supplier): Promise<void> {
 }
 onMounted(async () => {
   loading.value = true;
-  try { await Promise.all([store.fetchSuppliers(), purchasing.fetchPurchaseInvoices().then((value) => invoices.value = value)]); }
+  try {
+    const { db } = useFirebase();
+    const [_, snapshot] = await Promise.all([store.fetchSuppliers(), getDocs(collection(db, "supplier_summaries"))]);
+    const result: typeof summaries.value = {};
+    for (const item of snapshot.docs) {
+      const data = item.data();
+      result[data.supplier_id || item.id] = {
+        count: Math.max(0, Number(data.invoice_count) || 0),
+        total: Math.max(0, Number(data.total_purchases) || 0),
+        remaining: Math.max(0, Number(data.outstanding_payable) || 0),
+        initialized: data.initialized === true,
+      };
+    }
+    summaries.value = result;
+  }
   finally { loading.value = false; }
 });
 </script>
