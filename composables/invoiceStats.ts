@@ -42,8 +42,12 @@ export function invoiceStatsOf(invoice: Invoice | null | undefined): InvoiceStat
   const paid = invoice.paid_amount === null || invoice.paid_amount === undefined
     ? round2(Math.max(0, totals.net - remaining))
     : round2(toNum(invoice.paid_amount));
-  const totalCost = round2((invoice.products ?? []).reduce((sum, line) =>
-    sum + toNum(line.product_cost_price) * lineBaseQuantity(line), 0));
+  const totalCost = round2((invoice.products ?? []).reduce((sum, line) => {
+    if (Array.isArray(line.cost_groups) && line.cost_groups.length) {
+      return sum + line.cost_groups.reduce((groupSum, group) => groupSum + toNum(group.base_quantity) * toNum(group.unit_cost), 0);
+    }
+    return sum + toNum(line.product_cost_price) * lineBaseQuantity(line);
+  }, 0));
   const status = invoicePaymentStatus(invoice);
   return {
     total_sales: totals.net,

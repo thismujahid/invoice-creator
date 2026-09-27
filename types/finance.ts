@@ -14,6 +14,7 @@ export type CashTransactionType =
   | "invoice_sale"
   | "invoice_payment"
   | "invoice_refund"
+  | "invoice_edit_adjustment"
   | "customer_loan"
   | "loan_payment"
   | "inventory_purchase"
@@ -50,6 +51,7 @@ export const CASH_TYPE_LABELS: Record<CashTransactionType, string> = {
   invoice_sale: "بيع فاتورة",
   invoice_payment: "تحصيل باقي فاتورة",
   invoice_refund: "مرتجع فاتورة",
+  invoice_edit_adjustment: "تسوية تعديل فاتورة",
   customer_loan: "سلفة لعميل",
   loan_payment: "تحصيل سلفة",
   inventory_purchase: "شراء مخزون",
@@ -82,6 +84,7 @@ export interface InventoryTransaction {
   invoice_id?: string | null;
   return_id?: string | null;
   purchase_invoice_id?: string | null;
+  reason?: string | null;
   /** Write order inside one atomic batch; replay sorts by (created_at, seq). */
   seq?: number | null;
   note?: string | null;
@@ -197,6 +200,7 @@ export interface InvoiceReturnItem {
   original_unit_price: number;
   original_unit_cost?: number;
   source_line_index?: number;
+  source_cost_group_index?: number;
   refund_amount: number;
 }
 

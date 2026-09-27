@@ -46,6 +46,7 @@ export interface Customer {
 }
 
 export interface InvoiceProductLine {
+  line_id?: string;
   product_id?: string;
   product_name: string;
   product_price: number;
@@ -56,6 +57,7 @@ export interface InvoiceProductLine {
   unit_factor?: number;
   base_quantity?: number;
   base_cost_snapshot?: number;
+  cost_groups?: { base_quantity: number; unit_cost: number }[];
   total?: number;
   option?: string;
   order?: number | null;
@@ -86,6 +88,7 @@ export interface Invoice {
   returned?: Record<string, number> | null;
   return_status?: "none" | "partial" | "full";
   returned_base_quantity?: number;
+  debt_payment_count?: number;
   created_by?: UserKey | null;
   products: InvoiceProductLine[];
   date?: InvoiceDate;

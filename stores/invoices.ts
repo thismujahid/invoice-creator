@@ -2,7 +2,7 @@ import * as XLSX from "xlsx/dist/xlsx.full.min.js";
 import { and, collection, doc, getDocs, limit as fsLimit, orderBy, or, query, startAfter, Timestamp, where, type Query, type QueryDocumentSnapshot } from "firebase/firestore";
 import type { Invoice } from "~/types";
 import { toDateSafe } from "~/types";
-import { applyStockGroup, lineBaseQuantity, restoreGroupsForEdit, round2, round4, stockDeltaForEdit, toNum } from "~/composables/finance";
+import { applyStockGroup, invoiceEditCashOutflowError, invoiceEditCustomerChangeError, invoiceEditPaymentError, invoiceEditStockChanges, invoiceHasReturnHistory, invoiceTotals, lineBaseQuantity, lineUnitFactor, round2, round4, toNum } from "~/composables/finance";
 import { summarizeInvoice, writeDebtSummary } from "~/composables/debtSummaries";
 import { customerSummaryId, writeCustomerSummaryDelta, writeInvoiceStatsDelta } from "~/composables/performanceSummaries";
 
@@ -85,7 +85,9 @@ export const useInvoicesStore = defineStore("invoices", () => {
   async function createInvoiceWithAccounting(
     payload: Omit<Invoice, "id">,
   ): Promise<{ ok: true; id: string; cashSkipped: boolean } | { ok: false; error: string }> {
-    const lines = (payload.products ?? []).filter((l) => l.product_id && toNum(l.product_quantity) > 0);
+    const lines = (payload.products ?? [])
+      .filter((l) => l.product_id && toNum(l.product_quantity) > 0)
+      .map((line) => ({ ...line, base_quantity: round2(toNum(line.product_quantity) * lineUnitFactor(line)) }));
     if (!lines.length) return { ok: false, error: "لا يمكن حفظ فاتورة فارغة." };
     const paid = round2(toNum(payload.paid_amount));
     try {
@@ -130,12 +132,14 @@ export const useInvoicesStore = defineStore("invoices", () => {
         const invRef = doc(collection(db, "invoices"));
         invoiceId = invRef.id;
         const now = serverTimestamp();
-        const pricedLines = lines.map((l) => ({
+        const pricedLines = lines.map((l, index) => ({
           ...l,
+          line_id: l.line_id || invRef.id + "-" + index,
           product_cost_price: stocks.get(l.product_id as string)!.cost,
           unit_factor: Number.isFinite(Number(l.unit_factor)) && Number(l.unit_factor) > 0 ? Number(l.unit_factor) : 1,
           base_quantity: lineBaseQuantity(l),
           base_cost_snapshot: stocks.get(l.product_id as string)!.cost,
+          cost_groups: [{ base_quantity: lineBaseQuantity(l), unit_cost: stocks.get(l.product_id as string)!.cost }],
         }));
         tx.set(invRef, {
           ...(payload as Record<string, unknown>),
@@ -231,9 +235,30 @@ export const useInvoicesStore = defineStore("invoices", () => {
     id: string,
     payload: Omit<Invoice, "id">,
   ): Promise<{ ok: true; cashSkipped: boolean } | { ok: false; error: string }> {
-    const lines = (payload.products ?? []).filter((l) => l.product_id && toNum(l.product_quantity) > 0);
+    const lines = (payload.products ?? [])
+      .filter((l) => l.product_id && toNum(l.product_quantity) > 0)
+      .map((line) => ({ ...line, base_quantity: round2(toNum(line.product_quantity) * lineUnitFactor(line)) }));
     if (!lines.length) return { ok: false, error: "لا يمكن حفظ فاتورة فارغة." };
     try {
+      const preliminary = await getDoc(doc(db, "invoices", id));
+      if (!preliminary.exists()) return { ok: false, error: "الفاتورة غير موجودة." };
+      const preliminaryData = preliminary.data() as Record<string, unknown>;
+      const [returnSnapshot, cashHistorySnapshot, debtPaymentSnapshot] = await Promise.all([
+        getDocs(query(collection(db, "invoice_returns"), where("invoice_id", "==", id))),
+        getDocs(query(collection(db, "cash_transactions"), where("invoice_id", "==", id))),
+        preliminaryData.customer_id
+          ? getDocs(query(collection(db, "debt_payments"), where("customer_id", "==", preliminaryData.customer_id)))
+          : Promise.resolve(null),
+      ]);
+      const returnRefs = returnSnapshot.docs.map((item) => item.ref);
+      const cashHistoryRefs = cashHistorySnapshot.docs.map((item) => item.ref);
+      const debtPaymentRefs = debtPaymentSnapshot?.docs
+        .filter((item) => Array.isArray(item.data().allocations) && (item.data().allocations as { type?: string; reference_id?: string }[])
+          .some((allocation) => allocation.type === "invoice" && allocation.reference_id === id))
+        .map((item) => item.ref) ?? [];
+      if (returnRefs.length + cashHistoryRefs.length + debtPaymentRefs.length > 350) {
+        return { ok: false, error: "يتعذر التحقق من سجل الفاتورة بأمان. يرجى مراجعة الدعم قبل تعديلها." };
+      }
       let cashSkipped = false;
       await runTx(async (tx) => {
         // 1. Persisted original — never diff against stale UI state.
@@ -242,49 +267,74 @@ export const useInvoicesStore = defineStore("invoices", () => {
         if (!invSnap.exists()) throw new Error("VALIDATION:الفاتورة غير موجودة.");
         const orig = invSnap.data() as Record<string, unknown>;
         const oldLines = (Array.isArray(orig.products) ? orig.products : []) as Invoice["products"];
-        const oldLinesByProduct = new Map<string, typeof oldLines>();
-        for (const line of oldLines) {
-          if (!line.product_id) continue;
-          const productLines = oldLinesByProduct.get(line.product_id) ?? [];
-          productLines.push(line);
-          oldLinesByProduct.set(line.product_id, productLines);
+        const returnRecords = await Promise.all(returnRefs.map((ref) => tx.get(ref)));
+        const cashHistory = await Promise.all(cashHistoryRefs.map((ref) => tx.get(ref)));
+        const debtPaymentRecords = await Promise.all(debtPaymentRefs.map((ref) => tx.get(ref)));
+        const hasReturnHistory = invoiceHasReturnHistory(
+          returnRecords.some((record) => record.exists()),
+          orig.returned_base_quantity,
+          orig.return_status,
+          orig.returned as Record<string, unknown> | null | undefined,
+        );
+        if (hasReturnHistory) {
+          throw new Error("VALIDATION:لا يمكن تعديل فاتورة تحتوي على مرتجع. استخدم عمليات المرتجع والتسوية بدلاً من تعديل الفاتورة.");
         }
-        const lineOccurrences = new Map<string, number>();
-        const effectiveLines = lines.map((line) => {
-          const pid = line.product_id as string;
-          const occurrence = lineOccurrences.get(pid) ?? 0;
-          lineOccurrences.set(pid, occurrence + 1);
-          const historicalLine = oldLinesByProduct.get(pid)?.[occurrence];
-          return historicalLine
-            ? { ...line, product_cost_price: round4(toNum(historicalLine.product_cost_price)), base_cost_snapshot: historicalLine.base_cost_snapshot ?? historicalLine.product_cost_price }
-            : line;
-        });
-        const effectivePayload = { ...payload, products: effectiveLines };
-        const oldInvoice = orig as unknown as Invoice;
-        const oldPaid = round2(toNum(orig.paid_amount));
-        const newPaid = round2(toNum(payload.paid_amount));
-        const paidDelta = round2(newPaid - oldPaid);
-        // 2. Takes aggregated per product; restores grouped per
-        // (product, historical cost) — never collapsed to one cost.
-        const deltas = stockDeltaForEdit(oldLines, effectiveLines);
-        const takes = deltas.filter((d) => d.delta < 0);
-        const restores = restoreGroupsForEdit(oldLines, effectiveLines);
-        const pids = [...new Set([...takes.map((d) => d.product_id), ...restores.map((g) => g.product_id)])];
-        const stocks = new Map<string, { stock: number; cost: number }>();
-        for (const pid of pids) {
-          const pRef = doc(db, "products", pid);
-          const pSnap = await tx.get(pRef);
-          const pname = takes.find((d) => d.product_id === pid)?.product_name
-            ?? restores.find((g) => g.product_id === pid)?.product_name
-            ?? "";
-          if (!pSnap.exists()) throw new Error(`VALIDATION:المنتج ${pname} غير موجود بالمخزون.`);
-          stocks.set(pid, {
-            stock: toNum(pSnap.data().stock_quantity),
-            cost: toNum(pSnap.data().cost_price),
-          });
+        const hasDebtPaymentHistory = Number(orig.debt_payment_count) > 0
+          || cashHistory.some((record) => record.exists() && (record.data().type === "invoice_payment" || !!record.data().debt_payment_id))
+          || debtPaymentRecords.some((record) => record.exists())
+          || (round2(toNum(orig.paid_amount)) !== round2(toNum(preliminaryData.paid_amount))
+            || round2(toNum(orig.remaining)) !== round2(toNum(preliminaryData.remaining)));
+        const oldInvoice = { ...orig, id } as unknown as Invoice;
+        const oldCustomerSummaryId = customerSummaryId(oldInvoice);
+        const newCustomerSummaryId = customerSummaryId(payload as Invoice);
+        if (invoiceEditCustomerChangeError(oldCustomerSummaryId, newCustomerSummaryId, hasDebtPaymentHistory)) {
+          throw new Error("VALIDATION:لا يمكن تغيير العميل بعد تسجيل دفعة على الفاتورة.");
         }
+        const requestedPayable = invoiceTotals({ ...payload, paid_amount: 0 }).net;
+        const rawPaid = payload.paid_amount;
+        const newPaid = Number(rawPaid ?? 0);
+        const paidError = invoiceEditPaymentError(payload);
+        if (paidError === "paid amount must be a valid non-negative number") throw new Error("VALIDATION:المبلغ المدفوع يجب أن يكون رقماً صالحاً ويساوي صفراً أو أكثر.");
+        if (paidError === "paid amount cannot exceed invoice total") throw new Error("VALIDATION:المبلغ المدفوع لا يمكن أن يتجاوز إجمالي الفاتورة.");
+        const oldPaid = orig.paid_amount === null || orig.paid_amount === undefined
+          ? invoiceTotals({ ...(oldInvoice as object), paid_amount: 0 } as Invoice).net
+          : round2(toNum(orig.paid_amount));
+        const normalizedPaid = round2(newPaid);
+        const remaining = round2(requestedPayable - normalizedPaid);
+        if (remaining < -STOCK_EPS) throw new Error("VALIDATION:المتبقي على الفاتورة لا يمكن أن يكون سالباً.");
+        const preliminaryChanges = invoiceEditStockChanges(oldLines, lines, new Map());
+        const affectedIds = [...new Set([
+          ...preliminaryChanges.takes.map((movement) => movement.product_id),
+          ...preliminaryChanges.restores.map((movement) => movement.product_id),
+        ])];
+        const currentCostByProduct = new Map<string, number>();
+        const stocks = new Map<string, { stock: number; cost: number; name: string }>();
+        for (const productId of affectedIds) {
+          const productSnap = await tx.get(doc(db, "products", productId));
+          const name = String(lines.find((line) => line.product_id === productId)?.product_name
+            ?? oldLines.find((line) => line.product_id === productId)?.product_name ?? "");
+          if (!productSnap.exists()) throw new Error(`VALIDATION:المنتج ${name} غير موجود بالمخزون.`);
+          const stock = toNum(productSnap.data().stock_quantity);
+          const cost = round4(toNum(productSnap.data().cost_price));
+          stocks.set(productId, { stock, cost, name: String(productSnap.data().name || name) });
+          currentCostByProduct.set(productId, cost);
+        }
+        const editChanges = invoiceEditStockChanges(oldLines, lines, currentCostByProduct);
+        const effectiveLines = editChanges.lines;
+        const effectivePayload = {
+          ...payload,
+          products: effectiveLines,
+          paid_amount: normalizedPaid,
+          remaining,
+        };
+        const paidDelta = round2(normalizedPaid - oldPaid);
+        const takes = editChanges.takes;
+        const restores = editChanges.restores;
+        const pids = [...new Set([...takes.map((movement) => movement.product_id), ...restores.map((movement) => movement.product_id)])];
         for (const d of takes) {
-          if (-d.delta - (stocks.get(d.product_id)?.stock ?? 0) > STOCK_EPS) {
+          const restoredQuantity = restores.filter((group) => group.product_id === d.product_id)
+            .reduce((sum, group) => sum + group.qty, 0);
+          if (-d.delta - ((stocks.get(d.product_id)?.stock ?? 0) + restoredQuantity) > STOCK_EPS) {
             throw new Error(`VALIDATION:الكمية المطلوبة تتجاوز المخزون المتاح لمنتج ${d.product_name}.`);
           }
         }
@@ -293,6 +343,12 @@ export const useInvoicesStore = defineStore("invoices", () => {
         const cashSnap = await tx.get(cashRef);
         const cashReady = cashSnap.exists();
         const cashBal = cashReady ? round2(Number(cashSnap.data()?.balance || 0)) : 0;
+        if (paidDelta < 0 && !cashReady) {
+          throw new Error("VALIDATION:لا يمكن تقليل المبلغ المدفوع قبل تهيئة الخزنة.");
+        }
+        if (paidDelta < 0 && invoiceEditCashOutflowError(cashBal, paidDelta)) {
+          throw new Error("VALIDATION:رصيد الخزنة لا يكفي لتقليل المبلغ المدفوع بهذه القيمة.");
+        }
         cashSkipped = paidDelta !== 0 && !cashReady;
         const now = serverTimestamp();
         const by = (authStore.currentUserKey as string) || null;
@@ -314,8 +370,6 @@ export const useInvoicesStore = defineStore("invoices", () => {
         const oldSummary = summarizeInvoice(orig as unknown as Invoice);
         const newSummary = summarizeInvoice(effectivePayload as Invoice);
         writeInvoiceStatsDelta(tx, db, oldInvoice, effectivePayload as Invoice);
-        const oldCustomerSummaryId = customerSummaryId(orig as unknown as Invoice);
-        const newCustomerSummaryId = customerSummaryId(effectivePayload as Invoice);
         if (oldCustomerSummaryId === newCustomerSummaryId) {
           writeCustomerSummaryDelta(tx, db, effectivePayload as Invoice, {
             total_sales: round2(newSummary.total - oldSummary.total),
@@ -356,6 +410,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
             direction: "in",
             unit_cost: g.unit_cost,
             invoice_id: id,
+            reason: "invoice_edit",
             note: "تعديل فاتورة",
             seq: seq++,
             created_by: by,
@@ -381,6 +436,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
             direction: "out",
             unit_cost: round2(d.unit_cost),
             invoice_id: id,
+            reason: "invoice_edit",
             note: "تعديل فاتورة",
             seq: seq++,
             created_by: by,
@@ -409,7 +465,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
           const dir = paidDelta > 0 ? "in" : "out";
           tx.set(cashRef, { balance: round2(cashBal + paidDelta), updated_at: now }, { merge: true });
           tx.set(doc(collection(db, "cash_transactions")), {
-            type: paidDelta > 0 ? "invoice_sale" : "invoice_refund",
+            type: "invoice_edit_adjustment",
             direction: dir,
             amount: Math.abs(paidDelta),
             invoice_id: id,

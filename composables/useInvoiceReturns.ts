@@ -21,7 +21,7 @@ export interface ReturnRow {
   unit_name: string;
   unit_factor: number;
   /** Sold lines backing this cost group, in invoice order. */
-  lines: { index: number; price: number; qty: number; returnedQty: number }[];
+  lines: { index: number; costGroupIndex: number; unitCost: number; price: number; qty: number; returnedQty: number }[];
   soldQty: number;
   returnedQty: number;
   maxQty: number;
@@ -96,51 +96,59 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
           const costKey = `${item.product_id}||${round2(toNum(item.original_unit_cost))}||${item.unit_id ?? "legacy"}||${Number(item.unit_factor || 1)}`;
           returnedByCost.set(costKey, round2((returnedByCost.get(costKey) ?? 0) + toNum(item.quantity)));
           if (item.source_line_index !== undefined) {
-            const lineKey = `${item.product_id}||${item.source_line_index}`;
+            const lineKey = `${item.product_id}||${item.source_line_index}||${item.source_cost_group_index ?? "legacy"}`;
             returnedByLine.set(lineKey, round2((returnedByLine.get(lineKey) ?? 0) + toNum(item.quantity)));
           }
         }
       }
     }
-    // Group by (product, HISTORICAL cost) — never by selling price alone.
+    // Group by product, historical cost, and unit snapshot. Mixed cost groups
+    // on one edited line are exposed as separate returnable slices.
     const groups = new Map<string, ReturnRow>();
     for (const [index, l] of (invoice.products ?? []).entries()) {
       if (!l.product_id) continue;
-      const cost = round4(toNum(l.product_cost_price));
       const price = round2(toNum(l.product_price));
       const factor = lineUnitFactor(l);
-      const key = `${l.product_id}||${cost}||${l.unit_id ?? "legacy"}||${factor}`;
-      const g = groups.get(key) ?? {
-        key,
-        product_id: l.product_id,
-        product_name: l.product_name || "",
-        unit_price: price,
-        unit_cost: cost,
-        unit_id: l.unit_id,
-        unit_name: l.unit_name || "وحدة",
-        unit_factor: factor,
-        lines: [] as { index: number; price: number; qty: number; returnedQty: number }[],
-        soldQty: 0,
-        returnedQty: 0,
-        maxQty: 0,
-        qty: 0,
-      };
-      let returnedQty = returnedByLine.get(`${l.product_id}||${index}`) ?? 0;
-      if (Array.isArray(previous) && returnedQty === 0) {
-        const groupReturned = returnedByCost.get(key) ?? 0;
-        const priorMatchingLines = g.lines.reduce((sum, line) => sum + line.returnedQty, 0);
-        const unallocated = Math.max(0, round2(groupReturned - priorMatchingLines));
-        const legacyPriceMatches = previous.reduce((sum, ret) => sum + (ret.items ?? [])
-          .filter((item) => item.product_id === l.product_id && round2(toNum(item.original_unit_cost)) === cost &&
-            round2(toNum(item.original_unit_price)) === price && item.source_line_index === undefined &&
-            (item.unit_id ?? "legacy") === (l.unit_id ?? "legacy") && Number(item.unit_factor || 1) === factor)
-          .reduce((itemSum, item) => itemSum + toNum(item.quantity), 0), 0);
-        returnedQty = Math.min(toNum(l.product_quantity), legacyPriceMatches - priorMatchingLines);
-        if (unallocated <= 0) returnedQty = 0;
+      const costGroups = Array.isArray(l.cost_groups) && l.cost_groups.length
+        ? l.cost_groups.map((group, groupIndex) => ({ groupIndex, cost: round4(toNum(group.unit_cost)), quantity: round2(toNum(group.base_quantity) / factor) }))
+        : [{ groupIndex: 0, cost: round4(toNum(l.product_cost_price)), quantity: toNum(l.product_quantity) }];
+      for (const costGroup of costGroups) {
+        if (costGroup.quantity <= 0) continue;
+        const cost = costGroup.cost;
+        const key = `${l.product_id}||${cost}||${l.unit_id ?? "legacy"}||${factor}`;
+        const g = groups.get(key) ?? {
+          key,
+          product_id: l.product_id,
+          product_name: l.product_name || "",
+          unit_price: price,
+          unit_cost: cost,
+          unit_id: l.unit_id,
+          unit_name: l.unit_name || "وحدة",
+          unit_factor: factor,
+          lines: [] as ReturnRow["lines"],
+          soldQty: 0,
+          returnedQty: 0,
+          maxQty: 0,
+          qty: 0,
+        };
+        let returnedQty = returnedByLine.get(`${l.product_id}||${index}||${costGroup.groupIndex}`)
+          ?? (costGroups.length === 1 ? returnedByLine.get(`${l.product_id}||${index}||legacy`) : undefined)
+          ?? 0;
+        if (Array.isArray(previous) && returnedQty === 0) {
+          const groupReturned = returnedByCost.get(key) ?? 0;
+          const priorMatchingLines = g.lines.reduce((sum, line) => sum + line.returnedQty, 0);
+          const legacyPriceMatches = previous.reduce((sum, ret) => sum + (ret.items ?? [])
+            .filter((item) => item.product_id === l.product_id && round2(toNum(item.original_unit_cost)) === cost &&
+              round2(toNum(item.original_unit_price)) === price && item.source_line_index === undefined &&
+              (item.unit_id ?? "legacy") === (l.unit_id ?? "legacy") && Number(item.unit_factor || 1) === factor)
+            .reduce((itemSum, item) => itemSum + toNum(item.quantity), 0), 0);
+          returnedQty = Math.min(costGroup.quantity, legacyPriceMatches - priorMatchingLines);
+          if (groupReturned <= priorMatchingLines) returnedQty = 0;
+        }
+        g.lines.push({ index, costGroupIndex: costGroup.groupIndex, unitCost: cost, price, qty: costGroup.quantity, returnedQty: Math.max(0, round2(returnedQty)) });
+        g.soldQty = round2(g.soldQty + costGroup.quantity);
+        groups.set(key, g);
       }
-      g.lines.push({ index, price, qty: toNum(l.product_quantity), returnedQty: Math.max(0, round2(returnedQty)) });
-      g.soldQty = round2(g.soldQty + toNum(l.product_quantity));
-      groups.set(key, g);
     }
     const rows = [...groups.values()];
     const legacyReturned = new Map(returnedByProduct);
@@ -241,8 +249,9 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
               unit_factor: lineUnitFactor(fresh.products[ln.index] ?? { unit_factor: 1 }),
               base_quantity: round2(take * lineUnitFactor(fresh.products[ln.index] ?? { unit_factor: 1 })),
               original_unit_price: ln.price,
-              original_unit_cost: r.unit_cost,
+              original_unit_cost: ln.unitCost,
               source_line_index: ln.index,
+              source_cost_group_index: ln.costGroupIndex,
               refund_amount: lineRefundValue(ln.price, take, ratio),
             });
           }

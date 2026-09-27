@@ -1,4 +1,4 @@
-import { collection, doc, getDocs, query, where } from "firebase/firestore";
+import { collection, doc, getDocs, increment, query, where } from "firebase/firestore";
 import type { CustomerLoan, DebtPaymentAllocation } from "~/types/finance";
 import type { Customer, Invoice } from "~/types";
 import { loanStatusOf, normalizePhone, normalizeName, round2, toNum, outstandingDebtOf } from "./finance";
@@ -293,7 +293,11 @@ export const useDebts = defineStore("debts", () => {
           const left = round2(s.remaining - s.a.amount);
           const paid = round2(s.paid + s.a.amount);
           if (s.kind === "invoice") {
-            tx.update(doc(db, "invoices", s.a.reference_id), { remaining: left, paid_amount: paid });
+            tx.update(doc(db, "invoices", s.a.reference_id), {
+              remaining: left,
+              paid_amount: paid,
+              debt_payment_count: increment(1),
+            });
             writeDebtSummary(tx, db, {
               invoice_id: s.a.reference_id,
               customer_id: (s.doc.customer_id as string) || null,

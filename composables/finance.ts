@@ -75,11 +75,16 @@ export function discountValueOf(inv: Pick<Invoice, "discount" | "discount_percen
 
 /** Gross realized profit of invoice lines: Σ(price − cost) × qty. */
 export function grossProfitOf(
-  lines: Pick<InvoiceProductLine, "product_price" | "product_cost_price" | "product_quantity" | "base_quantity">[] | null | undefined,
+  lines: Pick<InvoiceProductLine, "product_price" | "product_cost_price" | "product_quantity" | "base_quantity" | "cost_groups">[] | null | undefined,
 ): number {
   if (!Array.isArray(lines)) return 0;
   return round2(
-    lines.reduce((s, l) => s + toNum(l.product_price) * toNum(l.product_quantity) - toNum(l.product_cost_price) * toNum(l.base_quantity ?? l.product_quantity), 0),
+    lines.reduce((s, l) => {
+      const groups = Array.isArray(l.cost_groups) && l.cost_groups.length
+        ? l.cost_groups.reduce((sum, group) => sum + toNum(group.base_quantity) * toNum(group.unit_cost), 0)
+        : toNum(l.product_cost_price) * toNum(l.base_quantity ?? l.product_quantity);
+      return s + toNum(l.product_price) * toNum(l.product_quantity) - groups;
+    }, 0),
   );
 }
 
@@ -161,7 +166,9 @@ export function applyStockGroup(
   }
   let a = avg;
   if (costQty > 0) {
-    a = round4(movingAverageCost(s, a ?? 0, costQty, costVal / costQty));
+    a = round4(s > 0
+      ? movingAverageCost(s, a ?? 0, costQty, costVal / costQty)
+      : costVal / costQty);
   }
   s = round2(s + costQty + plainQty);
   return { stock: s, avg: a };
@@ -238,6 +245,161 @@ export interface RestoreGroup {
   unit_id?: string;
   unit_name?: string;
   unit_factor: number;
+}
+export interface EditStockChanges {
+  lines: InvoiceProductLine[];
+  takes: StockDelta[];
+  restores: RestoreGroup[];
+}
+
+function lineCostGroups(line: InvoiceProductLine): { base_quantity: number; unit_cost: number }[] {
+  if (Array.isArray(line.cost_groups) && line.cost_groups.length) {
+    return line.cost_groups
+      .map((group) => ({ base_quantity: round2(toNum(group.base_quantity)), unit_cost: round4(toNum(group.unit_cost)) }))
+      .filter((group) => group.base_quantity > 0);
+  }
+  const quantity = lineBaseQuantity(line);
+  return quantity > 0 ? [{
+    base_quantity: quantity,
+    unit_cost: round4(toNum(line.base_cost_snapshot ?? line.product_cost_price)),
+  }] : [];
+}
+
+/** Build transaction-fresh invoice lines and per-cost stock effects. Existing cost groups
+ * are retained from the front; removed quantity is restored newest-group-first. */
+export function invoiceEditStockChanges(
+  oldLines: InvoiceProductLine[],
+  requestedLines: InvoiceProductLine[],
+  currentCostByProduct: Map<string, number>,
+): EditStockChanges {
+  const oldById = new Map<string, number>();
+  oldLines.forEach((line, index) => { if (line.line_id) oldById.set(line.line_id, index); });
+  const usedOld = new Set<number>();
+  const matched = new Map<number, number>();
+  const lines = requestedLines.map((line, requestedIndex) => {
+    let oldIndex = line.line_id ? oldById.get(line.line_id) : undefined;
+    if (oldIndex !== undefined && oldLines[oldIndex]?.product_id !== line.product_id) oldIndex = undefined;
+    if (oldIndex === undefined || usedOld.has(oldIndex)) {
+      const productId = line.product_id ?? "";
+      const candidates = oldLines.map((candidate, index) => ({ candidate, index }))
+        .filter(({ candidate, index }) => candidate.product_id === productId && !candidate.line_id && !usedOld.has(index));
+      oldIndex = candidates[0]?.index;
+    }
+    const totalBaseQuantity = lineBaseQuantity(line);
+    const currentCost = round4(toNum(currentCostByProduct.get(line.product_id ?? "")));
+    if (oldIndex === undefined || !line.product_id) {
+      return {
+        ...line,
+        line_id: line.line_id || `edit-${requestedIndex}`,
+        base_quantity: totalBaseQuantity,
+        product_cost_price: currentCost,
+        base_cost_snapshot: currentCost,
+        cost_groups: totalBaseQuantity > 0 ? [{ base_quantity: totalBaseQuantity, unit_cost: currentCost }] : [],
+      };
+    }
+    usedOld.add(oldIndex);
+    matched.set(oldIndex, requestedIndex);
+    const oldLine = oldLines[oldIndex]!;
+    let keep = totalBaseQuantity;
+    const retained: { base_quantity: number; unit_cost: number }[] = [];
+    for (const group of lineCostGroups(oldLine)) {
+      if (keep <= 1e-9) break;
+      const quantity = Math.min(keep, group.base_quantity);
+      if (quantity > 0) retained.push({ base_quantity: round2(quantity), unit_cost: group.unit_cost });
+      keep = round2(keep - quantity);
+    }
+    if (keep > 1e-9) retained.push({ base_quantity: round2(keep), unit_cost: currentCost });
+    const costTotal = retained.reduce((sum, group) => sum + group.base_quantity * group.unit_cost, 0);
+    const averageCost = totalBaseQuantity > 0 ? round4(costTotal / totalBaseQuantity) : currentCost;
+    return {
+      ...line,
+      line_id: oldLine.line_id || line.line_id || `edit-${requestedIndex}`,
+      base_quantity: totalBaseQuantity,
+      product_cost_price: averageCost,
+      base_cost_snapshot: averageCost,
+      cost_groups: retained,
+    };
+  });
+
+  const restores: RestoreGroup[] = [];
+  for (const [oldIndex, oldLine] of oldLines.entries()) {
+    if (!oldLine.product_id) continue;
+    const oldGroups = lineCostGroups(oldLine);
+    const newIndex = matched.get(oldIndex);
+    const retainedGroups = newIndex === undefined ? [] : lines[newIndex]?.cost_groups ?? [];
+    const remainingRetained = retainedGroups.map((group) => ({ ...group }));
+    const restoredGroups: { base_quantity: number; unit_cost: number }[] = [];
+    for (const group of oldGroups) {
+      let retained = 0;
+      for (const keep of remainingRetained) {
+        if (Math.abs(keep.unit_cost - group.unit_cost) > 1e-9) continue;
+        const take = Math.min(group.base_quantity - retained, keep.base_quantity);
+        retained += take;
+        keep.base_quantity = round2(keep.base_quantity - take);
+        if (retained >= group.base_quantity - 1e-9) break;
+      }
+      const restore = round2(group.base_quantity - retained);
+      if (restore > 0) restoredGroups.push({ base_quantity: restore, unit_cost: group.unit_cost });
+    }
+    for (const group of restoredGroups.reverse()) {
+      restores.push({
+        product_id: oldLine.product_id,
+        product_name: oldLine.product_name,
+        qty: group.base_quantity,
+        unit_cost: group.unit_cost,
+        unit_id: oldLine.unit_id,
+        unit_name: oldLine.unit_name,
+        unit_factor: lineUnitFactor(oldLine),
+      });
+    }
+  }
+
+  const oldIndexByNew = new Map<number, number>();
+  for (const [oldIndex, newIndex] of matched) oldIndexByNew.set(newIndex, oldIndex);
+  const addedByProduct = new Map<string, number>();
+  for (const [newIndex, line] of lines.entries()) {
+    if (!line.product_id) continue;
+    const oldIndex = oldIndexByNew.get(newIndex);
+    const oldQuantity = oldIndex === undefined ? 0 : lineBaseQuantity(oldLines[oldIndex]!);
+    const addedQuantity = Math.max(0, round2(lineBaseQuantity(line) - oldQuantity));
+    if (addedQuantity > 0) addedByProduct.set(line.product_id, round2((addedByProduct.get(line.product_id) ?? 0) + addedQuantity));
+  }
+  const takes: StockDelta[] = [];
+  for (const [productId, quantity] of addedByProduct) {
+    const line = lines.find((candidate) => candidate.product_id === productId) ?? oldLines.find((candidate) => candidate.product_id === productId)!;
+    takes.push({ product_id: productId, product_name: line.product_name, delta: -quantity, unit_cost: round4(toNum(currentCostByProduct.get(productId))) });
+  }
+  return { lines, takes, restores };
+}
+
+export function invoiceEditPaymentError(inv: Parameters<typeof invoiceTotals>[0]): string | null {
+  const payable = invoiceTotals({ ...inv, paid_amount: 0 }).net;
+  const paid = Number(inv.paid_amount ?? 0);
+  if (!Number.isFinite(paid) || paid < 0) return "paid amount must be a valid non-negative number";
+  if (paid - payable > 1e-9) return "paid amount cannot exceed invoice total";
+  return null;
+}
+
+export function invoiceEditCustomerChangeError(oldCustomerId: string | null, newCustomerId: string | null, hasPaymentHistory: boolean): string | null {
+  return oldCustomerId !== newCustomerId && hasPaymentHistory
+    ? "customer cannot change after a debt payment"
+    : null;
+}
+
+export function invoiceHasReturnHistory(
+  hasReturnDocument: boolean,
+  returnedBaseQuantity: unknown,
+  returnStatus: unknown,
+  returned: Record<string, unknown> | null | undefined,
+): boolean {
+  return hasReturnDocument
+    || toNum(returnedBaseQuantity) > 0
+    || (returnStatus !== undefined && returnStatus !== null && returnStatus !== "none")
+    || Object.values(returned ?? {}).some((quantity) => toNum(quantity) > 0);
+}
+
+export function invoiceEditCashOutflowError(balance: unknown, outflow: unknown): string | null {
+  return toNum(balance) + toNum(outflow) < -1e-9 ? "cashbox balance is insufficient" : null;
 }
 export function restoreGroupsForEdit(
   oldLines: Pick<InvoiceProductLine, "product_id" | "product_name" | "product_quantity" | "product_cost_price" | "unit_id" | "unit_name" | "unit_factor" | "base_quantity">[],
