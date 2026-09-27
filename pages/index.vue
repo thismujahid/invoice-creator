@@ -819,18 +819,48 @@ function collapseLine(form: InvoiceProductLine): void {
     notify("اختر المنتج أولًا قبل إغلاق السطر.", "error");
     return;
   }
-  // Stock validation at lock time: quantity must fit current stock.
+  const duplicateLine = invoiceData.value.id
+    ? undefined
+    : invoiceData.value.products.find(
+        (line) =>
+          line !== form &&
+          line.product_id === form.product_id &&
+          line.unit_id === form.unit_id &&
+          Number(line.unit_factor || 1) === Number(form.unit_factor || 1) &&
+          Number(line.product_price) === Number(form.product_price) &&
+          Number(line.product_cost_price ?? 0) === Number(form.product_cost_price ?? 0) &&
+          String(line.option ?? "") === String(form.option ?? "") &&
+          !line.cost_groups?.length &&
+          !form.cost_groups?.length,
+      );
+  const mergedQuantity =
+    Number(form.product_quantity || 0) +
+    Number(duplicateLine?.product_quantity || 0);
+
   const prod = products.list.find((p) => p.id === form.product_id);
   const available = prod?.stock_quantity ?? 0;
-  const wanted = Number(form.product_quantity || 0);
-  if (wanted * Number(form.unit_factor || 1) - available > 1e-9) {
+  if (mergedQuantity * Number(form.unit_factor || 1) - available > 1e-9) {
     notify(
-      `الكمية المطلوبة (${wanted}) تتجاوز المتاح بالمخزون (${available}) لمنتج ${form.product_name}.`,
+      `الكمية المطلوبة (${mergedQuantity}) تتجاوز المتاح بالمخزون (${available}) لمنتج ${form.product_name}.`,
       "error",
     );
     return;
   }
-  expandedLines.delete(form);
+
+  let lineToCollapse = form;
+  if (duplicateLine) {
+    duplicateLine.product_quantity = mergedQuantity;
+    duplicateLine.base_quantity =
+      mergedQuantity * Number(duplicateLine.unit_factor || 1);
+    expandedLines.delete(duplicateLine);
+    lineToCollapse = duplicateLine;
+    const duplicateIndex = invoiceData.value.products.indexOf(form);
+    if (duplicateIndex !== -1) invoiceData.value.products.splice(duplicateIndex, 1);
+    prodSearch.delete(form);
+    qtyDrafts.delete(form);
+  }
+
+  expandedLines.delete(lineToCollapse);
   if (!invoiceData.value.products.some((l) => !l.product_id)) {
     const line = emptyLine();
     invoiceData.value.products.unshift(line);
