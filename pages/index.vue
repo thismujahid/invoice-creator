@@ -105,6 +105,7 @@
               :model-value="numOrUndef(invoiceData.debt)"
               placeholder="القديم"
               :min="0"
+              :step="0.01"
               class="w-full"
               @update:model-value="(v) => (invoiceData.debt = v ?? null)"
             />
@@ -115,6 +116,7 @@
               type="number"
               placeholder="المبلغ المدفوع"
               :min="0"
+              step="0.01"
               inputmode="decimal"
               class="w-full"
               @update:model-value="
@@ -160,6 +162,7 @@
               :model-value="numOrUndef(invoiceData.amount_of_animal_feeds)"
               placeholder="العلف"
               :min="0"
+              :step="0.01"
               class="w-full"
               @update:model-value="
                 (v) => (invoiceData.amount_of_animal_feeds = v ?? null)
@@ -174,6 +177,7 @@
               type="number"
               placeholder="الخصم"
               :min="0"
+              step="0.01"
               inputmode="decimal"
               class="w-full"
               @update:model-value="
@@ -444,6 +448,7 @@
                   <UInputNumber
                     v-model="form.product_price"
                     :min="0"
+                    :step="0.01"
                     class="w-full"
                     :color="isCostGreaterThanPrice(form) ? 'error' : undefined"
                   />
@@ -505,7 +510,7 @@ import type { ProductUnit } from "~/types";
 
 definePageMeta({ title: "إنشاء فاتورة" });
 const { formatDate, formatTime12Hour, formatePrice, calcTotal } = useHelpers();
-const { isLowStock, unitsForProduct, lineBaseQuantity } = useFinance();
+const { isLowStock, unitsForProduct, sellableUnitsForProduct, unitSellingPrice, lineBaseQuantity } = useFinance();
 const products = useProductsStore();
 const lowStockCount = computed(() => products.list.filter((p) => isLowStock(p)).length);
 const invoices = useInvoicesStore();
@@ -659,7 +664,10 @@ function selectedProd(form: InvoiceProductLine): Product | undefined {
 }
 function unitsOf(form: InvoiceProductLine): ProductUnit[] {
   const product = selectedProd(form);
-  return product ? unitsForProduct(product) : [];
+  if (!product) return [];
+  const available = sellableUnitsForProduct(product);
+  const historical = unitsForProduct(product).find((unit) => unit.id === form.unit_id);
+  return historical && !available.some((unit) => unit.id === historical.id) ? [...available, historical] : available;
 }
 function selectedUnit(form: InvoiceProductLine): ProductUnit | undefined {
   const options = unitsOf(form);
@@ -667,11 +675,14 @@ function selectedUnit(form: InvoiceProductLine): ProductUnit | undefined {
 }
 function onPickUnit(form: InvoiceProductLine, unit?: ProductUnit): void {
   if (!unit) return;
+  if (unit.can_sell === false) return;
   form.unit_id = unit.id;
   form.unit_name = unit.name;
   form.unit_factor = unit.factor;
   form.base_quantity = Number(form.product_quantity || 0) * unit.factor;
-  form.product_price = Number(unit.selling_price ?? selectedProd(form)?.price ?? 0);
+  const product = selectedProd(form);
+  const price = product ? unitSellingPrice(product, unit) : null;
+  form.product_price = price === null ? 0 : price;
 }
 // Per-line dropdown search (object identity survives unshift/splice/move).
 const prodSearch = reactive(new Map<InvoiceProductLine, string>());
@@ -720,7 +731,12 @@ function onPickProduct(
     notify(`المنتج "${real?.name || ""}" غير متوفر بالمخزون حالياً.`, "error");
     return;
   }
-  const baseUnit = unitsForProduct(real).find((unit) => unit.is_base) ?? unitsForProduct(real)[0];
+  const availableUnits = sellableUnitsForProduct(real);
+  const baseUnit = availableUnits.find((unit) => unit.is_base) ?? availableUnits[0];
+  if (!baseUnit) {
+    notify("لا توجد وحدة بيع مفعّلة لهذا المنتج. راجع إعدادات وحداته.", "error");
+    return;
+  }
   if (wanted * Number(baseUnit?.factor || 1) - available > 1e-9) {
     notify(
       `الكمية المطلوبة (${wanted}) تتجاوز المتاح بالمخزون (${available}). خفّض الكمية أولاً.`,
@@ -728,7 +744,7 @@ function onPickProduct(
     );
     return;
   }
-  form.product_price = Number(baseUnit?.selling_price ?? real?.price ?? 0);
+  form.product_price = unitSellingPrice(real, baseUnit) ?? 0;
   form.product_id = real?.id ?? "";
   form.product_cost_price = Number(real?.cost_price ?? 0);
   form.product_name = real?.name ?? "";
@@ -927,12 +943,14 @@ function updateProdsPrices(preserveHistoricalCosts = false): void {
   invoiceData.value.products.forEach((item) => {
     const prod = item.product_id ? productMap.get(item.product_id) : undefined;
     if (prod) {
-      const unit = unitsForProduct(prod).find((candidate) => candidate.id === item.unit_id) ?? unitsForProduct(prod).find((candidate) => candidate.is_base) ?? unitsForProduct(prod)[0]!;
+      const options = sellableUnitsForProduct(prod);
+      const unit = options.find((candidate) => candidate.id === item.unit_id) ?? options.find((candidate) => candidate.is_base) ?? options[0];
       if (!invoiceData.value.id) {
+        if (!unit) return;
         item.unit_id = unit.id;
         item.unit_name = unit.name;
         item.unit_factor = unit.factor;
-        item.product_price = Number(unit.selling_price ?? prod.price ?? 0);
+        item.product_price = unitSellingPrice(prod, unit) ?? 0;
         item.base_quantity = Number(item.product_quantity || 0) * unit.factor;
       }
       // Never rewrite historical line costs of a persisted invoice (§1.2).

@@ -1,166 +1,183 @@
 <template>
-  <!-- Shell: fixed vertical icon rail on the far right (RTL start) is the
-       ONLY navigation — no drawer, no hamburger, no bottom tab-bar. -->
-  <div id="app-shell" class="flex min-h-dvh flex-col bg-gray-50" dir="rtl">
-    <!-- Top bar -->
-    <header
-      class="sticky top-0 z-40 border-b border-gray-200 bg-white/90 backdrop-blur"
-    >
-      <div
-        class="mx-auto flex h-14 w-full max-w-6xl items-center gap-2 px-3 sm:px-4"
+  <div v-if="!initFirebase" dir="rtl">
+    <FormsAuthScreen
+      :is-in-login="true"
+      @success="(v) => (isAuthed = v)"
+      v-if="!isAuthed"
+    />
+    <div id="printableArea" class="printable-area"></div>
+    <div id="app-shell" class="flex min-h-dvh flex-col bg-gray-50" dir="rtl">
+      <!-- Top bar -->
+      <header
+        class="sticky top-0 z-40 border-b border-gray-200 bg-white/90 backdrop-blur"
       >
-        <h1 class="min-w-0 flex-1 truncate text-base font-bold text-gray-900">
-          قريتي
-          <span v-if="currentPageTitle" class="font-normal text-gray-500"
-            >| {{ currentPageTitle }}</span
-          >
-        </h1>
-        <span class="hidden shrink-0 text-xs text-gray-400 md:block">{{
-          todayLine
-        }}</span>
-        <UDropdownMenu :items="userMenu">
-          <div
-            class="flex shrink-0 cursor-pointer items-center gap-2 rounded-full py-1 pe-1 ps-1"
-          >
-            <UAvatar
-              :text="userDetails.avatar_text"
-              color="success"
-              size="md"
-            />
-            <div class="hidden leading-tight sm:block">
-              <div class="text-sm font-semibold">{{ userDetails.name }}</div>
-              <div class="text-xs text-gray-500">
-                {{ userDetails.position }}
+        <div
+          class="mx-auto flex h-14 w-full max-w-6xl items-center gap-2 px-3 sm:px-4"
+        >
+          <h1 class="min-w-0 flex-1 truncate text-base font-bold text-gray-900">
+            قريتي
+            <span v-if="currentPageTitle" class="font-normal text-gray-500"
+              >| {{ currentPageTitle }}</span
+            >
+          </h1>
+          <span class="hidden shrink-0 text-xs text-gray-400 md:block">{{
+            todayLine
+          }}</span>
+          <UDropdownMenu :items="userMenu">
+            <div
+              class="flex shrink-0 cursor-pointer items-center gap-2 rounded-full py-1 pe-1 ps-1"
+            >
+              <UAvatar
+                :text="userDetails.avatar_text"
+                color="success"
+                size="md"
+              />
+              <div class="hidden leading-tight sm:block">
+                <div class="text-sm font-semibold">{{ userDetails.name }}</div>
+                <div class="text-xs text-gray-500">
+                  {{ userDetails.position }}
+                </div>
               </div>
             </div>
-          </div>
-        </UDropdownMenu>
-      </div>
-    </header>
-
-    <!-- Body: desktop nav rail (right in RTL) + page -->
-    <div
-      class="mx-auto flex w-full max-w-6xl min-w-0 flex-1 items-start gap-3 px-3 py-4 md:px-4"
-    >
-      <aside
-        class="sticky top-18 bottom-none z-20 hidden w-38 shrink-0 flex-col items-center rounded-lg border border-gray-200 bg-white py-3 md:py-0 shadow-sm sm:flex"
-        aria-label="التنقل الرئيسي"
-      >
-        <UButton
-          v-for="item in tabItems"
-          :key="item.to"
-          :icon="item.icon"
-          :variant="isActiveTab(item.to) ? 'solid' : 'ghost'"
-          :color="isActiveTab(item.to) ? 'success' : 'neutral'"
-          :aria-label="item.label"
-          class="flex w-full flex-row items-center justify-start"
-          @click="navigateTo(item.to)"
-        >
-          {{ item.label }}</UButton
-        >
-      </aside>
-
-      <main class="min-w-0 flex-1">
-        <slot />
-      </main>
-    </div>
-
-    <footer class="border-t border-white/10 bg-neutral-950 py-1.5 text-center">
-      <p class="text-[11px] font-normal text-gray-400">
-        برمجة وتطوير:
-        <NuxtLink
-          target="_blank"
-          class="text-gray-300 no-underline hover:underline"
-          href="https://mejo.dev"
-          >محمد إبراهيم مجاهد</NuxtLink
-        >
-        <span class="mx-1 text-gray-600">•</span>
-        جميع الحقوق محفوظة @ {{ new Date().getFullYear() }}
-      </p>
-    </footer>
-
-    <UiAppDialog v-model:open="logoutConfirm" title="هل أنت متأكد">
-      <p class="mb-4 text-gray-600">أنت علي وشك تسجيل الخروج وإغلاق التطبيق</p>
-      <template #footer>
-        <div class="flex w-full flex-col gap-2">
-          <UButton color="error" block :loading="loggingOut" @click="logout"
-            >تأكيد الإغلاق</UButton
-          >
-          <UButton
-            color="neutral"
-            variant="ghost"
-            block
-            @click="logoutConfirm = false"
-            >إلغاء</UButton
-          >
+          </UDropdownMenu>
         </div>
-      </template>
-    </UiAppDialog>
+      </header>
 
-    <!-- Mobile bottom bar: exactly 4 primary items; المزيد opens the rest -->
-    <nav
-      class="fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur sm:hidden"
-      aria-label="التنقل السريع"
-    >
+      <!-- Body: desktop nav rail (right in RTL) + page -->
       <div
-        v-if="moreOpen"
-        class="absolute inset-x-3 bottom-full mb-2 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg"
+        class="mx-auto flex w-full max-w-6xl min-w-0 flex-1 items-start gap-3 px-3 py-4 md:px-4"
       >
-        <button
-          v-for="item in secondaryItems"
-          :key="item.to"
-          class="flex w-full items-center gap-2 px-3 py-2.5 text-sm"
-          :class="
-            isActiveTab(item.to)
-              ? 'font-bold text-emerald-600'
-              : 'text-gray-700'
-          "
-          @click="goSecondary(item.to)"
+        <aside
+          class="sticky top-18 bottom-none z-20 hidden w-38 shrink-0 flex-col items-center rounded-lg border border-gray-200 bg-white py-3 md:py-0 shadow-sm sm:flex"
+          aria-label="التنقل الرئيسي"
         >
-          <UIcon :name="item.icon" class="size-5 shrink-0" />
-          {{ item.label }}
-        </button>
+          <UButton
+            v-for="item in tabItems"
+            :key="item.to"
+            :icon="item.icon"
+            :variant="isActiveTab(item.to) ? 'solid' : 'ghost'"
+            :color="isActiveTab(item.to) ? 'success' : 'neutral'"
+            :aria-label="item.label"
+            class="flex w-full flex-row items-center justify-start"
+            @click="navigateTo(item.to)"
+          >
+            {{ item.label }}</UButton
+          >
+        </aside>
+
+        <main class="min-w-0 flex-1">
+          <slot />
+        </main>
       </div>
-      <div class="grid grid-cols-4">
-        <button
-          v-for="item in primaryItems"
-          :key="item.to"
-          :aria-label="item.label"
-          :aria-current="isActiveTab(item.to) ? 'page' : undefined"
-          class="flex min-h-14 flex-col items-center justify-center gap-0.5 text-[11px] leading-none"
-          :class="
-            isActiveTab(item.to)
-              ? 'font-bold text-emerald-600'
-              : 'text-gray-500'
-          "
-          @click="navigateTo(item.to)"
+
+      <footer
+        class="border-t border-white/10 bg-neutral-950 py-1.5 text-center"
+      >
+        <p class="text-[11px] font-normal text-gray-400">
+          برمجة وتطوير:
+          <NuxtLink
+            target="_blank"
+            class="text-gray-300 no-underline hover:underline"
+            href="https://mejo.dev"
+            >محمد إبراهيم مجاهد</NuxtLink
+          >
+          <span class="mx-1 text-gray-600">•</span>
+          جميع الحقوق محفوظة @ {{ new Date().getFullYear() }}
+        </p>
+      </footer>
+
+      <UiAppDialog v-model:open="logoutConfirm" title="هل أنت متأكد">
+        <p class="mb-4 text-gray-600">
+          أنت علي وشك تسجيل الخروج وإغلاق التطبيق
+        </p>
+        <template #footer>
+          <div class="flex w-full flex-col gap-2">
+            <UButton color="error" block :loading="loggingOut" @click="logout"
+              >تأكيد الإغلاق</UButton
+            >
+            <UButton
+              color="neutral"
+              variant="ghost"
+              block
+              @click="logoutConfirm = false"
+              >إلغاء</UButton
+            >
+          </div>
+        </template>
+      </UiAppDialog>
+
+      <!-- Mobile bottom bar: exactly 4 primary items; المزيد opens the rest -->
+      <nav
+        class="fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur sm:hidden"
+        aria-label="التنقل السريع"
+      >
+        <div
+          v-if="moreOpen"
+          class="absolute inset-x-3 bottom-full mb-2 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg"
         >
-          <UIcon :name="item.icon" class="size-5" />
-          {{ item.label }}
-        </button>
-        <button
-          aria-label="المزيد"
-          :aria-expanded="moreOpen"
-          class="flex min-h-14 flex-col items-center justify-center gap-0.5 text-[11px] leading-none"
-          :class="moreActive ? 'font-bold text-emerald-600' : 'text-gray-500'"
-          @click="moreOpen = !moreOpen"
-        >
-          <UIcon name="i-lucide-ellipsis" class="size-5" />
-          المزيد
-        </button>
-      </div>
-    </nav>
-    <!-- Spacer so the fixed bar never covers footer content on mobile -->
-    <div
-      aria-hidden="true"
-      class="h-[calc(3.5rem+env(safe-area-inset-bottom))] sm:hidden"
-    />
+          <button
+            v-for="item in secondaryItems"
+            :key="item.to"
+            class="flex w-full items-center gap-2 px-3 py-2.5 text-sm"
+            :class="
+              isActiveTab(item.to)
+                ? 'font-bold text-emerald-600'
+                : 'text-gray-700'
+            "
+            @click="goSecondary(item.to)"
+          >
+            <UIcon :name="item.icon" class="size-5 shrink-0" />
+            {{ item.label }}
+          </button>
+        </div>
+        <div class="grid grid-cols-4">
+          <button
+            v-for="item in primaryItems"
+            :key="item.to"
+            :aria-label="item.label"
+            :aria-current="isActiveTab(item.to) ? 'page' : undefined"
+            class="flex min-h-14 flex-col items-center justify-center gap-0.5 text-[11px] leading-none"
+            :class="
+              isActiveTab(item.to)
+                ? 'font-bold text-emerald-600'
+                : 'text-gray-500'
+            "
+            @click="navigateTo(item.to)"
+          >
+            <UIcon :name="item.icon" class="size-5" />
+            {{ item.label }}
+          </button>
+          <button
+            aria-label="المزيد"
+            :aria-expanded="moreOpen"
+            class="flex min-h-14 flex-col items-center justify-center gap-0.5 text-[11px] leading-none"
+            :class="moreActive ? 'font-bold text-emerald-600' : 'text-gray-500'"
+            @click="moreOpen = !moreOpen"
+          >
+            <UIcon name="i-lucide-ellipsis" class="size-5" />
+            المزيد
+          </button>
+        </div>
+      </nav>
+      <!-- Spacer so the fixed bar never covers footer content on mobile -->
+      <div
+        aria-hidden="true"
+        class="h-[calc(3.5rem+env(safe-area-inset-bottom))] sm:hidden"
+      />
+    </div>
+  </div>
+  <div v-else class="flex h-screen w-full items-center justify-center gap-3">
+    جاري التحميل...
+    <UIcon name="i-lucide-loader-circle" class="size-5 animate-spin" />
+    <div v-show="false">
+      <NuxtPage />
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import type { DropdownMenuItem } from "#ui/types";
-
+import type { User } from "firebase/auth";
 const route = useRoute();
 const authStore = useAuth();
 const { auth } = useFirebase();
@@ -244,4 +261,48 @@ async function logout(): Promise<void> {
     loggingOut.value = false;
   }
 }
+const toast = useToast();
+auth.languageCode = "ar";
+const initFirebase = ref(true);
+const isAuthed = ref<boolean>(!!auth.currentUser);
+// Single toast render path: writers set snackBarText, we show + consume.
+watch(
+  () => authStore.snackBarText,
+  (t) => {
+    if (!t) return;
+    toast.add({
+      title: t,
+      color:
+        authStore.snackBarColor === "error"
+          ? "error"
+          : authStore.snackBarColor === "primary"
+            ? "primary"
+            : "success",
+    });
+    authStore.snackBarText = "";
+  },
+);
+auth.onAuthStateChanged(
+  (user: User | null) => {
+    setTimeout(() => {
+      isAuthed.value = !!user;
+      initFirebase.value = false;
+      if (user) {
+        authStore.userData = {
+          name: user.displayName,
+          email: user.email,
+          phone: user.phoneNumber,
+          avatar: user.photoURL,
+          id: user.uid,
+        };
+      } else {
+        authStore.userData = null;
+      }
+    }, 100);
+  },
+  (err: unknown) => {
+    initFirebase.value = false;
+    console.error(err);
+  },
+);
 </script>

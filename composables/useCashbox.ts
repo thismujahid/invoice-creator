@@ -120,7 +120,7 @@ export const useCashbox = defineStore("cashbox", () => {
           product_id: input.product_id ?? null,
           reference_type: input.invoice_id ? "invoice" : input.loan_id ? "loan" : input.return_id ? "return" : input.product_id ? "product" : "manual",
           reference_id: input.invoice_id ?? input.loan_id ?? input.return_id ?? input.product_id ?? null,
-          reference_label: input.invoice_id ? "Invoice - Customer" : input.loan_id ? "Customer Loan" : input.return_id ? "Invoice Return" : input.product_id ? "Product Adjustment" : input.direction === "in" ? "Cash Deposit" : "Cash Withdrawal",
+          reference_label: input.invoice_id ? "فاتورة بيع لـ عميل" : input.loan_id ? "سلفة عميل" : input.return_id ? "مرتجع فاتورة" : input.product_id ? "تسوية مخزون" : input.direction === "in" ? "إيداع نقدي" : "سحب نقدي",
           note: input.note ?? null,
           created_by: (authStore.currentUserKey as string) || null,
           created_at: now,

@@ -4,6 +4,7 @@
       <div><h1 class="text-xl font-bold">فواتير الموردين</h1><p class="text-sm text-gray-500">مشتريات ومستحقات الموردين مستقلة عن دفتر ديون العملاء.</p></div>
       <UButton color="success" icon="i-lucide-plus" @click="startDraft()">فاتورة مورد جديدة</UButton>
     </header>
+    <UAlert v-if="loadError" color="error" variant="soft" :title="loadError"><template #actions><UButton size="xs" color="error" variant="soft" :loading="loading" @click="reload(true)">إعادة المحاولة</UButton></template></UAlert>
     <div class="grid gap-3 sm:grid-cols-3"><UCard variant="outline"><p class="text-xs text-gray-500">فواتير الصفحة</p><b class="text-xl">{{ pageInvoices.length }}</b></UCard><UCard variant="outline"><p class="text-xs text-gray-500">مشتريات الصفحة</p><b class="text-xl">{{ formatePrice(totalPurchases) }} ج</b></UCard><UCard variant="outline"><p class="text-xs text-gray-500">مستحق الصفحة</p><b class="text-xl text-red-600">{{ formatePrice(totalPayable) }} ج</b></UCard></div>
     <div class="flex flex-wrap gap-2"><UInput v-model="search" icon="i-lucide-search" placeholder="بحث بالمورد أو رقم الفاتورة" class="w-full sm:max-w-sm" /><USelect v-model="statusFilter" :items="[{ label: 'كل الحالات', value: 'all' }, { label: 'غير مسددة', value: 'unpaid' }, { label: 'مسددة جزئيًا', value: 'partial' }, { label: 'مسددة', value: 'paid' }]" value-key="value" label-key="label" class="w-full sm:w-44" /></div>
     <USkeleton v-if="loading" class="h-24 w-full" />
@@ -14,7 +15,7 @@
           <div class="flex flex-wrap gap-1"><UButton size="sm" color="neutral" variant="soft" icon="i-lucide-eye" @click="openDetails(invoice)">عرض</UButton><UButton size="sm" color="neutral" variant="soft" :icon="invoice.pinned ? 'i-lucide-pin-off' : 'i-lucide-pin'" @click="togglePin(invoice)">{{ invoice.pinned ? 'إلغاء التثبيت' : 'تثبيت' }}</UButton><UButton size="sm" color="neutral" variant="soft" icon="i-lucide-copy-plus" @click="startDraft(invoice)">فاتورة جديدة من هذه</UButton><UButton size="sm" v-if="invoice.remaining_amount > 0" color="success" icon="i-lucide-hand-coins" @click="openPayment(invoice)">تسديد</UButton></div>
         </div>
       </UCard>
-      <UEmpty v-if="!visibleInvoices.length" icon="i-lucide-receipt" title="لا توجد فواتير موردين" />
+      <UEmpty v-if="!loadError && !visibleInvoices.length" icon="i-lucide-receipt" title="لا توجد فواتير موردين" />
       <div class="flex items-center justify-between gap-2 pt-2"><span class="text-xs text-gray-500">صفحة {{ pageNumber }} · حتى 25 فاتورة</span><div class="flex gap-2" dir="ltr"><UButton size="sm" color="neutral" variant="outline" icon="i-lucide-chevron-left" aria-label="الصفحة التالية" :disabled="loading || !hasMore" @click="nextPage" /><UButton size="sm" color="neutral" variant="outline" icon="i-lucide-chevron-right" aria-label="الصفحة السابقة" :disabled="loading || pageNumber <= 1" @click="previousPage" /></div></div>
     </div>
 
@@ -28,8 +29,8 @@
           <UFormField label="المنتج"><USelectMenu :model-value="line.product" :items="productOptions(line)" label-key="name" by="id" placeholder="اختر المنتج" class="w-full" @update:model-value="(product) => pickProduct(line, product)" /></UFormField>
           <div v-if="line.product" class="grid grid-cols-2 gap-2">
             <UFormField label="وحدة الشراء"><USelectMenu :model-value="selectedUnit(line)" :items="unitOptions(line)" label-key="name" by="id" class="w-full" @update:model-value="(unit) => pickUnit(line, unit)" /></UFormField>
-            <UFormField label="الكمية"><UInputNumber v-model="line.quantity" :min="0.001" :step="1" class="w-full" /></UFormField>
-            <UFormField label="تكلفة الوحدة المحددة"><UInputNumber v-model="line.unit_cost" :min="0" :step="0.01" class="w-full" /></UFormField>
+            <UFormField label="الكمية"><UInputNumber v-model="line.quantity" :min="0.001" :step="0.01" class="w-full" /></UFormField>
+            <UFormField label="تكلفة الوحدة المحددة"><UInputNumber v-model="line.unit_cost" :min="0" :step="0.0001" class="w-full" /></UFormField>
             <UFormField label="تأثير سعر البيع"><USelect :model-value="line.priceMode" :items="priceModeItems" value-key="value" label-key="label" class="w-full" @update:model-value="(mode) => setPriceMode(line, mode)" /></UFormField>
             <div class="col-span-full rounded-lg bg-amber-50 p-2 text-xs text-gray-700">سعر البيع الحالي: <b>{{ formatePrice(line.product.price) }} ج</b> · متوسط التكلفة المتوقع: <b>{{ formatePrice(previewLine(line).avg) }} ج</b> · السعر المقترح: <b>{{ previewLine(line).proposed === null ? 'أدخل سعرًا يدويًا' : `${formatePrice(previewLine(line).proposed)} ج` }}</b></div>
             <UFormField v-if="line.priceMode === 'proposed' && previewLine(line).proposed !== null" label="السعر المقترح (قابل للتعديل)"><UInputNumber v-model="line.approvedProposal" :min="0" :step="0.01" class="w-full" /></UFormField>
@@ -62,7 +63,7 @@ import type { Product, ProductUnit } from "~/types";
 import type { PurchaseInvoice, PurchaseInvoiceItem, Supplier, SupplierPayment } from "~/types/finance";
 import type { QueryDocumentSnapshot } from "firebase/firestore";
 import { deriveSupplierInvoiceStatus, supplierInvoiceStatus } from "~/types/finance";
-import { proposedSellingPrice, round2, toNum, unitsForProduct } from "~/composables/finance";
+import { convertUnitPrice, proposedSellingPrice, purchasableUnitsForProduct, round2, toNum } from "~/composables/finance";
 import { toDateSafe } from "~/types";
 import { useSuppliersStore } from "~/stores/suppliers";
 
@@ -81,6 +82,7 @@ const pageNumber = ref(1);
 const hasMore = ref(false);
 const pageCursors = ref<(QueryDocumentSnapshot | null)[]>([null]);
 const loading = ref(true);
+const loadError = ref("");
 const search = ref("");
 const statusFilter = ref("all");
 const draftOpen = ref(false);
@@ -94,7 +96,7 @@ const savingDraft = ref(false);
 const draftError = ref("");
 const requestKey = ref("");
 const priceModeItems = [{ label: "الإبقاء على السعر الحالي", value: "keep" }, { label: "اعتماد السعر المقترح", value: "proposed" }, { label: "سعر مخصص", value: "custom" }];
-const draftTotal = computed(() => round2(draftLines.value.reduce((sum, line) => sum + toNum(line.quantity) * toNum(line.unit_cost), 0)));
+const draftTotal = computed(() => round2(draftLines.value.reduce((sum, line) => sum + round2(toNum(line.quantity) * toNum(line.unit_cost)), 0)));
 const draftReady = computed(() => !savingDraft.value && !!(draftSupplier.value?.id || (draftSource.value && supplierName.value.trim())) && draftLines.value.length > 0 && draftLines.value.every((line) => line.product?.id && line.quantity > 0 && line.unit_cost >= 0 && (!pricePolicyApplies(line) || line.priceMode !== "keep") && (line.priceMode !== "proposed" || previewLine(line).proposed !== null && Number(line.approvedProposal) >= 0) && (line.priceMode !== "custom" || Number(line.customPrice) >= 0)) && toNum(paidNow.value) >= 0 && toNum(paidNow.value) <= draftTotal.value && toNum(paidNow.value) <= cashbox.balance);
 const draftMessage = computed(() => draftError.value);
 const visibleInvoices = computed(() => [...new Map([...pinnedInvoices.value, ...pageInvoices.value].map((invoice) => [invoice.id, invoice])).values()].filter((invoice) => {
@@ -126,16 +128,22 @@ function statusLabel(invoice: PurchaseInvoice): string { return { paid: "مسد�
 function statusColor(invoice: PurchaseInvoice): "success" | "warning" | "error" { return supplierInvoiceStatus(invoice) === "paid" ? "success" : supplierInvoiceStatus(invoice) === "partial" ? "warning" : "error"; }
 function sourceLabel(source?: string): string { return source === "excel_import" ? "استيراد Excel" : source === "repeat" ? "من فاتورة سابقة" : "يدوية"; }
 function formatDateOnly(value: unknown): string { const date = toDateSafe(value); return date?.toLocaleDateString("ar-EG") ?? "—"; }
-function unitOptions(line: DraftLine): ProductUnit[] { return line.product ? unitsForProduct(line.product) : []; }
+function unitOptions(line: DraftLine): ProductUnit[] { return line.product ? purchasableUnitsForProduct(line.product) : []; }
 function selectedUnit(line: DraftLine): ProductUnit | undefined { return unitOptions(line).find((unit) => unit.id === line.unit_id) ?? unitOptions(line)[0]; }
 function newLine(): DraftLine { return { key: id(), unit_id: "", unit_name: "", unit_factor: 1, quantity: 1, unit_cost: 0, priceMode: "keep" }; }
 function addDraftLine(): void { draftLines.value.push(newLine()); }
 function productOptions(line: DraftLine): Product[] { return productsStore.list.filter((product) => !draftLines.value.some((other) => other !== line && other.product?.id === product.id)); }
-function pickUnit(line: DraftLine, unit?: ProductUnit): void { if (!unit) return; line.unit_id = unit.id; line.unit_name = unit.name; line.unit_factor = unit.factor; }
+function pickUnit(line: DraftLine, unit?: ProductUnit): void {
+  if (!unit) return;
+  const oldFactor = Number(line.unit_factor) > 0 ? Number(line.unit_factor) : 1;
+  line.unit_cost = convertUnitPrice(line.unit_cost, oldFactor, unit.factor);
+  line.unit_id = unit.id; line.unit_name = unit.name; line.unit_factor = unit.factor;
+}
 function pickProduct(line: DraftLine, product?: Product): void {
   if (!product) { line.product = undefined; return; }
   line.product = product;
-  const base = unitsForProduct(product).find((unit) => unit.is_base) ?? unitsForProduct(product)[0]!;
+  const options = purchasableUnitsForProduct(product);
+  const base = options.find((unit) => unit.is_base) ?? options[0]!;
   line.unit_id = base.id; line.unit_name = base.name; line.unit_factor = base.factor;
   line.unit_cost = toNum(product.cost_price);
   line.approvedProposal = previewLine(line).proposed;
@@ -210,6 +218,7 @@ async function submitPayment(): Promise<void> { if (!paymentTarget.value?.id || 
 async function loadPayments(invoice: PurchaseInvoice): Promise<void> { if (!invoice.id) return; paymentsOpen.value = true; payments.value = await purchasing.fetchSupplierPayments(invoice.id); }
 async function reload(reset = false): Promise<void> {
   loading.value = true;
+  loadError.value = "";
   try {
     if (reset) { pageNumber.value = 1; pageCursors.value = [null]; }
     const page = await purchasing.fetchPurchaseInvoices({ supplierId: route.query.supplier ? String(route.query.supplier) : null, status: statusFilter.value as "all" | "paid" | "partial" | "unpaid", pageSize: 25, cursor: pageCursors.value[pageNumber.value - 1] });
@@ -217,6 +226,9 @@ async function reload(reset = false): Promise<void> {
     pinnedInvoices.value = page.pinned;
     hasMore.value = page.hasMore;
     if (page.cursor) pageCursors.value[pageNumber.value] = page.cursor;
+  } catch (error) {
+    console.error(error);
+    loadError.value = "تعذر تحميل فواتير الموردين. تحقق من الاتصال ثم أعد المحاولة.";
   } finally { loading.value = false; }
 }
 async function nextPage(): Promise<void> { if (!hasMore.value || loading.value) return; pageNumber.value += 1; await reload(); }

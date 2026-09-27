@@ -6,6 +6,7 @@ import type {
 } from "~/types/finance";
 import { deriveSupplierInvoiceStatus } from "~/types/finance";
 import type { Product, ProductUnit } from "~/types";
+import { toDateSafe } from "~/types";
 import {
   MAX_PURCHASE_ITEMS,
   applyStockGroup,
@@ -125,7 +126,7 @@ export const usePurchasing = defineStore("purchasing", () => {
         return { ok: false, error: `صنف ${n}: سعر البيع المخصص غير صالح.` };
       }
     }
-    const total = round2(items.reduce((s, it) => s + round2(toNum(it.quantity)) * round2(toNum(it.unit_cost)), 0));
+    const total = round2(items.reduce((s, it) => s + round2(toNum(it.quantity) * round4(toNum(it.unit_cost))), 0));
     const paid = round2(toNum(input.paidNow));
     if (!(paid >= 0) || paid - total > 1e-9) {
       return { ok: false, error: "المدفوع الآن يجب أن يكون بين صفر وإجمالي الفاتورة." };
@@ -183,7 +184,7 @@ export const usePurchasing = defineStore("purchasing", () => {
         let seq = 0;
         for (const it of items) {
           const qty = round2(toNum(it.quantity));
-          const unitCost = round2(toNum(it.unit_cost));
+          const unitCost = round4(toNum(it.unit_cost));
           const factor = Number(it.unit_factor ?? 1);
           if (!(Number.isFinite(factor) && factor > 0)) throw new Error("VALIDATION:معامل تحويل الوحدة غير صالح.");
           const baseQty = round2(qty * factor);
@@ -191,7 +192,7 @@ export const usePurchasing = defineStore("purchasing", () => {
           if (it.product_id) {
             const cur = prods.get(it.product_id)!;
             const configuredUnit = cur.units.find((unit) => unit.id === it.unit_id);
-            if (cur.units.length && it.unit_id && (!configuredUnit || Math.abs(Number(configuredUnit.factor) - factor) > 1e-9)) {
+            if (cur.units.length && (!configuredUnit || configuredUnit.can_purchase === false || Math.abs(Number(configuredUnit.factor) - factor) > 1e-9)) {
               throw new Error("VALIDATION:تغيرت وحدة المنتج — أعد مراجعة الفاتورة.");
             }
             if (!cur.units.length && Math.abs(factor - 1) > 1e-9) throw new Error("VALIDATION:المنتج القديم يدعم وحدة مخزون واحدة حتى يتم إعداد وحداته.");
@@ -395,7 +396,7 @@ export const usePurchasing = defineStore("purchasing", () => {
             purchase_invoice_id: invRef.id,
             reference_type: "supplier_invoice",
             reference_id: invRef.id,
-            reference_label: `Supplier Invoice - ${input.supplier_name?.trim() || "Supplier"}`,
+            reference_label: `فاتورة توريد من ${input.supplier_name?.trim() || "مورد غير مسمى"}`,
             note: input.note ?? null,
             created_by: byWho,
             created_at: now,
@@ -474,7 +475,7 @@ export const usePurchasing = defineStore("purchasing", () => {
           purchase_invoice_id: invoiceId,
           reference_type: "supplier_invoice",
           reference_id: invoiceId,
-          reference_label: `Supplier Invoice Payment - ${String(d.supplier_name || "Supplier")}`,
+          reference_label: `فاتورة توريد من ${String(d.supplier_name || "مورد غير مسمى")}`,
           amount: pay,
           note: note ?? null,
           created_by: byWho,
@@ -487,7 +488,7 @@ export const usePurchasing = defineStore("purchasing", () => {
           purchase_invoice_id: invoiceId,
           reference_type: "supplier_invoice",
           reference_id: invoiceId,
-          reference_label: `Supplier Invoice Payment - ${String(d.supplier_name || "Supplier")}`,
+          reference_label: `فاتورة توريد من ${String(d.supplier_name || "مورد غير مسمى")}`,
           note: note ?? null,
           created_by: byWho,
           created_at: now,
@@ -524,7 +525,7 @@ export const usePurchasing = defineStore("purchasing", () => {
       if (options.supplierId) q = query(q, where("supplier_id", "==", options.supplierId));
       if (pinnedOnly) q = query(q, where("pinned", "==", true));
       if (options.status && options.status !== "all") q = query(q, where("status", "==", options.status));
-      q = query(q, orderBy("created_at", "desc"));
+      if (!pinnedOnly) q = query(q, orderBy("created_at", "desc"));
       if (!pinnedOnly && options.cursor) q = query(q, startAfter(options.cursor));
       return query(q, limit(pinnedOnly ? 20 : pageSize + 1));
     };
@@ -535,7 +536,10 @@ export const usePurchasing = defineStore("purchasing", () => {
     const pageDocs = pageSnapshot.docs.slice(0, pageSize);
     return {
       items: pageDocs.map((d) => ({ id: d.id, ...(d.data() as object) }) as PurchaseInvoice),
-      pinned: pinnedSnapshot.docs.slice(0, 20).map((d) => ({ id: d.id, ...(d.data() as object) }) as PurchaseInvoice),
+      pinned: pinnedSnapshot.docs
+        .map((d) => ({ id: d.id, ...(d.data() as object) }) as PurchaseInvoice)
+        .sort((left, right) => (toDateSafe(right.created_at)?.getTime() ?? 0) - (toDateSafe(left.created_at)?.getTime() ?? 0))
+        .slice(0, 20),
       cursor: pageDocs.at(-1) ?? null,
       hasMore: pageSnapshot.docs.length > pageSize,
     };

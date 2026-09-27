@@ -95,6 +95,27 @@ export function unitsForProduct(product: Product): ProductUnit[] {
   return [{ id, name: product.base_unit_name || "وحدة", factor: 1, selling_price: product.price, is_base: true }];
 }
 
+export function purchasableUnitsForProduct(product: Product): ProductUnit[] {
+  return unitsForProduct(product).filter((unit) => unit.can_purchase !== false);
+}
+
+export function sellableUnitsForProduct(product: Product): ProductUnit[] {
+  return unitsForProduct(product).filter((unit) => unit.can_sell !== false);
+}
+
+export function unitSellingPrice(product: Product, unit: ProductUnit): number | null {
+  if (unit.is_base || unit.id === product.base_unit_id) return product.price === null ? null : toNum(product.price);
+  if (unit.selling_price !== null && unit.selling_price !== undefined) return toNum(unit.selling_price);
+  return unit.can_sell === undefined && product.price !== null ? toNum(product.price) : null;
+}
+
+export function convertUnitPrice(unitCost: unknown, fromFactor: unknown, toFactor: unknown): number {
+  const from = Number(fromFactor);
+  const to = Number(toFactor);
+  if (!(Number.isFinite(from) && from > 0 && Number.isFinite(to) && to > 0)) return 0;
+  return round4((toNum(unitCost) / from) * to);
+}
+
 export function lineUnitFactor(line: Pick<InvoiceProductLine, "unit_factor">): number {
   const factor = Number(line.unit_factor);
   return Number.isFinite(factor) && factor > 0 ? factor : 1;
@@ -551,4 +572,8 @@ export const useFinance = () => ({
   lineBaseQuantity,
   lineUnitFactor,
   unitsForProduct,
+  purchasableUnitsForProduct,
+  sellableUnitsForProduct,
+  unitSellingPrice,
+  convertUnitPrice,
 });

@@ -98,7 +98,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
         // Sale-line costs are snapshotted from these txn reads (never the
         // possibly-stale form), so later cost changes can't rewrite history.
         const ids = [...new Set(lines.map((l) => l.product_id as string))];
-        const stocks = new Map<string, { stock: number; name: string; cost: number }>();
+        const stocks = new Map<string, { stock: number; name: string; cost: number; units: { id: string; factor: number; can_sell?: boolean; is_base?: boolean }[]; baseUnitId: string | null }>();
         for (const pid of ids) {
           const snap = await tx.get(doc(db, "products", pid));
           if (!snap.exists()) throw new Error("VALIDATION:منتج غير موجود بالمخزون.");
@@ -106,11 +106,22 @@ export const useInvoicesStore = defineStore("invoices", () => {
             stock: toNum(snap.data().stock_quantity),
             name: String(snap.data().name || ""),
             cost: round4(toNum(snap.data().cost_price)),
+            units: Array.isArray(snap.data().units) ? snap.data().units as { id: string; factor: number; can_sell?: boolean; is_base?: boolean }[] : [],
+            baseUnitId: typeof snap.data().base_unit_id === "string" ? snap.data().base_unit_id : null,
           });
         }
         const needByProduct = new Map<string, number>();
         for (const l of lines) {
           const pid = l.product_id as string;
+          const product = stocks.get(pid)!;
+          const unitId = typeof l.unit_id === "string" ? l.unit_id : product.baseUnitId ?? product.units.find((unit) => unit.is_base)?.id ?? product.units[0]?.id;
+          const configuredUnit = product.units.find((unit) => unit.id === unitId);
+          if (product.units.length && (!configuredUnit || configuredUnit.can_sell === false || Math.abs(Number(configuredUnit.factor) - lineUnitFactor(l)) > STOCK_EPS)) {
+            throw new Error("VALIDATION:وحدة البيع المختارة غير متاحة أو تغير إعدادها. حدّث الفاتورة وحاول مرة أخرى.");
+          }
+          if (!product.units.length && lineUnitFactor(l) !== 1) {
+            throw new Error("VALIDATION:هذا المنتج القديم يدعم وحدة مخزون واحدة فقط.");
+          }
           needByProduct.set(pid, round2((needByProduct.get(pid) ?? 0) + lineBaseQuantity(l)));
         }
         for (const [pid, need] of needByProduct) {
@@ -211,7 +222,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
             invoice_id: invoiceId,
             reference_type: "invoice",
             reference_id: invoiceId,
-            reference_label: `Invoice - ${payload.customer_name || "Customer"}`,
+            reference_label: `فاتورة بيع لـ ${payload.customer_name || "عميل"}`,
             note: null,
             created_by: (authStore.currentUserKey as string) || null,
             created_at: now,
@@ -471,7 +482,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
             invoice_id: id,
             reference_type: "invoice",
             reference_id: id,
-            reference_label: `Invoice - ${effectivePayload.customer_name || "Customer"}`,
+            reference_label: `فاتورة بيع لـ ${effectivePayload.customer_name || "عميل"}`,
             note: "فرق تعديل فاتورة",
             created_by: by,
             created_at: now,

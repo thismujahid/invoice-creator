@@ -69,12 +69,13 @@
                 </UFormField>
               </div>
               <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <UFormField label="الكمية المضافة"><UInputNumber v-model="row.quantity" :min="0.01" :step="1" class="w-full" /></UFormField>
-                <UFormField label="تكلفة شراء الوحدة"><UInputNumber v-model="row.unitCost" :min="0" class="w-full" /></UFormField>
+                <UFormField :label="`الكمية المضافة${selectedUnit(row) ? ` (${selectedUnit(row)?.name})` : ''}`"><UInputNumber v-model="row.quantity" :min="0.01" :step="0.01" class="w-full" /></UFormField>
+                <UFormField :label="`تكلفة الشراء لكل ${selectedUnit(row)?.name || 'وحدة'}`"><UInputNumber v-model="row.unitCost" :min="0" :step="0.0001" class="w-full" /></UFormField>
               </div>
               <UFormField v-if="row.product && unitChoices(row).length > 1" label="وحدة الكمية والتكلفة"><USelectMenu :model-value="selectedUnit(row)" :items="unitChoices(row)" label-key="name" by="id" class="w-full" @update:model-value="(unit) => pickUnit(row, unit)" /></UFormField>
               <template v-if="row.product">
                 <div class="grid grid-cols-2 gap-2 rounded-lg bg-gray-50 p-3 text-xs sm:grid-cols-3">
+                  <span>وحدة الشراء: <b>{{ selectedUnit(row)?.name || 'وحدة' }}</b> · {{ selectedUnit(row)?.factor || 1 }} {{ currentProduct(row)?.base_unit_name || 'وحدة أساسية' }}</span>
                   <span>المخزون الحالي: <b>{{ toNum(currentProduct(row)?.stock_quantity) }}</b></span>
                   <span>التكلفة الحالية: <b>{{ formatePrice(currentProduct(row)?.cost_price) }}</b></span>
                   <span>تكلفة الدفعة: <b>{{ formatePrice(row.unitCost) }}</b></span>
@@ -91,13 +92,13 @@
                   <UFormField v-if="row.priceChoice === 'proposed'" label="السعر المقترح (قابل للتعديل)" hint="السعر القديم ظاهر أعلاه كمرجع.">
                     <UInputNumber v-model="row.approvedPrice" :min="0" :step="0.01" class="w-full" />
                   </UFormField>
-                  <UFormField v-else label="سعر بيع مخصص"><UInputNumber v-model="row.customPrice" :min="0" class="w-full" /></UFormField>
+                  <UFormField v-else label="سعر بيع مخصص"><UInputNumber v-model="row.customPrice" :min="0" :step="0.01" class="w-full" /></UFormField>
                 </template>
               </template>
               <template v-else-if="row.createNew">
                 <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <UFormField label="سعر البيع للمنتج الجديد" required><UInputNumber v-model="row.newPrice" :min="0.01" class="w-full" /></UFormField>
-                  <UFormField label="مؤشر نقص المخزون" hint="الافتراضي 5"><UInputNumber v-model="row.threshold" :min="0" :step="0.5" class="w-full" /></UFormField>
+                  <UFormField label="سعر البيع للمنتج الجديد" required><UInputNumber v-model="row.newPrice" :min="0.01" :step="0.01" class="w-full" /></UFormField>
+                  <UFormField label="مؤشر نقص المخزون" hint="الافتراضي 5"><UInputNumber v-model="row.threshold" :min="0" :step="0.01" class="w-full" /></UFormField>
                   <UFormField label="وحدة المخزون الأساسية" required><UInput v-model="row.baseUnitName" placeholder="مثال: قطعة أو جرام" class="w-full" /></UFormField>
                 </div>
               </template>
@@ -112,7 +113,7 @@
               <div class="flex justify-between gap-2"><span>رصيد الخزنة</span><b>{{ formatePrice(cashBalance) }} ج</b></div>
               <div class="flex justify-between gap-2"><span>الباقي المستحق</span><b class="text-amber-700">{{ formatePrice(remaining) }} ج</b></div>
             </div>
-            <UFormField label="المدفوع الآن" :error="paidError || undefined"><UInputNumber v-model="paidNow" :min="0" :max="Math.min(total, cashBalance)" class="w-full" /></UFormField>
+            <UFormField label="المدفوع الآن" :error="paidError || undefined"><UInputNumber v-model="paidNow" :min="0" :max="Math.min(total, cashBalance)" :step="0.01" class="w-full" /></UFormField>
           </div>
           <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <UFormField label="المورد"><USelectMenu v-model="supplier" :items="supplierStore.list" label-key="name" by="id" placeholder="اختر المورد" class="w-full" /></UFormField>
@@ -175,7 +176,7 @@ interface ImportResult { id: string; total: number; paid: number; remaining: num
 const props = defineProps<{ products: Product[]; cashBalance: number }>();
 const emit = defineEmits<{ done: [] }>();
 const open = defineModel<boolean>("open", { required: true });
-const { round2, toNum, movingAverageCost, proposedSellingPrice, MAX_PURCHASE_ITEMS: maxItems } = useFinance();
+const { round2, round4, toNum, movingAverageCost, proposedSellingPrice, purchasableUnitsForProduct, MAX_PURCHASE_ITEMS: maxItems } = useFinance();
 const formatePrice = useHelpers().formatePrice;
 const purchasing = usePurchasing();
 const productsStore = useProductsStore();
@@ -202,7 +203,7 @@ const priceChoices = [
   { label: "اعتماد السعر المقترح", value: "proposed" },
   { label: "تحديد سعر مخصص", value: "custom" },
 ];
-const total = computed(() => round2(rows.value.reduce((sum, row) => sum + round2(toNum(row.quantity)) * round2(toNum(row.unitCost)), 0)));
+const total = computed(() => round2(rows.value.reduce((sum, row) => sum + round2(toNum(row.quantity) * toNum(row.unitCost)), 0)));
 const remaining = computed(() => round2(total.value - toNum(paidNow.value)));
 const paidError = computed(() => paidNow.value < 0 || paidNow.value - total.value > 1e-9 || paidNow.value - props.cashBalance > 1e-9 ? "المدفوع يجب ألا يتجاوز الإجمالي أو رصيد الخزنة." : "");
 const tooManyRows = computed(() => rows.value.length > maxItems);
@@ -260,7 +261,7 @@ function pickProduct(row: ImportRow, product: Product | null | undefined): void 
   row.productId = product.id;
   row.name = product.name;
   row.createNew = false;
-  const base = product.units?.find((unit) => unit.is_base) ?? { id: product.base_unit_id || "legacy-base", name: product.base_unit_name || "وحدة", factor: 1, selling_price: product.price, is_base: true };
+  const base = purchasableUnitsForProduct(product).find((unit) => unit.is_base) ?? purchasableUnitsForProduct(product)[0] ?? { id: product.base_unit_id || "legacy-base", name: product.base_unit_name || "وحدة", factor: 1, selling_price: product.price, is_base: true };
   row.unitId = base.id;
   row.unitName = base.name;
   row.unitFactor = base.factor;
@@ -270,7 +271,7 @@ function pickProduct(row: ImportRow, product: Product | null | undefined): void 
 function unitChoices(row: ImportRow): ProductUnit[] {
   const product = currentProduct(row);
   if (!product) return [];
-  return product.units?.length ? product.units : [{ id: product.base_unit_id || "legacy-base", name: product.base_unit_name || "وحدة", factor: 1, selling_price: product.price, is_base: true }];
+  return purchasableUnitsForProduct(product);
 }
 function selectedUnit(row: ImportRow): ProductUnit | undefined { return unitChoices(row).find((unit) => unit.id === row.unitId) ?? unitChoices(row)[0]; }
 function pickUnit(row: ImportRow, unit?: ProductUnit): void { if (!unit) return; row.unitId = unit.id; row.unitName = unit.name; row.unitFactor = unit.factor; row.approvedPrice = preview(row).price; }
@@ -330,7 +331,7 @@ function preview(row: ImportRow) {
   const product = currentProduct(row);
   if (!product) return { avg: null, rate: null, price: null, applies: false };
   const factor = Number(row.unitFactor || 1);
-  const avg = round2(movingAverageCost(toNum(product.stock_quantity), product.cost_price, round2((row.quantity ?? 0) * factor), round2((row.unitCost ?? 0) / factor)));
+  const avg = round4(movingAverageCost(toNum(product.stock_quantity), product.cost_price, round2((row.quantity ?? 0) * factor), round4((row.unitCost ?? 0) / factor)));
   const result = proposedSellingPrice(product.cost_price, product.price, avg);
   return { avg, rate: result.rate, price: result.proposed, applies: avg - toNum(product.price) > 1e-9 };
 }

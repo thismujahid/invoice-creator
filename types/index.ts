@@ -37,6 +37,8 @@ export interface ProductUnit {
   factor: number;
   selling_price: number | null;
   is_base?: boolean;
+  can_purchase?: boolean;
+  can_sell?: boolean;
 }
 
 export interface Customer {

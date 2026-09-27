@@ -365,7 +365,7 @@
           <UInputNumber
             v-model="purchaseQty"
             :min="0"
-            :step="1"
+            :step="0.01"
             size="lg"
             class="w-full"
           />
@@ -378,6 +378,7 @@
           <UInputNumber
             v-model="purchaseCost"
             :min="0"
+            :step="0.0001"
             size="lg"
             class="w-full"
           />
@@ -443,6 +444,7 @@
             <UInputNumber
               v-model="purchasePrice"
               :min="0"
+              :step="0.01"
               size="lg"
               class="w-full"
             />
@@ -489,6 +491,7 @@
             :model-value="purchasePaid"
             :min="0"
             :max="Math.min(purchaseTotal, cashBalance)"
+            :step="0.01"
             size="lg"
             class="w-full"
             @update:model-value="setPurchasePaid"
@@ -557,7 +560,7 @@
           <UInputNumber
             v-model="adjustNew"
             :min="0"
-            :step="1"
+            :step="0.01"
             size="lg"
             class="w-full"
           />
@@ -608,7 +611,7 @@ import { toDateSafe } from "~/types";
 definePageMeta({ title: "المنتجات", middleware: "admin-only" });
 const searchText = ref<string>("");
 const { formatePrice } = useHelpers();
-const { round2, toNum, movingAverageCost, proposedSellingPrice, isLowStock, unitsForProduct } =
+const { round2, round4, toNum, movingAverageCost, proposedSellingPrice, isLowStock, unitsForProduct, purchasableUnitsForProduct, convertUnitPrice } =
   useFinance();
 const productFormState = ref(false);
 const productsStore = useProductsStore();
@@ -628,13 +631,15 @@ const purchaseCost = ref<number | undefined>(undefined);
 const purchaseUnitId = ref("");
 const purchaseUnits = computed<ProductUnit[]>(() => {
   const product = prodsList.value.find((item) => item.id === purchaseId.value);
-  return product ? unitsForProduct(product) : [];
+  return product ? purchasableUnitsForProduct(product) : [];
 });
 const purchaseUnit = computed(() => purchaseUnits.value.find((unit) => unit.id === purchaseUnitId.value) ?? purchaseUnits.value[0]);
 function selectPurchaseUnit(unit?: ProductUnit): void {
   if (!unit) return;
+  const currentUnit = purchaseUnits.value.find((candidate) => candidate.id === purchaseUnitId.value);
+  const currentFactor = Number(currentUnit?.factor) > 0 ? Number(currentUnit?.factor) : 1;
   purchaseUnitId.value = unit.id;
-  purchaseCost.value = round2(purchaseCurrentCost.value * unit.factor);
+  purchaseCost.value = convertUnitPrice(purchaseCost.value ?? purchaseCurrentCost.value, currentFactor, unit.factor);
 }
 const priceChoice = ref<"proposed" | "custom">("proposed");
 const purchasePrice = ref<number | undefined>(undefined);
@@ -756,7 +761,7 @@ const adjustNewError = computed(() => {
   return adjustNew.value >= 0 ? "" : "الكمية الجديدة غير صالحة.";
 });
 const purchaseTotal = computed(() =>
-  round2(round2(purchaseQty.value || 0) * round2(purchaseCost.value || 0)),
+  round2((purchaseQty.value || 0) * (purchaseCost.value || 0)),
 );
 watch([purchaseTotal, cashBalance], ([amount, balance]) => {
   if (!purchasePaidTouched.value)
@@ -774,14 +779,14 @@ const purchaseCurrentPrice = computed(() =>
   toNum(prodsList.value.find((p) => p.id === purchaseId.value)?.price),
 );
 const purchasePreviewAvg = computed(() =>
-  round2(
+  round4(
     movingAverageCost(
       toNum(
         prodsList.value.find((p) => p.id === purchaseId.value)?.stock_quantity,
       ),
       purchaseCurrentCost.value,
       round2((purchaseQty.value ?? 0) * Number(purchaseUnit.value?.factor ?? 1)),
-      round2((purchaseCost.value ?? 0) / Number(purchaseUnit.value?.factor ?? 1)),
+      round4((purchaseCost.value ?? 0) / Number(purchaseUnit.value?.factor ?? 1)),
     ),
   ),
 );
@@ -841,7 +846,8 @@ function openPurchase(id?: string): void {
   purchaseId.value = id;
   purchaseQty.value = undefined;
   purchaseCost.value = p?.cost_price ?? undefined;
-  const baseUnit = p ? unitsForProduct(p).find((unit) => unit.is_base) ?? unitsForProduct(p)[0] : undefined;
+  const purchaseOptions = p ? purchasableUnitsForProduct(p) : [];
+  const baseUnit = purchaseOptions.find((unit) => unit.is_base) ?? purchaseOptions[0];
   purchaseUnitId.value = baseUnit?.id ?? "";
   priceChoice.value = "proposed";
   purchasePrice.value = undefined;
@@ -907,7 +913,7 @@ async function doPurchase(): Promise<void> {
   }
   if (purchasePaid.value !== undefined && purchasePaid.value !== null) {
     const t = round2(
-      round2(purchaseQty.value ?? 0) * round2(purchaseCost.value ?? 0),
+      round2((purchaseQty.value ?? 0) * (purchaseCost.value ?? 0)),
     );
     if (purchasePaid.value - t > 1e-9) {
       stockSubmitError.value =

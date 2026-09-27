@@ -194,7 +194,7 @@ export const useDebts = defineStore("debts", () => {
           loan_id: loanId,
           reference_type: "loan",
           reference_id: loanId,
-          reference_label: `Customer Loan - ${input.customer_name}`,
+          reference_label: `سلفة ${input.customer_name}`,
           note: input.note ?? null,
           created_by: creator(),
           created_at: now,
@@ -321,7 +321,7 @@ export const useDebts = defineStore("debts", () => {
               customer_id: input.customer_id, invoice_id: s.a.reference_id,
               debt_payment_id: payId, note: input.note ?? null, created_by: by, created_at: now,
               reference_type: "invoice", reference_id: s.a.reference_id,
-              reference_label: `Debt Payment - ${String(s.doc.customer_name || "Customer")}`,
+              reference_label: `فاتورة بيع لـ ${String(s.doc.customer_name || "عميل")}`,
             });
           } else {
             tx.update(doc(db, "customer_loans", s.a.reference_id), {
@@ -332,7 +332,7 @@ export const useDebts = defineStore("debts", () => {
               customer_id: input.customer_id, loan_id: s.a.reference_id,
               debt_payment_id: payId, note: input.note ?? null, created_by: by, created_at: now,
               reference_type: "loan", reference_id: s.a.reference_id,
-              reference_label: `Loan Payment - ${String(s.doc.customer_name || "Customer")}`,
+              reference_label: `سلفة ${String(s.doc.customer_name || "عميل")}`,
             });
           }
         }

@@ -1,81 +1,18 @@
 <template>
   <UApp>
     <UToaster />
-    <div v-if="!initFirebase" dir="rtl">
-      <FormsAuthScreen
-        :is-in-login="true"
-        @success="(v) => (isAuthed = v)"
-        v-if="!isAuthed"
-      />
-      <div id="printableArea" class="printable-area"></div>
-      <NuxtLayout>
-        <NuxtRouteAnnouncer />
-        <NuxtPage v-if="isAuthed" />
-      </NuxtLayout>
-    </div>
-    <div v-else class="flex h-screen w-full items-center justify-center gap-3">
-      جاري التحميل...
-      <UIcon name="i-lucide-loader-circle" class="size-5 animate-spin" />
-      <div v-show="false">
-        <NuxtPage />
-      </div>
-    </div>
+    <NuxtLayout>
+      <NuxtRouteAnnouncer />
+      <NuxtPage />
+    </NuxtLayout>
   </UApp>
 </template>
 <script setup lang="ts">
-import type { User } from "firebase/auth";
-
 useSeoMeta({ title: "قريتي" });
 useHead({
   htmlAttrs: { dir: "rtl", lang: "ar" },
   link: [{ rel: "manifest", href: "/site.webmanifest" }],
 });
-const authStore = useAuth();
-const { auth } = useFirebase();
-const toast = useToast();
-auth.languageCode = "ar";
-const initFirebase = ref(true);
-const isAuthed = ref<boolean>(!!auth.currentUser);
-// Single toast render path: writers set snackBarText, we show + consume.
-watch(
-  () => authStore.snackBarText,
-  (t) => {
-    if (!t) return;
-    toast.add({
-      title: t,
-      color:
-        authStore.snackBarColor === "error"
-          ? "error"
-          : authStore.snackBarColor === "primary"
-            ? "primary"
-            : "success",
-    });
-    authStore.snackBarText = "";
-  },
-);
-auth.onAuthStateChanged(
-  (user: User | null) => {
-    setTimeout(() => {
-      isAuthed.value = !!user;
-      initFirebase.value = false;
-      if (user) {
-        authStore.userData = {
-          name: user.displayName,
-          email: user.email,
-          phone: user.phoneNumber,
-          avatar: user.photoURL,
-          id: user.uid,
-        };
-      } else {
-        authStore.userData = null;
-      }
-    }, 100);
-  },
-  (err: unknown) => {
-    initFirebase.value = false;
-    console.error(err);
-  },
-);
 </script>
 <style>
 @import url("https://fonts.googleapis.com/css2?family=Baloo+Bhaijaan+2:wght@400..800&display=swap");

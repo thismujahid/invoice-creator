@@ -447,6 +447,7 @@
           <UInputNumber
             v-model="loanAmount"
             :min="0"
+            :step="0.01"
             placeholder="المبلغ"
             size="lg"
             class="w-full"
@@ -513,6 +514,7 @@
             v-model="payAmount"
             :min="0"
             :max="payTarget.totalDebt"
+            :step="0.01"
             placeholder="0"
             size="lg"
             class="w-full"
@@ -560,6 +562,7 @@
             :model-value="payAllocs[o.kind + o.id] ?? 0"
             :min="0"
             :max="o.remaining"
+            :step="0.01"
             placeholder="0"
             class="w-28 shrink-0"
             @update:model-value="(v) => onAllocInput(o, v)"

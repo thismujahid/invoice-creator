@@ -39,21 +39,25 @@ const props = withDefaults(
     open: boolean;
     title?: string;
     description?: string;
+    width?: string;
     /** Optional stacking layer (e.g. 70) so a dialog opened above another
      *  dialog renders on top (overlay + content). */
     zIndex?: number | null;
   }>(),
-  { title: "", description: "", zIndex: null },
+  { title: "", description: "", width: "", zIndex: null },
 );
 const emit = defineEmits(["update:open", "close"]);
 
 // Nuxt UI merges `ui` classes over theme defaults (tailwind-merge),
 // so only the z-index utilities are overridden.
-const layerUi = computed(() =>
-  props.zIndex
-    ? { overlay: `z-[${props.zIndex}]!`, content: `z-[${props.zIndex}]!` }
-    : undefined,
-);
+const layerUi = computed(() => {
+  const content = [props.width, props.zIndex ? `z-[${props.zIndex}]!` : ""].filter(Boolean).join(" ");
+  if (!content && !props.zIndex) return undefined;
+  return {
+    ...(props.zIndex ? { overlay: `z-[${props.zIndex}]!` } : {}),
+    content: content || undefined,
+  };
+});
 
 const isMobile = ref(false);
 onMounted(() => {

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   applyStockGroup,
+  convertUnitPrice,
   grossProfitOf,
   invoiceEditCashOutflowError,
   invoiceEditCustomerChangeError,
@@ -9,8 +10,12 @@ import {
   invoiceEditStockChanges,
   invoiceHasReturnHistory,
   isLowStock,
+  purchasableUnitsForProduct,
   proposedSellingPrice,
   restoreGroupsForEdit,
+  sellableUnitsForProduct,
+  unitSellingPrice,
+  unitsForProduct,
 } from "../composables/finance.ts";
 import { deriveSupplierInvoiceStatus, supplierInvoiceStatus } from "../types/finance.ts";
 import { invoiceDayKey, invoiceMonthKey, invoicePaymentStatus, invoiceStatsDelta, invoiceStatsOf } from "../composables/invoiceStats.ts";
@@ -22,6 +27,39 @@ test("moving weighted average stays aligned with sale and historical replay", ()
 
   assert.equal(afterSecondPurchase.stock, 12);
   assert.equal(Math.round(afterSecondPurchase.avg * 100) / 100, 183.33);
+});
+
+test("purchase-only packaging is excluded from sales and never inherits the base selling price", () => {
+  const product = {
+    price: 2,
+    base_unit_id: "cube",
+    base_unit_name: "مكعب",
+    units: [
+      { id: "cube", name: "مكعب", factor: 1, selling_price: 2, is_base: true, can_purchase: true, can_sell: true },
+      { id: "carton", name: "كرتونة", factor: 30, selling_price: null, can_purchase: true, can_sell: false },
+      { id: "box", name: "علبة", factor: 10, selling_price: 18, can_purchase: true, can_sell: true },
+    ],
+  };
+  assert.deepEqual(purchasableUnitsForProduct(product).map((unit) => unit.id), ["cube", "carton", "box"]);
+  assert.deepEqual(sellableUnitsForProduct(product).map((unit) => unit.id), ["cube", "box"]);
+  assert.equal(unitSellingPrice(product, product.units[0]), 2);
+  assert.equal(unitSellingPrice(product, product.units[1]), null);
+  assert.equal(unitSellingPrice(product, product.units[2]), 18);
+  assert.deepEqual(sellableUnitsForProduct({ price: 2, units: [{ id: "legacy-pack", name: "عبوة", factor: 12, selling_price: null }] }).map((unit) => unit.id), ["legacy-pack"]);
+  assert.equal(unitSellingPrice({ price: 2 }, unitsForProduct({ price: 2, cost_price: 1 })[0]), 2);
+});
+
+test("package purchase price normalizes to the base-unit moving average", () => {
+  const result = applyStockGroup(0, undefined, 0, [{ qty: 1 * 30, cost: 25 / 30 }]);
+  assert.equal(result.stock, 30);
+  assert.equal(Math.round(result.avg * 10000) / 10000, 0.8333);
+});
+
+test("switching purchase units preserves the equivalent base-unit cost", () => {
+  const perCube = convertUnitPrice(25, 30, 1);
+  const perCarton = convertUnitPrice(perCube, 1, 30);
+  assert.equal(perCube, 0.8333);
+  assert.equal(perCarton, 24.999);
 });
 
 test("invoice analytics use old-to-new deltas and transition payment status", () => {

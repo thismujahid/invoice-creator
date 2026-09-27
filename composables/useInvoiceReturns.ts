@@ -387,7 +387,7 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
             return_id: returnId,
             reference_type: "return",
             reference_id: returnId,
-            reference_label: `Invoice Return - ${String(fresh.customer_name || "Customer")}`,
+            reference_label: `مرتجع فاتورة ${String(fresh.customer_name || "عميل")}`,
             note: note ?? null,
             created_by: by,
             created_at: now,

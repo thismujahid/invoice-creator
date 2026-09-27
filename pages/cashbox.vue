@@ -38,6 +38,7 @@
           <UInputNumber
             v-model="openingAmount"
             :min="0"
+            :step="0.01"
             placeholder="مثال: 12350"
             size="lg"
             class="w-full"
@@ -106,7 +107,13 @@
       <!-- Store-wide totals from the same source + formulas as /invoices -->
       <p class="mb-2 mt-4 text-xs font-bold text-gray-400">إجماليات المحل</p>
       <USkeleton v-if="statsLoading" class="mb-3 h-24 w-full" />
-      <UAlert v-else-if="!statsReady" color="warning" variant="soft" class="mb-3" title="إجماليات المبيعات تحتاج تهيئة لمرة واحدة من أدوات المدير أدناه." />
+      <UAlert
+        v-else-if="!statsReady"
+        color="warning"
+        variant="soft"
+        class="mb-3"
+        title="إجماليات المبيعات تحتاج تهيئة لمرة واحدة من أدوات المدير أدناه."
+      />
       <div v-else class="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-5">
         <UCard variant="outline">
           <div class="text-lg font-bold text-emerald-700 sm:text-xl">
@@ -173,13 +180,28 @@
                   {{ formatDateTime(t.created_at) }}
                 </td>
                 <td class="p-2">{{ CASH_TYPE_LABELS[t.type] || t.type }}</td>
-                <td class="p-2 text-gray-600">{{ t.note || "—" }}</td>
+                <td class="max-w-64 p-2 text-gray-600">
+                  <UPopover
+                    v-if="descriptionWords(t.note).length > 5"
+                    mode="hover"
+                    :content="{ side: 'top', align: 'start' }"
+                  >
+                    <button type="button" class="text-start">
+                      {{ descriptionPreview(t.note) }}
+                    </button>
+                    <template #content>
+                      <div class="max-w-sm whitespace-normal text-sm text-gray-700">
+                        {{ t.note }}
+                      </div>
+                    </template>
+                  </UPopover>
+                  <span v-else>{{ t.note || "—" }}</span>
+                </td>
                 <td
                   class="p-2 font-semibold"
                   :class="
                     t.direction === 'in' ? 'text-emerald-600' : 'text-red-600'
                   "
-                  dir="ltr"
                 >
                   {{ t.direction === "in" ? "+" : "−"
                   }}{{ formatePrice(t.amount) }}
@@ -191,7 +213,17 @@
                     >{{ t.direction === "in" ? "وارد" : "صادر" }}</UBadge
                   >
                 </td>
-                <td class="p-2 text-xs text-gray-500"><UButton v-if="canViewReference(t)" size="xs" color="neutral" variant="link" class="p-0" @click="viewReference(t)">{{ refLabel(t) }}</UButton><span v-else>{{ refLabel(t) }}</span></td>
+                <td class="p-2 text-xs text-gray-500">
+                  <UButton
+                    v-if="canViewReference(t)"
+                    size="xs"
+                    color="neutral"
+                    variant="link"
+                    class="p-0"
+                    @click="viewReference(t)"
+                    >{{ refLabel(t) }}</UButton
+                  ><span v-else>{{ refLabel(t) }}</span>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -212,7 +244,17 @@
                   {{ formatDateTime(t.created_at)
                   }}{{ t.note ? ` • ${t.note}` : "" }}
                 </div>
-                <div class="text-xs text-gray-400"><UButton v-if="canViewReference(t)" size="xs" color="neutral" variant="link" class="p-0" @click="viewReference(t)">{{ refLabel(t) }}</UButton><span v-else>{{ refLabel(t) }}</span></div>
+                <div class="text-xs text-gray-400">
+                  <UButton
+                    v-if="canViewReference(t)"
+                    size="xs"
+                    color="neutral"
+                    variant="link"
+                    class="p-0"
+                    @click="viewReference(t)"
+                    >{{ refLabel(t) }}</UButton
+                  ><span v-else>{{ refLabel(t) }}</span>
+                </div>
               </div>
               <div
                 class="shrink-0 font-bold"
@@ -234,10 +276,28 @@
         </div>
       </template>
       <div class="mt-3 flex items-center justify-between gap-2">
-        <span class="text-xs text-gray-500">صفحة {{ cashbox.transactionsPage }} · 25 عملية</span>
+        <span class="text-xs text-gray-500"
+          >صفحة {{ cashbox.transactionsPage }} · 25 عملية</span
+        >
         <div class="flex gap-2" dir="ltr">
-          <UButton size="sm" color="neutral" variant="outline" icon="i-lucide-chevron-left" aria-label="الصفحة التالية" :disabled="cashbox.loadingTxns || !cashbox.transactionsHasMore" @click="cashbox.nextTransactionsPage(25)" />
-          <UButton size="sm" color="neutral" variant="outline" icon="i-lucide-chevron-right" aria-label="الصفحة السابقة" :disabled="cashbox.loadingTxns || cashbox.transactionsPage <= 1" @click="cashbox.previousTransactionsPage(25)" />
+          <UButton
+            size="sm"
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-chevron-left"
+            aria-label="الصفحة التالية"
+            :disabled="cashbox.loadingTxns || !cashbox.transactionsHasMore"
+            @click="cashbox.nextTransactionsPage(25)"
+          />
+          <UButton
+            size="sm"
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-chevron-right"
+            aria-label="الصفحة السابقة"
+            :disabled="cashbox.loadingTxns || cashbox.transactionsPage <= 1"
+            @click="cashbox.previousTransactionsPage(25)"
+          />
         </div>
       </div>
     </template>
@@ -289,7 +349,9 @@
         <UCard variant="outline">
           <div class="mb-1 text-sm font-bold">تهيئة الملخصات والإجماليات</div>
           <p class="mb-2 text-xs text-gray-500">
-            إعادة بناء ملخصات الديون والعملاء وإجماليات الفواتير اليومية والشهرية والكلية، بما فيها المرتجعات. إجراء إداري صريح ويمكن إعادة تشغيله. {{ migSumMsg }}
+            إعادة بناء ملخصات الديون والعملاء وإجماليات الفواتير اليومية
+            والشهرية والكلية، بما فيها المرتجعات. إجراء إداري صريح ويمكن إعادة
+            تشغيله. {{ migSumMsg }}
           </p>
           <UProgress v-if="migSumBusy" :value="migSumPct" class="mb-2" />
           <UButton
@@ -305,9 +367,15 @@
         <UCard variant="outline">
           <div class="mb-1 text-sm font-bold">تهيئة حالات فواتير الموردين</div>
           <p class="mb-2 text-xs text-gray-500">
-            تحديث حقل الحالة للفواتير القديمة التي لا تحتوي حالة صالحة. عملية إدارية لمرة واحدة ويمكن إعادة تشغيلها بأمان. {{ migSupplierStatusMsg }}
+            تحديث حقل الحالة للفواتير القديمة التي لا تحتوي حالة صالحة. عملية
+            إدارية لمرة واحدة ويمكن إعادة تشغيلها بأمان.
+            {{ migSupplierStatusMsg }}
           </p>
-          <UProgress v-if="migSupplierStatusBusy" :value="migSupplierStatusPct" class="mb-2" />
+          <UProgress
+            v-if="migSupplierStatusBusy"
+            :value="migSupplierStatusPct"
+            class="mb-2"
+          />
           <UButton
             color="neutral"
             variant="soft"
@@ -315,12 +383,14 @@
             :loading="migSupplierStatusBusy"
             icon="i-lucide-refresh-cw"
             @click="runSupplierStatusBackfill"
-          >تهيئة الحالات</UButton>
+            >تهيئة الحالات</UButton
+          >
         </UCard>
         <UCard variant="outline">
           <div class="mb-1 text-sm font-bold">مراجعة متوسط تكلفة المخزون</div>
           <p class="mb-2 text-xs text-gray-500">
-            إعادة تشغيل سجل الحركات ومقارنته بالمخزن — الإصلاح اليدوي فقط للصفوف القابلة. {{ repairMsg }}
+            إعادة تشغيل سجل الحركات ومقارنته بالمخزن — الإصلاح اليدوي فقط للصفوف
+            القابلة. {{ repairMsg }}
           </p>
           <UProgress v-if="repairBusy" :value="repairPct" class="mb-2" />
           <UButton
@@ -374,19 +444,26 @@
                   <UInputNumber
                     v-model="openingQtys[p.id as string]"
                     :min="0"
-                    :step="1"
+                    :step="0.01"
                     placeholder="الكمية"
                     class="w-full"
                   />
                 </UFormField>
                 <UFormField label="مؤشر الكمية القليلة">
                   <UInputNumber
-                    :model-value="openingThresholds[p.id as string] ?? p.low_stock_threshold ?? 5"
+                    :model-value="
+                      openingThresholds[p.id as string] ??
+                      p.low_stock_threshold ??
+                      5
+                    "
                     :min="0"
-                    :step="0.5"
+                    :step="0.01"
                     placeholder="5"
                     class="w-full"
-                    @update:model-value="(value) => (openingThresholds[p.id as string] = value ?? 5)"
+                    @update:model-value="
+                      (value) =>
+                        (openingThresholds[p.id as string] = value ?? 5)
+                    "
                   />
                 </UFormField>
               </div>
@@ -403,7 +480,8 @@
               class="flex flex-col items-center gap-1 py-1 sm:col-span-2"
             >
               <span class="text-xs text-gray-400">
-                عرض {{ visibleMissingStock.length }} من {{ filteredMissingStock.length }}
+                عرض {{ visibleMissingStock.length }} من
+                {{ filteredMissingStock.length }}
               </span>
               <UButton
                 color="neutral"
@@ -431,11 +509,26 @@
 
     <!-- Cost repair review -->
     <UiAppDialog v-model:open="repairOpen" title="مراجعة متوسط التكلفة">
-      <div v-if="repairRows.length" class="mb-2 flex items-center justify-between gap-2 text-xs">
-        <span class="text-gray-500">{{ repairRows.length }} منتج • المحدد: {{ selectedRepairable.length }}</span>
+      <div
+        v-if="repairRows.length"
+        class="mb-2 flex items-center justify-between gap-2 text-xs"
+      >
+        <span class="text-gray-500"
+          >{{ repairRows.length }} منتج • المحدد:
+          {{ selectedRepairable.length }}</span
+        >
         <div class="flex gap-2">
-          <UButton size="xs" color="neutral" variant="soft" @click="toggleRepairSelectAll">
-            {{ allRepairableSelected ? "إلغاء تحديد الكل" : "تحديد القابل للإصلاح" }}
+          <UButton
+            size="xs"
+            color="neutral"
+            variant="soft"
+            @click="toggleRepairSelectAll"
+          >
+            {{
+              allRepairableSelected
+                ? "إلغاء تحديد الكل"
+                : "تحديد القابل للإصلاح"
+            }}
           </UButton>
           <UButton
             size="xs"
@@ -448,7 +541,11 @@
         </div>
       </div>
       <div class="max-h-[60vh] space-y-2 overflow-y-auto">
-        <UEmpty v-if="!repairRows.length && !repairBusy" icon="i-lucide-scale" title="شغّل التحليل أولاً" />
+        <UEmpty
+          v-if="!repairRows.length && !repairBusy"
+          icon="i-lucide-scale"
+          title="شغّل التحليل أولاً"
+        />
         <div
           v-for="r in repairRows"
           :key="r.product_id"
@@ -461,17 +558,27 @@
           />
           <div class="min-w-0 flex-1">
             <div class="truncate font-semibold">{{ r.product_name }}</div>
-            <div class="mt-0.5 grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs text-gray-500">
+            <div
+              class="mt-0.5 grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs text-gray-500"
+            >
               <span>المخزون الحالي: {{ r.currentStock ?? "—" }}</span>
               <span>المعاد تشغيله: {{ r.replayedStock }}</span>
               <span>التكلفة الحالية: {{ r.currentCost ?? "—" }}</span>
               <span>المعاد حسابها: {{ r.recomputedCost ?? "—" }}</span>
             </div>
             <div class="mt-0.5 text-xs">
-              <span v-if="r.difference !== null && r.difference !== 0" class="font-bold text-amber-600">
+              <span
+                v-if="r.difference !== null && r.difference !== 0"
+                class="font-bold text-amber-600"
+              >
                 الفرق: {{ r.difference > 0 ? "+" : "" }}{{ r.difference }}
               </span>
-              <UBadge :color="repairStatusColor(r.status)" variant="soft" size="xs" class="ms-1">
+              <UBadge
+                :color="repairStatusColor(r.status)"
+                variant="soft"
+                size="xs"
+                class="ms-1"
+              >
                 {{ REPAIR_STATUS_LABELS[r.status] }}
               </UBadge>
             </div>
@@ -487,7 +594,9 @@
           >
         </div>
       </div>
-      <p v-if="repairMsg" class="mt-2 text-sm font-semibold text-gray-700">{{ repairMsg }}</p>
+      <p v-if="repairMsg" class="mt-2 text-sm font-semibold text-gray-700">
+        {{ repairMsg }}
+      </p>
     </UiAppDialog>
 
     <!-- Deposit dialog -->
@@ -497,6 +606,7 @@
           <UInputNumber
             v-model="amount"
             :min="0"
+            :step="0.01"
             placeholder="مثال: 5000"
             size="lg"
             class="w-full"
@@ -551,6 +661,7 @@
           <UInputNumber
             v-model="amount"
             :min="0"
+            :step="0.01"
             placeholder="المبلغ"
             size="lg"
             class="w-full"
@@ -594,12 +705,22 @@
     </UiAppDialog>
     <UiAppDialog v-model:open="referenceOpen" :title="referenceTitle">
       <USkeleton v-if="referenceLoading" class="h-24 w-full" />
-      <UAlert v-else-if="referenceError" color="error" variant="soft" :title="referenceError" />
-      <div v-else-if="referenceInvoice" class="space-y-3">
-        <p class="text-sm">{{ referenceInvoice.customer_name || 'فاتورة عميل' }} · {{ formatDateTime(referenceInvoice.date) }}</p>
-        <div class="max-h-[55vh] space-y-2 overflow-y-auto"><UCard v-for="(line, index) in referenceInvoice.products" :key="`${line.product_id}-${index}`" variant="outline"><div class="flex justify-between gap-2 text-sm"><b>{{ line.product_name }}</b><span>{{ line.product_quantity }} {{ line.unit_name || '' }}</span></div><div class="text-xs text-gray-500">{{ formatePrice(line.product_price) }} ج</div></UCard></div>
+      <UAlert
+        v-else-if="referenceError"
+        color="error"
+        variant="soft"
+        :title="referenceError"
+      />
+      <div v-else-if="referenceInvoice" class="max-h-[75vh] overflow-y-auto">
+        <Invoice
+          :invoice-data="referenceInvoice"
+          :view-mode="true"
+          @close="referenceOpen = false"
+        />
       </div>
-      <div v-else-if="referencePurchase" class="space-y-2"><p class="font-semibold">{{ referencePurchase.supplier_name || 'فاتورة مورد' }}</p><UCard v-for="(line, index) in referencePurchase.items" :key="`${line.product_id}-${index}`" variant="outline"><div class="flex justify-between gap-2 text-sm"><b>{{ line.product_name }}</b><span>{{ line.quantity }} {{ line.unit_name || 'وحدة' }}</span></div></UCard></div>
+      <div v-else-if="referencePurchase" class="max-h-[75vh] overflow-y-auto">
+        <SupplierInvoice :invoice="referencePurchase" />
+      </div>
     </UiAppDialog>
   </div>
 </template>
@@ -610,17 +731,13 @@ import { CASH_TYPE_LABELS } from "~/types/finance";
 import type { RepairRow } from "~/composables/useInventoryCostRepair";
 import { REPAIR_STATUS_LABELS } from "~/composables/useInventoryCostRepair";
 import { toDateSafe } from "~/types";
-import { doc, getDoc } from "firebase/firestore";
+import { collection, doc, documentId, getDoc, getDocs, query, where } from "firebase/firestore";
 import type { Invoice } from "~/types";
 import type { CashTransaction, PurchaseInvoice } from "~/types/finance";
 
 definePageMeta({ title: "الخزنة" });
 const { formatePrice } = useHelpers();
-const {
-  inventoryAggregates,
-  round2,
-  toNum,
-} = useFinance();
+const { inventoryAggregates, round2, toNum } = useFinance();
 const cashbox = useCashbox();
 const products = useProductsStore();
 const migration = useMigration();
@@ -633,6 +750,7 @@ const referenceError = ref("");
 const referenceTitle = ref("");
 const referenceInvoice = ref<Invoice | null>(null);
 const referencePurchase = ref<PurchaseInvoice | null>(null);
+const resolvedReferenceNames = ref<Record<string, string>>({});
 
 // Cost repair review state (§12).
 const repairOpen = ref(false);
@@ -644,11 +762,15 @@ const repairSelected = ref(new Set<string>());
 const repairApplyBusy = ref(false);
 const repairRowBusy = ref<string | null>(null);
 const selectedRepairable = computed(() =>
-  repairRows.value.filter((r) => r.status === "REPAIRABLE" && repairSelected.value.has(r.product_id)),
+  repairRows.value.filter(
+    (r) => r.status === "REPAIRABLE" && repairSelected.value.has(r.product_id),
+  ),
 );
 const allRepairableSelected = computed(() => {
   const reps = repairRows.value.filter((r) => r.status === "REPAIRABLE");
-  return reps.length > 0 && reps.every((r) => repairSelected.value.has(r.product_id));
+  return (
+    reps.length > 0 && reps.every((r) => repairSelected.value.has(r.product_id))
+  );
 });
 function isRepairSelected(id: string): boolean {
   return repairSelected.value.has(id);
@@ -662,11 +784,15 @@ function toggleRepairSelectAll(): void {
     repairSelected.value = new Set();
   } else {
     repairSelected.value = new Set(
-      repairRows.value.filter((r) => r.status === "REPAIRABLE").map((r) => r.product_id),
+      repairRows.value
+        .filter((r) => r.status === "REPAIRABLE")
+        .map((r) => r.product_id),
     );
   }
 }
-function repairStatusColor(s: RepairRow["status"]): "success" | "warning" | "error" | "neutral" {
+function repairStatusColor(
+  s: RepairRow["status"],
+): "success" | "warning" | "error" | "neutral" {
   if (s === "OK") return "success";
   if (s === "REPAIRABLE") return "warning";
   if (s === "STOCK_MISMATCH" || s === "INVALID_HISTORY") return "error";
@@ -682,7 +808,9 @@ async function runRepairAnalyze(): Promise<void> {
     repairRows.value = await repairApi.analyze((d, t) => {
       repairPct.value = t ? Math.round((d / t) * 100) : 100;
     });
-    const reps = repairRows.value.filter((r) => r.status === "REPAIRABLE").length;
+    const reps = repairRows.value.filter(
+      (r) => r.status === "REPAIRABLE",
+    ).length;
     repairMsg.value = `اكتمل التحليل: ${repairRows.value.length} منتج، ${reps} قابل للإصلاح.`;
   } catch (e) {
     repairMsg.value = "فشل التحليل.";
@@ -712,7 +840,11 @@ async function applySelectedRepairs(): Promise<void> {
   if (!targets.length) return;
   repairApplyBusy.value = true;
   try {
-    const res = await repairApi.applyMany(targets, "إصلاح جماعي من المراجعة", () => {});
+    const res = await repairApi.applyMany(
+      targets,
+      "إصلاح جماعي من المراجعة",
+      () => {},
+    );
     repairMsg.value = `تم تطبيق ${res.applied}، وتخطي ${res.skipped}، وفشل ${res.failed}.`;
     notify(repairMsg.value, res.failed ? "error" : "success");
     repairSelected.value = new Set();
@@ -763,7 +895,9 @@ const filteredMissingStock = computed(() => {
 // button, so 60 heavy inputs never mount at once.
 const STOCK_PAGE = 15;
 const visibleCount = ref(STOCK_PAGE);
-const visibleMissingStock = computed(() => filteredMissingStock.value.slice(0, visibleCount.value));
+const visibleMissingStock = computed(() =>
+  filteredMissingStock.value.slice(0, visibleCount.value),
+);
 watch(stockSearch, () => {
   visibleCount.value = STOCK_PAGE;
 });
@@ -823,9 +957,13 @@ async function runSupplierStatusBackfill(): Promise<void> {
   migSupplierStatusBusy.value = true;
   migSupplierStatusMsg.value = "";
   try {
-    const result = await migration.backfillSupplierInvoiceStatuses((done, total) => {
-      migSupplierStatusPct.value = total ? Math.round((done / total) * 100) : 100;
-    });
+    const result = await migration.backfillSupplierInvoiceStatuses(
+      (done, total) => {
+        migSupplierStatusPct.value = total
+          ? Math.round((done / total) * 100)
+          : 100;
+      },
+    );
     migSupplierStatusMsg.value = `تم تحديث ${result.updated} من ${result.total} فاتورة.`;
     notify(migSupplierStatusMsg.value, "success");
   } catch {
@@ -842,18 +980,26 @@ async function runStockEntry(): Promise<void> {
       product_id: p.id as string,
       quantity: round2(openingQtys.value[p.id as string] ?? 0),
       unit_cost: toNum(p.cost_price),
-      low_stock_threshold: openingThresholds.value[p.id as string] ?? p.low_stock_threshold ?? 5,
+      low_stock_threshold:
+        openingThresholds.value[p.id as string] ?? p.low_stock_threshold ?? 5,
     }));
-  if (selectedEntries.some((entry) =>
-    !Number.isFinite(entry.quantity) || entry.quantity < 0 ||
-    !Number.isFinite(entry.low_stock_threshold) || entry.low_stock_threshold < 0
-  )) {
-    migStockMsg.value = "راجع الرصيد ومؤشر الكمية القليلة؛ يجب أن يكونا صفرًا أو أكبر.";
+  if (
+    selectedEntries.some(
+      (entry) =>
+        !Number.isFinite(entry.quantity) ||
+        entry.quantity < 0 ||
+        !Number.isFinite(entry.low_stock_threshold) ||
+        entry.low_stock_threshold < 0,
+    )
+  ) {
+    migStockMsg.value =
+      "راجع الرصيد ومؤشر الكمية القليلة؛ يجب أن يكونا صفرًا أو أكبر.";
     return;
   }
   const entries = selectedEntries;
   if (!entries.length) {
-    migStockMsg.value = "أدخل رصيدًا افتتاحيًا لمنتج واحد على الأقل؛ يمكن أن تكون الكمية صفرًا.";
+    migStockMsg.value =
+      "أدخل رصيدًا افتتاحيًا لمنتج واحد على الأقل؛ يمكن أن تكون الكمية صفرًا.";
     return;
   }
   migStockBusy.value = true;
@@ -903,7 +1049,9 @@ const typeOptions = computed(() => [
   })),
 ]);
 const currentPerPage = 25;
-watch(typeFilter, (value) => { void cashbox.fetchTransactions(currentPerPage, true, value); });
+watch(typeFilter, (value) => {
+  void cashbox.fetchTransactions(currentPerPage, true, value);
+});
 
 const agg = computed(() => inventoryAggregates(products.list));
 
@@ -940,6 +1088,10 @@ async function fetchStats(): Promise<void> {
   }
 }
 const paged = computed(() => cashbox.transactions);
+let referenceLookupVersion = 0;
+watch(paged, (transactions) => {
+  void resolveMissingReferenceNames(transactions);
+}, { immediate: true });
 
 function formatDateTime(v: unknown): string {
   const d = toDateSafe(v);
@@ -947,43 +1099,132 @@ function formatDateTime(v: unknown): string {
   return `${d.toLocaleDateString("ar-EG")} ${d.toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit" })}`;
 }
 
-function refLabel(t: {
-  reference_label?: string | null;
-  invoice_id?: string | null;
-  return_id?: string | null;
-  loan_id?: string | null;
-  product_id?: string | null;
-}): string {
-  if (t.reference_label) return t.reference_label;
-  if (t.invoice_id) return "Invoice - Customer";
-  if (t.return_id) return "Invoice Return";
-  if (t.loan_id) return "Customer Loan";
-  if (t.product_id) return "Product Adjustment";
-  return "—";
+function descriptionWords(value: string | null | undefined): string[] {
+  return value?.trim().split(/\s+/).filter(Boolean) ?? [];
+}
+
+function descriptionPreview(value: string | null | undefined): string {
+  return `${descriptionWords(value).slice(0, 5).join(" ")}...`;
+}
+
+function refLabel(t: CashTransaction): string {
+  const raw = String(t.reference_label || "").trim();
+  const name = resolvedReferenceNames.value[t.id || ""] || extractReferenceName(raw);
+  if (t.type === "invoice_sale" || t.type === "invoice_payment" || t.type === "invoice_edit_adjustment") {
+    return `فاتورة بيع لـ ${name || "عميل"}`;
+  }
+  if (t.type === "inventory_purchase" || t.type === "supplier_payment") {
+    return `فاتورة توريد من ${name || "مورد"}`;
+  }
+  if (t.type === "customer_loan" || t.type === "loan_payment") {
+    return `سلفة ${name || "عميل"}`;
+  }
+  if (t.type === "invoice_refund") return `مرتجع فاتورة ${name || "عميل"}`;
+  if (t.type === "supplier_return") return `مرتجع للمورد ${name || "منتج"}`;
+  if (t.type === "inventory_adjustment") return `تسوية مخزون ${name || "منتج"}`;
+  if (t.invoice_id || t.reference_type === "invoice") return `فاتورة بيع لـ ${name || "عميل"}`;
+  if (t.purchase_invoice_id || t.reference_type === "supplier_invoice") return `فاتورة توريد من ${name || "مورد"}`;
+  if (t.loan_id || t.reference_type === "loan") return `سلفة ${name || "عميل"}`;
+  if (t.return_id || t.reference_type === "return") return `مرتجع فاتورة ${name || "عميل"}`;
+  if (t.product_id || t.reference_type === "product") return `تسوية مخزون ${name || "منتج"}`;
+  return t.direction === "in" ? "إيداع نقدي" : "سحب نقدي";
+}
+
+function extractReferenceName(raw: string): string {
+  const name = raw
+    .replace(/^(?:Invoice|Debt Payment|Customer Loan|Loan Payment|Supplier Invoice(?: Payment)?|Invoice Return|Supplier Return|Product Adjustment)\s*-\s*/i, "")
+    .replace(/\s*-\s*(?:Debt Payment|Customer Loan|Loan Payment|Supplier Invoice(?: Payment)?|Invoice Return|Supplier Return|Product Adjustment|Invoice)$/i, "")
+    .replace(/^(?:فاتورة(?: بيع لـ| توريد من| مورد)?|سلفة|مرتجع(?: فاتورة| للمورد)?|تسوية مخزون)\s*/u, "")
+    .trim();
+  return !name || /^(?:customer|supplier|product|عميل|مورد|غير مسمى|منتج)$/i.test(name) ? "" : name;
+}
+
+async function resolveMissingReferenceNames(transactions: CashTransaction[]): Promise<void> {
+  const version = ++referenceLookupVersion;
+  const needsName = transactions.filter((transaction) =>
+    canViewReference(transaction) && !extractReferenceName(String(transaction.reference_label || "")),
+  );
+  resolvedReferenceNames.value = {};
+  const groups = [
+    { collectionName: "invoices", isSupplier: false },
+    { collectionName: "purchase_invoices", isSupplier: true },
+  ];
+  const resolved: Record<string, string> = {};
+  for (const group of groups) {
+    const groupTransactions = needsName.filter((transaction) => {
+      const isSupplier = transaction.reference_type === "supplier_invoice" || (!transaction.invoice_id && !!transaction.purchase_invoice_id);
+      return isSupplier === group.isSupplier;
+    });
+    const ids = [...new Set(groupTransactions.map((transaction) =>
+      transaction.reference_id || (group.isSupplier ? transaction.purchase_invoice_id : transaction.invoice_id),
+    ).filter((id): id is string => !!id))];
+    for (let index = 0; index < ids.length; index += 30) {
+      const batch = ids.slice(index, index + 30);
+      try {
+        const snapshot = await getDocs(query(collection(db, group.collectionName), where(documentId(), "in", batch)));
+        for (const invoice of snapshot.docs) {
+          const data = invoice.data();
+          const partyName = String(data[group.isSupplier ? "supplier_name" : "customer_name"] || "").trim();
+          if (!partyName) continue;
+          for (const transaction of groupTransactions) {
+            const invoiceId = transaction.reference_id || (group.isSupplier ? transaction.purchase_invoice_id : transaction.invoice_id);
+            if (invoiceId === invoice.id && transaction.id) resolved[transaction.id] = partyName;
+          }
+        }
+      } catch (error) {
+        console.error("Unable to resolve legacy cashbox reference names.", error);
+      }
+    }
+  }
+  if (version === referenceLookupVersion) resolvedReferenceNames.value = resolved;
 }
 
 function canViewReference(transaction: CashTransaction): boolean {
-  return !!((transaction.reference_type === "invoice" || transaction.invoice_id) && (transaction.reference_id || transaction.invoice_id)
-    || (transaction.reference_type === "supplier_invoice" || transaction.purchase_invoice_id) && (transaction.reference_id || transaction.purchase_invoice_id));
+  return !!(
+    ((transaction.reference_type === "invoice" || transaction.invoice_id) &&
+      (transaction.reference_id || transaction.invoice_id)) ||
+    ((transaction.reference_type === "supplier_invoice" ||
+      transaction.purchase_invoice_id) &&
+      (transaction.reference_id || transaction.purchase_invoice_id))
+  );
 }
 async function viewReference(transaction: CashTransaction): Promise<void> {
-  const isPurchase = transaction.reference_type === "supplier_invoice" || (!transaction.invoice_id && !!transaction.purchase_invoice_id);
-  const id = transaction.reference_id || (isPurchase ? transaction.purchase_invoice_id : transaction.invoice_id);
+  const isPurchase =
+    transaction.reference_type === "supplier_invoice" ||
+    (!transaction.invoice_id && !!transaction.purchase_invoice_id);
+  const id =
+    transaction.reference_id ||
+    (isPurchase ? transaction.purchase_invoice_id : transaction.invoice_id);
   if (!id) return;
   referenceOpen.value = true;
   referenceLoading.value = true;
   referenceError.value = "";
   referenceInvoice.value = null;
   referencePurchase.value = null;
-  referenceTitle.value = transaction.reference_label || (isPurchase ? "Supplier Invoice" : "Customer Invoice");
+  referenceTitle.value = refLabel(transaction);
   try {
-    const snap = await getDoc(doc(db, isPurchase ? "purchase_invoices" : "invoices", id));
-    if (!snap.exists()) { referenceError.value = "الفاتورة غير موجودة."; return; }
-    if (isPurchase) referencePurchase.value = { id: snap.id, ...(snap.data() as object) } as PurchaseInvoice;
-    else referenceInvoice.value = { id: snap.id, ...(snap.data() as object) } as Invoice;
+    const snap = await getDoc(
+      doc(db, isPurchase ? "purchase_invoices" : "invoices", id),
+    );
+    if (!snap.exists()) {
+      referenceError.value = "الفاتورة غير موجودة.";
+      return;
+    }
+    if (isPurchase)
+      referencePurchase.value = {
+        id: snap.id,
+        ...(snap.data() as object),
+      } as PurchaseInvoice;
+    else
+      referenceInvoice.value = {
+        id: snap.id,
+        ...(snap.data() as object),
+      } as Invoice;
   } catch {
     referenceError.value = "تعذر تحميل الفاتورة.";
-  } finally { referenceLoading.value = false; }
+  } finally {
+    referenceLoading.value = false;
+  }
 }
 
 function closeForms(): void {

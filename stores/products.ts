@@ -78,7 +78,7 @@ export const useProductsStore = defineStore("products", () => {
             product_id: id,
             reference_type: "product",
             reference_id: id,
-            reference_label: `Supplier Return - ${String(data.name || "Product")}`,
+            reference_label: `مرتجع للمورد ${String(data.name || "منتج")}`,
             note: `استرجاع منتجات للمورد: ${String(data.name || "")}`,
             created_by: by,
             created_at: now,

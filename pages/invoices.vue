@@ -211,6 +211,8 @@
                       color="success"
                       variant="soft"
                       size="xs"
+                      :loading="payingFullInvoiceId === row.invoice.id"
+                      :disabled="isPayingFull"
                       aria-label="سداد الفاتورة بالكامل"
                       @click="payFull([row.invoice])"
                       class="flex items-center justify-center"
@@ -420,7 +422,7 @@
             <div class="min-w-0 text-sm font-bold">{{ r.product_name }}</div>
             <div class="shrink-0 text-xs text-gray-500">{{ r.unit_name }} • سعر البيع: {{ formatePrice(r.unit_price) }} • المتاح: {{ r.maxQty }}</div>
           </div>
-          <UInputNumber v-model="r.qty" :min="0" :max="r.maxQty" :step="1" size="lg" class="w-full" />
+          <UInputNumber v-model="r.qty" :min="0" :max="r.maxQty" :step="0.01" size="lg" class="w-full" />
           <div class="mt-1 text-xs text-gray-500">قيمة الاسترداد: {{ formatePrice(previewRefund(r)) }}</div>
         </div>
         <UEmpty v-if="!returnRows.length" icon="i-lucide-undo-2" title="لا توجد أصناف قابلة للإرجاع" />
@@ -460,6 +462,7 @@ const debtsFilterOptions = [
   { label: " فواتير ذات ديون", value: 1 },
 ];
 const isPayingFull = ref(false);
+const payingFullInvoiceId = ref<string | null>(null);
 const startExport = ref(false);
 const selectedDate = ref<Date | null>(null);
 const startViewTotal = ref(false);
@@ -520,8 +523,9 @@ watch(currentPerPage, () => { void loadInvoices(true); });
 async function payFull(listInvs: Invoice[] | null | undefined) {
   // Same UX as before, now atomic + ledger-logged via debt payments (F18/F19).
   const list = (listInvs ?? []).filter((inv) => inv.id && outstandingDebtOf(inv) > 0);
-  if (!list.length) return;
+  if (!list.length || isPayingFull.value) return;
   isPayingFull.value = true;
+  payingFullInvoiceId.value = list.length === 1 ? String(list[0]?.id) : null;
   try {
     await customerStore.fetchCustomers();
     const groups = new Map<string, Invoice[]>();
@@ -561,6 +565,7 @@ async function payFull(listInvs: Invoice[] | null | undefined) {
     await Promise.all([loadInvoices(), loadInvoiceStats()]);
   } finally {
     isPayingFull.value = false;
+    payingFullInvoiceId.value = null;
   }
 }
 
