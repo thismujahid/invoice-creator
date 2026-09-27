@@ -913,9 +913,10 @@ async function runCustomerBackfill(): Promise<void> {
     });
     migCustomerMsg.value = `تم: رُبط ${res.matched} من ${res.total} فاتورة.`;
     notify(`اكتمل الربط: ${res.matched} فاتورة.`, "success");
-  } catch (e) {
-    migCustomerMsg.value = "فشل الترحيل.";
-    notify("تعذر إتمام الترحيل.", "error");
+  } catch (error) {
+    console.error("Customer invoice linking failed:", error);
+    migCustomerMsg.value = `فشل الربط: ${migrationErrorDetail(error)}`;
+    notify(migCustomerMsg.value, "error");
   } finally {
     migCustomerBusy.value = false;
   }
@@ -929,9 +930,10 @@ async function runRepairLinks(): Promise<void> {
     });
     migRepairMsg.value = `تمت مراجعة ${res.reviewed}: سليم ${res.kept}، مُصحح ${res.cleared}.`;
     notify(`اكتملت المراجعة: صُحح ${res.cleared} رابط.`, "success");
-  } catch (e) {
-    migRepairMsg.value = "فشلت المراجعة.";
-    notify("تعذر إتمام المراجعة.", "error");
+  } catch (error) {
+    console.error("Customer link repair failed:", error);
+    migRepairMsg.value = `فشلت المراجعة: ${migrationErrorDetail(error)}`;
+    notify(migRepairMsg.value, "error");
   } finally {
     migRepairBusy.value = false;
   }
@@ -946,9 +948,10 @@ async function runSumBackfill(): Promise<void> {
     migSumMsg.value = `ملخصات الديون ${performance.debtSummaries}؛ إجماليات ${performance.invoices} فاتورة، ${performance.dailyStats} يوم، ${performance.monthlyStats} شهر، و${performance.returns} مرتجع بقيمة ${formatePrice(performance.returnsTotal)}.`;
     notify("اكتملت إعادة بناء الملخصات والإجماليات.", "success");
     await fetchStats();
-  } catch (e) {
-    migSumMsg.value = "فشلت التهيئة.";
-    notify("تعذر إتمام التهيئة.", "error");
+  } catch (error) {
+    console.error("Summary initialization failed:", error);
+    migSumMsg.value = `فشلت التهيئة: ${migrationErrorDetail(error)}`;
+    notify(migSumMsg.value, "error");
   } finally {
     migSumBusy.value = false;
   }
@@ -966,9 +969,10 @@ async function runSupplierStatusBackfill(): Promise<void> {
     );
     migSupplierStatusMsg.value = `تم تحديث ${result.updated} من ${result.total} فاتورة.`;
     notify(migSupplierStatusMsg.value, "success");
-  } catch {
-    migSupplierStatusMsg.value = "فشلت التهيئة.";
-    notify("تعذر تهيئة حالات فواتير الموردين.", "error");
+  } catch (error) {
+    console.error("Supplier invoice status initialization failed:", error);
+    migSupplierStatusMsg.value = `فشلت التهيئة: ${migrationErrorDetail(error)}`;
+    notify(migSupplierStatusMsg.value, "error");
   } finally {
     migSupplierStatusBusy.value = false;
   }
@@ -1013,12 +1017,17 @@ async function runStockEntry(): Promise<void> {
     openingQtys.value = {};
     openingThresholds.value = {};
     await products.fetchProducts();
-  } catch (e) {
-    migStockMsg.value = "فشل الحفظ.";
-    notify("تعذر إتمام الحفظ.", "error");
+  } catch (error) {
+    console.error("Opening stock entry failed:", error);
+    migStockMsg.value = `فشل الحفظ: ${migrationErrorDetail(error)}`;
+    notify(migStockMsg.value, "error");
   } finally {
     migStockBusy.value = false;
   }
+}
+
+function migrationErrorDetail(error: unknown): string {
+  return error instanceof Error ? error.message : String(error || "خطأ غير معروف");
 }
 
 const depositOpen = ref(false);

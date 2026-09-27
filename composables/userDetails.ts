@@ -1,16 +1,15 @@
 import type { ActiveUser, UserKey } from "~/types";
 
 // FLAG [S1]: role is still derived from client cookie "__AU".
-// Do not rely on this for real authorization — enforce via Firestore
-// Security Rules + Firebase Custom Claims server-side. This file only
-// controls UI visibility.
+// Do not rely on this for real authorization — Firestore Security Rules
+// verify the authenticated Firebase email. This file only controls UI visibility.
 export const userDetails = computed<ActiveUser>(() => {
   const useAuthStore = useAuth();
   return formateActiveUserKey(useAuthStore.currentUserKey);
 });
 
 // FLAG [S1]: trivially forgeable client check (`document.cookie="__AU=su"`).
-// Middleware `admin-only` must be backed by server-verified claims.
+// Middleware `admin-only` is only a UI/navigation gate, never a security boundary.
 export const isAdmin = computed<boolean>(() => useCookie<string | null | undefined>("__AU").value === "su");
 
 export function formateActiveUserKey(key: unknown): ActiveUser {

@@ -10,8 +10,8 @@ export interface AuthUserData {
 
 export const useAuth = defineStore("auth", () => {
   // FLAG [S1]: "__AU" is a UI hint, NOT a security boundary.
-  // sameSite=strict + secure reduce CSRF/leak; real auth must be
-  // verified server-side (Custom Claims + Firestore rules).
+  // sameSite=strict + secure reduce CSRF/leak; Firestore Rules authorize
+  // the Firebase-authenticated admin email independently of this UI hint.
   const currentUserKey = useCookie<UserKey | null | undefined>("__AU", {
     maxAge: 60 * 60 * 24 * 30,
     sameSite: "strict",

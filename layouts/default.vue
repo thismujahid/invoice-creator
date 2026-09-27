@@ -1,10 +1,5 @@
 <template>
-  <div v-if="!initFirebase" dir="rtl">
-    <FormsAuthScreen
-      :is-in-login="true"
-      @success="(v) => (isAuthed = v)"
-      v-if="!isAuthed"
-    />
+  <div v-if="!initFirebase && isAuthed">
     <div id="printableArea" class="printable-area"></div>
     <div id="app-shell" class="flex min-h-dvh flex-col bg-gray-50" dir="rtl">
       <!-- Top bar -->
@@ -166,12 +161,19 @@
       />
     </div>
   </div>
+  <div
+    v-else-if="!initFirebase && !isAuthed"
+    class="flex min-h-dvh items-center justify-center bg-gray-50 p-4"
+    dir="rtl"
+  >
+    <FormsAuthScreen
+      :is-in-login="true"
+      @success="(v) => (isAuthed = v)"
+    />
+  </div>
   <div v-else class="flex h-screen w-full items-center justify-center gap-3">
     جاري التحميل...
     <UIcon name="i-lucide-loader-circle" class="size-5 animate-spin" />
-    <div v-show="false">
-      <NuxtPage />
-    </div>
   </div>
 </template>
 
@@ -301,6 +303,7 @@ auth.onAuthStateChanged(
     }, 100);
   },
   (err: unknown) => {
+    isAuthed.value = false;
     initFirebase.value = false;
     console.error(err);
   },

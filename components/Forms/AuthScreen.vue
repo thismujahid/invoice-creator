@@ -36,9 +36,10 @@
 </template>
 
 <script setup lang="ts">
+import { ADMIN_EMAIL } from "~/constants/auth";
+
 // HOME delta: single-user login (admin only) — preserved from home branch.
 // Auth flow otherwise identical to main (shared-password re-auth [S4]).
-const ADMIN_EMAIL = "mohamed.mojahead@gmail.com";
 const error = ref("");
 const { auth, signInWithEmailAndPassword } = useFirebase();
 const pin = ref<number[]>([]);

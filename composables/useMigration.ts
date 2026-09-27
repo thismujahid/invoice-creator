@@ -3,6 +3,7 @@ import type { Customer } from "~/types";
 import type { Invoice } from "~/types";
 import type { Product } from "~/types";
 import type { PurchaseInvoice, Supplier } from "~/types/finance";
+import { ADMIN_EMAIL } from "~/constants/auth";
 import { deriveSupplierInvoiceStatus } from "~/types/finance";
 import { normalizeName, normalizePhone, round2, toNum } from "./finance";
 import { summarizeInvoice } from "./debtSummaries";
@@ -22,10 +23,14 @@ function matchKey(phone: unknown, name: unknown): string | null {
 
 /** One-time, idempotent, chunked migration tools (F22). No replay of cash. */
 export const useMigration = defineStore("migration", () => {
-  const { auth, db, writeBatch, serverTimestamp, readFrom } = useFirebase();
+  const { auth, db, writeBatch, serverTimestamp } = useFirebase();
   const authStore = useAuth();
 
   const by = () => (authStore.currentUserKey as string) || null;
+  async function readAll<T extends { id?: string }>(collectionName: string): Promise<T[]> {
+    const snapshot = await getDocs(collection(db, collectionName));
+    return snapshot.docs.map((item) => ({ id: item.id, ...(item.data() as object) }) as T);
+  }
 
   /** Backfill invoice.customer_id ONLY on unambiguous exact matches:
    *  normalized phone (≥7 digits) + normalized name, exactly one customer.
@@ -33,10 +38,12 @@ export const useMigration = defineStore("migration", () => {
   async function backfillCustomerIds(
     onProgress?: (done: number, total: number) => void,
   ): Promise<{ total: number; matched: number; skipped: number }> {
-    const [invoices, customers] = await Promise.all([
-      readFrom<Invoice>("invoices"),
-      readFrom<Customer>("customers"),
+    const [invoices, customers, debtSummaries] = await Promise.all([
+      readAll<Invoice>("invoices"),
+      readAll<Customer>("customers"),
+      getDocs(collection(db, "invoice_debt_summaries")),
     ]);
+    const existingDebtSummaryIds = new Set(debtSummaries.docs.map((item) => item.id));
     const index = new Map<string, string[]>();
     for (const c of customers) {
       if (!c.id) continue;
@@ -58,6 +65,9 @@ export const useMigration = defineStore("migration", () => {
       const batch = writeBatch(db);
       for (const t of targets.slice(i, i + CHUNK)) {
         batch.update(doc(db, "invoices", t.id), { customer_id: t.customer_id });
+        if (existingDebtSummaryIds.has(t.id)) {
+          batch.update(doc(db, "invoice_debt_summaries", t.id), { customer_id: t.customer_id });
+        }
       }
       await batch.commit();
       done = Math.min(i + CHUNK, targets.length);
@@ -73,7 +83,11 @@ export const useMigration = defineStore("migration", () => {
   async function repairCustomerLinks(
     onProgress?: (done: number, total: number) => void,
   ): Promise<{ reviewed: number; kept: number; cleared: number }> {
-    const invoices = await readFrom<Invoice>("invoices");
+    const [invoices, debtSummaries] = await Promise.all([
+      readAll<Invoice>("invoices"),
+      getDocs(collection(db, "invoice_debt_summaries")),
+    ]);
+    const existingDebtSummaryIds = new Set(debtSummaries.docs.map((item) => item.id));
     const linked = invoices.filter((inv) => inv.id && inv.customer_id);
     const cache = new Map<string, Customer | null>();
     async function getCustomer(id: string): Promise<Customer | null> {
@@ -99,6 +113,7 @@ export const useMigration = defineStore("migration", () => {
       const batch = writeBatch(db);
       for (const id of toClear.slice(i, i + CHUNK)) {
         batch.update(doc(db, "invoices", id), { customer_id: null });
+        if (existingDebtSummaryIds.has(id)) batch.update(doc(db, "invoice_debt_summaries", id), { customer_id: null });
       }
       await batch.commit();
     }
@@ -117,7 +132,7 @@ export const useMigration = defineStore("migration", () => {
       query(collection(db, "inventory_transactions"), where("type", "==", "opening_stock")),
     );
     const seeded = new Set(existing.docs.map((d) => String((d.data() as Record<string, unknown>).product_id || "")));
-    const products = await readFrom<Product>("products");
+    const products = await readAll<Product>("products");
     const byId = new Map(products.map((p) => [p.id, p]));
     const now = serverTimestamp();
     let set = 0;
@@ -129,40 +144,34 @@ export const useMigration = defineStore("migration", () => {
         if (p.stock_quantity !== null && p.stock_quantity !== undefined) continue;
         const threshold = e.low_stock_threshold ?? p.low_stock_threshold ?? 5;
         if (!Number.isFinite(threshold) || threshold < 0) continue;
-        if (!seeded.has(e.product_id)) {
-          const quantity = round2(toNum(e.quantity));
-          if (quantity > 0) {
-            const ref = doc(collection(db, "inventory_transactions"));
-            batch.update(doc(db, "products", e.product_id), {
-              stock_quantity: quantity,
-              low_stock_threshold: threshold,
-              last_inventory_transaction_id: ref.id,
-              last_inventory_transaction_ids: [ref.id],
-            });
-            batch.set(ref, {
-              type: "opening_stock",
-              product_id: e.product_id,
-              product_name: p.name,
-              quantity,
-              direction: "in",
-              unit_cost: e.unit_cost ?? toNum(p.cost_price),
-              note: "رصيد افتتاحي",
-              created_by: by(),
-              created_at: now,
-            });
-          } else {
-            batch.update(doc(db, "products", e.product_id), {
-              stock_quantity: 0,
-              low_stock_threshold: threshold,
-            });
-          }
-          seeded.add(e.product_id);
+        if (seeded.has(e.product_id)) continue;
+        const quantity = round2(toNum(e.quantity));
+        if (quantity > 0) {
+          const ref = doc(collection(db, "inventory_transactions"));
+          batch.update(doc(db, "products", e.product_id), {
+            stock_quantity: quantity,
+            low_stock_threshold: threshold,
+            last_inventory_transaction_id: ref.id,
+            last_inventory_transaction_ids: [ref.id],
+          });
+          batch.set(ref, {
+            type: "opening_stock",
+            product_id: e.product_id,
+            product_name: p.name,
+            quantity,
+            direction: "in",
+            unit_cost: e.unit_cost ?? toNum(p.cost_price),
+            note: "رصيد افتتاحي",
+            created_by: by(),
+            created_at: now,
+          });
         } else {
           batch.update(doc(db, "products", e.product_id), {
-            stock_quantity: round2(toNum(e.quantity)),
+            stock_quantity: 0,
             low_stock_threshold: threshold,
           });
         }
+        seeded.add(e.product_id);
         set += 1;
       }
       await batch.commit();
@@ -172,18 +181,12 @@ export const useMigration = defineStore("migration", () => {
     return { total: valid.length, set, skipped: valid.length - set };
   }
 
-  /** Backfill debt summaries for ALL invoices missing them (idempotent).
-   *  Legacy invoices (no paid state) get paid 0 / remaining 0 — they stay
-   *  out of the debt book by rule while contributing to sales/profit totals. */
+  /** Rebuild every invoice debt summary from its source invoice. */
   async function backfillDebtSummaries(
     onProgress?: (done: number, total: number) => void,
-  ): Promise<{ total: number; created: number; skipped: number }> {
-    const [invoices, existing] = await Promise.all([
-      readFrom<Invoice>("invoices"),
-      getDocs(collection(db, "invoice_debt_summaries")),
-    ]);
-    const have = new Set(existing.docs.map((d) => d.id));
-    const targets = invoices.filter((inv) => inv.id && !have.has(inv.id));
+  ): Promise<{ total: number; rebuilt: number }> {
+    const invoices = await readAll<Invoice>("invoices");
+    const targets = invoices.filter((inv) => inv.id);
     const now = serverTimestamp();
     for (let i = 0; i < targets.length; i += CHUNK) {
       const batch = writeBatch(db);
@@ -203,27 +206,27 @@ export const useMigration = defineStore("migration", () => {
       onProgress?.(Math.min(i + CHUNK, targets.length), targets.length);
     }
     onProgress?.(targets.length, targets.length);
-    return { total: invoices.length, created: targets.length, skipped: invoices.length - targets.length };
+    return { total: invoices.length, rebuilt: targets.length };
   }
 
   /** Explicit admin-only and intentionally expensive one-time historical backfill. */
   async function backfillPerformanceSummaries(
     onProgress?: (done: number, total: number) => void,
   ): Promise<{ invoices: number; customers: number; customerSummaries: number; debtSummaries: number; supplierInvoices: number; suppliers: number; dailyStats: number; monthlyStats: number; returns: number; returnsTotal: number }> {
-    const claims = await auth.currentUser?.getIdTokenResult(true);
-    if (claims?.claims.role !== "admin") throw new Error("Admin access is required to rebuild performance summaries.");
-    const [invoices, customers, purchaseInvoices, suppliers, existingDebtSummaries, returnSnapshots, existingDaily, existingMonthly] = await Promise.all([
-      readFrom<Invoice>("invoices"),
-      readFrom<Customer>("customers"),
-      readFrom<PurchaseInvoice>("purchase_invoices"),
-      readFrom<Supplier>("suppliers"),
+    if (auth.currentUser?.email !== ADMIN_EMAIL) throw new Error("Admin access is required to rebuild performance summaries.");
+    const [invoices, customers, purchaseInvoices, suppliers, existingDebtSummaries, existingCustomerSummaries, existingSupplierSummaries, returnSnapshots, existingDaily, existingMonthly] = await Promise.all([
+      readAll<Invoice>("invoices"),
+      readAll<Customer>("customers"),
+      readAll<PurchaseInvoice>("purchase_invoices"),
+      readAll<Supplier>("suppliers"),
       getDocs(collection(db, "invoice_debt_summaries")),
+      getDocs(collection(db, "customer_summaries")),
+      getDocs(collection(db, "supplier_summaries")),
       getDocs(collection(db, "invoice_returns")),
       getDocs(collection(db, "invoice_stats_daily")),
       getDocs(collection(db, "invoice_stats_monthly")),
     ]);
-    const existingDebtIds = new Set(existingDebtSummaries.docs.map((d) => d.id));
-    const missingDebtSummaries = invoices.filter((invoice) => invoice.id && !existingDebtIds.has(invoice.id));
+    const invoiceIds = new Set(invoices.map((invoice) => invoice.id).filter((id): id is string => !!id));
     const aggregates = new Map<string, { customer_id: string | null; customer_name: string | null; customer_phone: string | number | null; invoice_count: number; total_sales: number; outstanding_debt: number }>();
     for (const customer of customers) {
       if (!customer.id) continue;
@@ -293,6 +296,13 @@ export const useMigration = defineStore("migration", () => {
     }
     const docs = [...aggregates.entries()];
     const supplierDocs = [...supplierAggregates.entries()];
+    const currentCustomerSummaryIds = new Set(aggregates.keys());
+    const currentSupplierSummaryIds = new Set(supplierAggregates.keys());
+    const staleSummaryDocs = [
+      ...existingDebtSummaries.docs.filter((snapshot) => !invoiceIds.has(snapshot.id)).map((snapshot) => ({ collection: "invoice_debt_summaries", id: snapshot.id })),
+      ...existingCustomerSummaries.docs.filter((snapshot) => !currentCustomerSummaryIds.has(snapshot.id)).map((snapshot) => ({ collection: "customer_summaries", id: snapshot.id })),
+      ...existingSupplierSummaries.docs.filter((snapshot) => !currentSupplierSummaryIds.has(snapshot.id)).map((snapshot) => ({ collection: "supplier_summaries", id: snapshot.id })),
+    ];
     const currentDailyIds = new Set(dailyStats.keys());
     const currentMonthlyIds = new Set(monthlyStats.keys());
     const stalePeriods = [
@@ -300,7 +310,7 @@ export const useMigration = defineStore("migration", () => {
       ...existingMonthly.docs.filter((snapshot) => !currentMonthlyIds.has(snapshot.id)).map((snapshot) => ({ collection: "invoice_stats_monthly", id: snapshot.id })),
     ];
     const periodDocs = dailyStats.size + monthlyStats.size;
-    const totalWrites = docs.length + supplierDocs.length + missingDebtSummaries.length + periodDocs + stalePeriods.length + 1;
+    const totalWrites = docs.length + supplierDocs.length + invoices.filter((invoice) => invoice.id).length + periodDocs + stalePeriods.length + staleSummaryDocs.length + 1;
     let completed = 0;
     for (let i = 0; i < docs.length; i += CHUNK) {
       const batch = writeBatch(db);
@@ -318,9 +328,10 @@ export const useMigration = defineStore("migration", () => {
       completed += Math.min(CHUNK, supplierDocs.length - i);
       onProgress?.(completed, totalWrites);
     }
-    for (let i = 0; i < missingDebtSummaries.length; i += CHUNK) {
+    const debtSummariesToWrite = invoices.filter((invoice) => invoice.id);
+    for (let i = 0; i < debtSummariesToWrite.length; i += CHUNK) {
       const batch = writeBatch(db);
-      for (const invoice of missingDebtSummaries.slice(i, i + CHUNK)) {
+      for (const invoice of debtSummariesToWrite.slice(i, i + CHUNK)) {
         const totals = summarizeInvoice(invoice);
         batch.set(doc(db, "invoice_debt_summaries", invoice.id as string), {
           invoice_id: invoice.id,
@@ -333,7 +344,7 @@ export const useMigration = defineStore("migration", () => {
         });
       }
       await batch.commit();
-      completed += Math.min(CHUNK, missingDebtSummaries.length - i);
+      completed += Math.min(CHUNK, debtSummariesToWrite.length - i);
       onProgress?.(completed, totalWrites);
     }
     const periodEntries = [
@@ -356,6 +367,13 @@ export const useMigration = defineStore("migration", () => {
       completed += Math.min(CHUNK, stalePeriods.length - i);
       onProgress?.(completed, totalWrites);
     }
+    for (let i = 0; i < staleSummaryDocs.length; i += CHUNK) {
+      const batch = writeBatch(db);
+      for (const entry of staleSummaryDocs.slice(i, i + CHUNK)) batch.delete(doc(db, entry.collection, entry.id));
+      await batch.commit();
+      completed += Math.min(CHUNK, staleSummaryDocs.length - i);
+      onProgress?.(completed, totalWrites);
+    }
     const statsBatch = writeBatch(db);
     statsBatch.set(doc(db, "store_stats", "current"), {
       ...storeStats,
@@ -365,14 +383,14 @@ export const useMigration = defineStore("migration", () => {
     });
     await statsBatch.commit();
     onProgress?.(totalWrites, totalWrites);
-    return { invoices: invoices.length, customers: customers.length, customerSummaries: docs.length, debtSummaries: missingDebtSummaries.length, supplierInvoices: purchaseInvoices.length, suppliers: suppliers.length, dailyStats: dailyStats.size, monthlyStats: monthlyStats.size, returns: returnSnapshots.size, returnsTotal };
+    return { invoices: invoices.length, customers: customers.length, customerSummaries: docs.length, debtSummaries: debtSummariesToWrite.length, supplierInvoices: purchaseInvoices.length, suppliers: suppliers.length, dailyStats: dailyStats.size, monthlyStats: monthlyStats.size, returns: returnSnapshots.size, returnsTotal };
   }
 
   /** Explicit admin migration: intentionally scans purchase invoices once, then updates only missing or invalid status fields. */
   async function backfillSupplierInvoiceStatuses(
     onProgress?: (done: number, total: number) => void,
   ): Promise<{ total: number; updated: number; skipped: number }> {
-    const invoices = await readFrom<PurchaseInvoice>("purchase_invoices");
+    const invoices = await readAll<PurchaseInvoice>("purchase_invoices");
     const targets = invoices.filter((invoice) =>
       invoice.id && invoice.status !== "paid" && invoice.status !== "partial" && invoice.status !== "unpaid",
     );
