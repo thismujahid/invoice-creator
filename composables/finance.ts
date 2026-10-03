@@ -92,7 +92,7 @@ export function unitsForProduct(product: Product): ProductUnit[] {
   const configured = Array.isArray(product.units) ? product.units.filter((u) => u && Number.isFinite(Number(u.factor)) && Number(u.factor) > 0) : [];
   if (configured.length) return configured;
   const id = product.base_unit_id || "legacy-base";
-  return [{ id, name: product.base_unit_name || "وحدة", factor: 1, selling_price: product.price, is_base: true }];
+  return [{ id, name: product.base_unit_name || "وحدة", factor: 1, selling_price: product.price, purchase_price: product.cost_price, is_base: true }];
 }
 
 export function purchasableUnitsForProduct(product: Product): ProductUnit[] {
@@ -104,9 +104,41 @@ export function sellableUnitsForProduct(product: Product): ProductUnit[] {
 }
 
 export function unitSellingPrice(product: Product, unit: ProductUnit): number | null {
-  if (unit.is_base || unit.id === product.base_unit_id) return product.price === null ? null : toNum(product.price);
+  // Unit-level price is authoritative; product.price remains as the legacy
+  // mirror for base units created before per-unit pricing.
   if (unit.selling_price !== null && unit.selling_price !== undefined) return toNum(unit.selling_price);
-  return unit.can_sell === undefined && product.price !== null ? toNum(product.price) : null;
+  if (unit.is_base || unit.id === product.base_unit_id) {
+    return product.price === null || product.price === undefined ? null : toNum(product.price);
+  }
+  return unit.can_sell === undefined && product.price != null ? toNum(product.price) : null;
+}
+
+/** Last purchase unit-cost for THIS unit (reference value, own denomination).
+ *  Falls back to the product-level cost mirror for base units of legacy docs. */
+export function unitPurchasePrice(product: Product, unit: ProductUnit): number | null {
+  if (unit.purchase_price !== null && unit.purchase_price !== undefined) return toNum(unit.purchase_price);
+  if (unit.is_base || unit.id === product.base_unit_id) {
+    return product.cost_price === null || product.cost_price === undefined ? null : toNum(product.cost_price);
+  }
+  return null;
+}
+
+/** Derived moving-average cost in the unit's own denomination
+ *  (base average × factor). Computed on demand — never stored, so per-unit
+ *  figures can never drift out of sync with the base average. */
+export function unitAverageCost(product: Product, unit: ProductUnit): number | null {
+  if (product.cost_price === null || product.cost_price === undefined) return null;
+  const factor = Number(unit.factor);
+  if (!Number.isFinite(factor) || factor <= 0) return null;
+  return round4(toNum(product.cost_price) * factor);
+}
+
+/** Display stock in the unit's own quantity (single base-unit balance
+ *  divided by factor). The ledger stays in base units. */
+export function unitStockDisplay(product: Product, unit: ProductUnit): number {
+  const factor = Number(unit.factor);
+  const safe = Number.isFinite(factor) && factor > 0 ? factor : 1;
+  return toNum(product.stock_quantity) / safe;
 }
 
 export function convertUnitPrice(unitCost: unknown, fromFactor: unknown, toFactor: unknown): number {
@@ -536,6 +568,20 @@ export function isLowStock(p: Pick<Product, "stock_quantity" | "low_stock_thresh
   return toNum(p.stock_quantity) - lowStockThresholdOf(p) < -1e-9;
 }
 
+/** Human display of the threshold in its chosen unit's denomination
+ *  (e.g. "1 علبة" instead of the raw base-unit number). Math stays base. */
+export function thresholdDisplayOf(p: Pick<Product, "low_stock_threshold" | "low_stock_unit_id" | "base_unit_name" | "units">): string {
+  const base = lowStockThresholdOf(p);
+  const units = unitsForProduct(p as Product);
+  const chosen = p.low_stock_unit_id ? units.find((u) => u.id === p.low_stock_unit_id) : undefined;
+  const unit = chosen ?? units.find((u) => u.is_base) ?? units[0];
+  if (!unit) return String(base);
+  const factor = Number(unit.factor);
+  const value = Number.isFinite(factor) && factor > 0 ? base / factor : base;
+  const name = unit.name || (p as Product).base_unit_name || "وحدة";
+  return `${String(round4(value))} ${name}`;
+}
+
 /** Normalize a customer name: strip diacritics, collapse whitespace, trim. */
 export function normalizeName(name: unknown): string {
   return String(name ?? "")
@@ -568,6 +614,7 @@ export const useFinance = () => ({
   normalizePhone,
   normalizeName,
   lowStockThresholdOf,
+  thresholdDisplayOf,
   isLowStock,
   lineBaseQuantity,
   lineUnitFactor,
@@ -575,5 +622,8 @@ export const useFinance = () => ({
   purchasableUnitsForProduct,
   sellableUnitsForProduct,
   unitSellingPrice,
+  unitPurchasePrice,
+  unitAverageCost,
+  unitStockDisplay,
   convertUnitPrice,
 });

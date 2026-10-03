@@ -1,10 +1,9 @@
 <template>
   <div class="invoice-creator-view" id="editor-area">
-    <div class="flex flex-col gap-4 xl:flex-row xl:items-start">
-      <UCard variant="outline" class="min-w-0 flex-1">
-        <div class="mb-3 flex flex-wrap justify-end gap-2">
+    <div class="flex flex-col gap-4">
+      <UCard variant="outline" class="w-full">
+        <div v-if="invoiceData.id" class="mb-3 flex flex-wrap justify-end gap-2">
           <UButton
-            v-if="invoiceData.id"
             color="success"
             icon="i-lucide-refresh-ccw"
             :loading="updating"
@@ -12,13 +11,6 @@
           >
             تحديث الفاتورة
           </UButton>
-          <UButton
-            color="neutral"
-            variant="soft"
-            icon="i-lucide-refresh-cw"
-            @click="invoiceData.time = new Date()"
-            >تحديث الوقت</UButton
-          >
         </div>
         <UAlert
           v-if="lowStockCount > 0"
@@ -30,7 +22,7 @@
           class="mb-3"
         />
 
-        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <UFormField label="اسم العميل" class="min-w-0">
             <USelectMenu
               :model-value="
@@ -57,148 +49,31 @@
               @done="onPickCustomer"
             />
           </UFormField>
-          <UFormField label="رقم هاتف العميل" class="col-span-1">
-            <UInput
-              :model-value="String(invoiceData.customer_phone ?? '')"
-              placeholder="رقم هاتف العميل"
-              inputmode="tel"
-              dir="ltr"
-              class="w-full"
-              @update:model-value="(v) => (invoiceData.customer_phone = v)"
-            />
-          </UFormField>
-          <UFormField label="التاريخ">
+          <UFormField label="القديم">
             <div class="flex gap-1.5">
-              <UiAppDateField
-                v-model="dateModel"
-                @click-trilling=""
-                label="التاريخ"
+              <UInputNumber
+                :model-value="numOrUndef(invoiceData.debt)"
+                placeholder="القديم"
+                :min="0"
+                :step="0.01"
+                size="lg"
                 class="min-w-0 flex-1"
+                @update:model-value="(v) => (invoiceData.debt = v ?? null)"
+              />
+              <UButton
+                icon="i-lucide-history"
+                color="neutral"
+                variant="soft"
+                size="lg"
+                class="shrink-0"
+                :loading="loadingDebt"
+                aria-label="تعبئة القديم من ديون العميل"
+                @click="fillOldDebt"
               />
             </div>
-          </UFormField>
-          <UFormField label="الوقت">
-            <UInput v-model="timeInput" type="time" class="w-full" dir="ltr" />
             <template #hint>
-              <span class="text-xs text-gray-500">{{
-                formatTime12Hour(invoiceData.time)
-              }}</span>
+              <span class="text-xs text-gray-500">زر الساعة يجلب إجمالي ديون العميل (فواتير + سلف)</span>
             </template>
-          </UFormField>
-          <UFormField label="القديم">
-            <UInputNumber
-              :model-value="numOrUndef(invoiceData.debt)"
-              placeholder="القديم"
-              :min="0"
-              :step="0.01"
-              class="w-full"
-              @update:model-value="(v) => (invoiceData.debt = v ?? null)"
-            />
-          </UFormField>
-          <UFormField label="المبلغ المدفوع">
-            <UInput
-              :model-value="paidInput"
-              type="number"
-              placeholder="المبلغ المدفوع"
-              :min="0"
-              step="0.01"
-              inputmode="decimal"
-              class="w-full"
-              @update:model-value="
-                (v) => {
-                  blockUpdatePaidAmount = true;
-                  invoiceData.paid_amount = v === '' ? null : Number(v);
-                }
-              "
-            >
-              <template #trailing>
-                <UTooltip text="تم السداد بالكامل">
-                  <UButton
-                    icon="i-lucide-check"
-                    color="success"
-                    variant="ghost"
-                    size="xs"
-                    class="flex items-center justify-center"
-                    aria-label="تم السداد بالكامل"
-                    @click="
-                      () => {
-                        invoiceData.paid_amount = totalOfInvoice;
-                        blockUpdatePaidAmount = false;
-                      }
-                    "
-                  />
-                </UTooltip>
-              </template>
-            </UInput>
-            <template #hint>
-              <span class="text-xs text-gray-500"
-                >المتبقي:
-                {{
-                  formatePrice(
-                    totalOfInvoice - Number(invoiceData.paid_amount || 0),
-                  )
-                }}</span
-              >
-            </template>
-          </UFormField>
-          <!-- HOME delta: mahros/delivery hidden — kept in model. -->
-          <UFormField label="العلف">
-            <UInputNumber
-              :model-value="numOrUndef(invoiceData.amount_of_animal_feeds)"
-              placeholder="العلف"
-              :min="0"
-              :step="0.01"
-              class="w-full"
-              @update:model-value="
-                (v) => (invoiceData.amount_of_animal_feeds = v ?? null)
-              "
-            />
-          </UFormField>
-          <UFormField
-            :label="`الخصم (${invoiceData.discount_percentage ? 'نسبة مئوية' : 'مبلغ ثابت'})`"
-          >
-            <UInput
-              :model-value="discountInput"
-              type="number"
-              placeholder="الخصم"
-              :min="0"
-              step="0.01"
-              inputmode="decimal"
-              class="w-full"
-              @update:model-value="
-                (v) => (invoiceData.discount = v === '' ? null : Number(v))
-              "
-            >
-              <template #trailing>
-                <UTooltip text="نوع الخصم (نسبة مئوية % أم مبلغ ثابت)">
-                  <UButton
-                    :icon="
-                      invoiceData.discount_percentage
-                        ? 'i-lucide-percent'
-                        : 'i-lucide-banknote'
-                    "
-                    color="neutral"
-                    variant="ghost"
-                    class="flex items-center justify-center"
-                    aria-label="نوع الخصم"
-                    @click="
-                      invoiceData.discount_percentage =
-                        !invoiceData.discount_percentage
-                    "
-                  />
-                </UTooltip>
-              </template>
-            </UInput>
-          </UFormField>
-          <UFormField label="الخصم متعلق بـ">
-            <UInput
-              :model-value="invoiceData.discount_for ?? ''"
-              placeholder="الخصم متعلق بـ"
-              class="w-full"
-              @update:model-value="
-                (v) => (invoiceData.discount_for = String(v ?? ''))
-              "
-            />
           </UFormField>
         </div>
 
@@ -370,7 +245,7 @@
                   />
                 </UFormField>
                 <UFormField v-if="unitsOf(form).length > 1" label="الوحدة">
-                  <USelectMenu :model-value="selectedUnit(form)" :items="unitsOf(form)" label-key="name" by="id" class="w-full" @update:model-value="(unit) => onPickUnit(form, unit)" />
+                  <USelectMenu :model-value="selectedUnit(form)" :items="unitsOf(form)" label-key="name" by="id" :search-input="false" class="w-full" @update:model-value="(unit) => onPickUnit(form, unit)" />
                 </UFormField>
                 <UFormField
                   :label="
@@ -447,31 +322,117 @@
                     class="w-full"
                   />
                 </UFormField>
-                <UFormField label="الترتيب">
-                  <UInput
-                    :model-value="String(index)"
-                    placeholder="الترتيب"
-                    inputmode="numeric"
-                    dir="ltr"
-                    class="w-full"
-                    @update:model-value="(v) => (form.order = Number(v))"
-                    @keydown.enter="
-                      moveIndexToNewValue(index, form.order);
-                      form.order = null;
-                    "
-                  />
-                </UFormField>
               </div>
             </div>
           </div>
         </div>
+        <template v-if="!loadingProds">
+          <div class="mt-4 space-y-3 border-t border-gray-100 pt-3">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <UFormField
+                :label="`الخصم (${invoiceData.discount_percentage ? 'نسبة مئوية' : 'مبلغ ثابت'})`"
+              >
+                <UInput
+                  :model-value="discountInput"
+                  type="number"
+                  placeholder="الخصم"
+                  :min="0"
+                  step="0.01"
+                  inputmode="decimal"
+                  class="w-full"
+                  @update:model-value="
+                    (v) => (invoiceData.discount = v === '' ? null : Number(v))
+                  "
+                >
+                  <template #trailing>
+                    <UTooltip text="نوع الخصم (نسبة مئوية % أم مبلغ ثابت)">
+                      <UButton
+                        :icon="
+                          invoiceData.discount_percentage
+                            ? 'i-lucide-percent'
+                            : 'i-lucide-banknote'
+                        "
+                        color="neutral"
+                        variant="ghost"
+                        class="flex items-center justify-center"
+                        aria-label="نوع الخصم"
+                        @click="
+                          invoiceData.discount_percentage =
+                            !invoiceData.discount_percentage
+                        "
+                      />
+                    </UTooltip>
+                  </template>
+                </UInput>
+              </UFormField>
+              <UFormField label="الخصم متعلق بـ">
+                <UInput
+                  :model-value="invoiceData.discount_for ?? ''"
+                  placeholder="الخصم متعلق بـ"
+                  class="w-full"
+                  @update:model-value="
+                    (v) => (invoiceData.discount_for = String(v ?? ''))
+                  "
+                />
+              </UFormField>
+            </div>
+            <div class="grid grid-cols-1 gap-3">
+              <UFormField label="المبلغ المدفوع">
+                <UInput
+                  :model-value="paidInput"
+                  type="number"
+                  placeholder="المبلغ المدفوع"
+                  :min="0"
+                  step="0.01"
+                  inputmode="decimal"
+                  class="w-full"
+                  @update:model-value="
+                    (v) => {
+                      blockUpdatePaidAmount = true;
+                      invoiceData.paid_amount = v === '' ? null : Number(v);
+                    }
+                  "
+                >
+                  <template #trailing>
+                    <UTooltip text="تم السداد بالكامل">
+                      <UButton
+                        icon="i-lucide-check"
+                        color="success"
+                        variant="ghost"
+                        size="xs"
+                        class="flex items-center justify-center"
+                        aria-label="تم السداد بالكامل"
+                        @click="
+                          () => {
+                            invoiceData.paid_amount = totalOfInvoice;
+                            blockUpdatePaidAmount = false;
+                          }
+                        "
+                      />
+                    </UTooltip>
+                  </template>
+                </UInput>
+                <template #hint>
+                  <span class="text-xs text-gray-500"
+                    >المتبقي:
+                    {{
+                      formatePrice(
+                        totalOfInvoice - Number(invoiceData.paid_amount || 0),
+                      )
+                    }}</span
+                  >
+                </template>
+              </UFormField>
+            </div>
+          </div>
+        </template>
         <div v-else class="space-y-3" aria-hidden="true">
           <div class="mb-3 flex flex-wrap justify-end gap-2">
             <USkeleton class="h-9 w-32 rounded-md" />
             <USkeleton class="h-9 w-28 rounded-md" />
           </div>
-          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <div v-for="i in 9" :key="i">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div v-for="i in 2" :key="i">
               <USkeleton class="h-4 w-1/3" />
               <USkeleton class="mt-1.5 h-11 w-full rounded-md" />
             </div>
@@ -501,49 +462,88 @@
         </div>
       </UCard>
 
-      <!-- Live preview -->
-      <div class="min-w-0 xl:sticky xl:top-16 xl:w-[480px] xl:shrink-0">
+      <!-- Hidden save/print engine + print source (no visible preview) -->
+      <div class="hidden" aria-hidden="true">
         <Invoice
-          v-if="!loadingProds"
+          ref="invoiceEngine"
           :invoice-data="invoiceData"
           @reset="resetInvoice"
-          @saved="(id) => (invoiceData.id = id)"
+          @saved="onInvoiceSaved"
         />
-        <div
-          v-else
-          class="overflow-hidden rounded-xl border border-gray-200 bg-white"
-          aria-hidden="true"
-        >
-          <div
-            class="flex items-center justify-between gap-3 border-b border-gray-100 p-4"
-          >
-            <USkeleton class="h-12 w-28" />
-            <div class="min-w-0 flex-1">
-              <USkeleton class="h-5 w-1/2" />
-              <USkeleton class="mt-1.5 h-3 w-1/3" />
-            </div>
-          </div>
-          <div class="space-y-2 p-4">
-            <USkeleton class="h-4 w-2/3" />
-            <USkeleton class="h-4 w-1/2" />
-            <USkeleton class="h-4 w-3/5" />
-          </div>
-          <div class="mx-4 overflow-hidden rounded-lg border border-gray-100">
-            <USkeleton class="h-8 w-full rounded-none" />
-            <USkeleton class="h-10 w-full rounded-none" />
-            <USkeleton class="h-10 w-full rounded-none" />
-          </div>
-          <div class="flex justify-end p-4">
-            <USkeleton class="h-6 w-32" />
-          </div>
-          <div class="flex gap-2 border-t border-gray-100 p-4">
-            <USkeleton class="h-10 flex-1 rounded-md" />
-            <USkeleton class="h-10 flex-1 rounded-md" />
-          </div>
-        </div>
       </div>
     </div>
   </div>
+
+  <!-- Sticky action bar: icon-only actions + live total.
+    Fixed above the mobile bottom nav, normal sticky bar on desktop. -->
+  <div
+    class="fixed inset-x-0 bottom-0 z-30 mb-[calc(3.5rem+env(safe-area-inset-bottom))] border-t border-gray-200 bg-white/95 backdrop-blur sm:mb-0 sm:pb-0"
+  >
+    <div
+      class="mx-auto flex w-full max-w-6xl items-center gap-2 px-3 py-2 sm:px-4"
+    >
+      <div class="min-w-0 flex-1 text-start leading-tight">
+        <div class="truncate text-xs text-gray-500">الإجمالي</div>
+        <div class="truncate text-lg font-bold tabular-nums text-gray-900">
+          {{ formatePrice(totalOfInvoice) }}
+        </div>
+      </div>
+      <UButton
+        icon="i-lucide-save"
+        color="success"
+        size="lg"
+        class="min-h-11 min-w-11 justify-center"
+        :loading="saving"
+        aria-label="حفظ وفاتورة جديدة"
+        @click="saveAndNew"
+      ><span class="hidden sm:inline">حفظ وجديد</span></UButton
+      >
+      <UButton
+        icon="i-lucide-printer"
+        color="neutral"
+        variant="soft"
+        size="lg"
+        class="min-h-11 min-w-11 justify-center"
+        :loading="saving"
+        :disabled="saving"
+        aria-label="حفظ وطباعة"
+        @click="saveAndPrint"
+      ><span class="hidden sm:inline">حفظ وطباعة</span></UButton
+      >
+      <UButton
+        icon="i-lucide-eye"
+        color="neutral"
+        variant="soft"
+        size="lg"
+        class="min-h-11 min-w-11 justify-center"
+        aria-label="معاينة الفاتورة"
+        @click="previewOpen = true"
+      ><span class="hidden sm:inline">معاينة</span></UButton
+      >
+      <UButton
+        icon="i-lucide-rotate-ccw"
+        color="error"
+        variant="soft"
+        size="lg"
+        class="min-h-11 min-w-11 justify-center"
+        aria-label="تصفير الفاتورة"
+        @click="resetInvoice"
+      ><span class="hidden sm:inline">تصفير</span></UButton
+      >
+    </div>
+    <div class="h-[env(safe-area-inset-bottom)] sm:hidden" />
+  </div>
+  <!-- Spacer so the fixed bar never covers page content -->
+  <div aria-hidden="true" class="h-24" />
+
+  <!-- Read-only preview with its own print button -->
+  <UiAppDialog v-model:open="previewOpen" title="معاينة الفاتورة">
+    <Invoice
+      :invoice-data="invoiceData"
+      view-mode
+      @close="previewOpen = false"
+    />
+  </UiAppDialog>
 </template>
 <script setup lang="ts">
 import type { Customer, Invoice, InvoiceProductLine, Product } from "~/types";
@@ -551,8 +551,8 @@ import { toDateSafe } from "~/types";
 import type { ProductUnit } from "~/types";
 
 definePageMeta({ title: "إنشاء فاتورة" });
-const { formatDate, formatTime12Hour, formatePrice, calcTotal, formatInvoiceLineName } = useHelpers();
-const { isLowStock, unitsForProduct, sellableUnitsForProduct, unitSellingPrice, lineBaseQuantity } = useFinance();
+const { formatePrice, calcTotal, formatInvoiceLineName } = useHelpers();
+const { isLowStock, unitsForProduct, unitSellingPrice, lineBaseQuantity, normalizePhone, round2 } = useFinance();
 const products = useProductsStore();
 const lowStockCount = computed(() => products.list.filter((p) => isLowStock(p)).length);
 const invoices = useInvoicesStore();
@@ -560,6 +560,12 @@ const customers = useCustomersStore();
 const authStore = useAuth();
 const { notify } = useAppToast();
 const updating = ref(false);
+const saving = ref(false);
+const previewOpen = ref(false);
+const loadingDebt = ref(false);
+const resetAfterSave = ref(false);
+const debtsApi = useDebts();
+const invoiceEngine = ref<{ startPrint: (saveOnly?: boolean) => unknown } | null>(null);
 const loadingCustomers = ref(true);
 const loadingProds = ref(true);
 const containerRef = ref<HTMLElement | null>(null);
@@ -639,6 +645,100 @@ function isCostGreaterThanPrice(
 function resetInvoice(): void {
   invoiceData.value = emptyInvoice();
 }
+// Adopt the saved id; when save+new requested, start a fresh invoice.
+function onInvoiceSaved(id: unknown): void {
+  if (typeof id === "string" && id) invoiceData.value.id = id;
+  saving.value = false;
+  if (resetAfterSave.value) {
+    resetAfterSave.value = false;
+    resetInvoice();
+    notify("تم الحفظ — فاتورة جديدة جاهزة", "success");
+  }
+}
+async function saveAndPrint(): Promise<void> {
+  if (saving.value) return;
+  resetAfterSave.value = false;
+  saving.value = true;
+  try {
+    // Resolves once the save transaction finishes (print dialog is
+    // fire-and-forget after that); cost-confirm path resolves early while
+    // the user decides, then saves without a page spinner.
+    await invoiceEngine.value?.startPrint(false);
+  } finally {
+    saving.value = false;
+  }
+}
+async function saveAndNew(): Promise<void> {
+  if (saving.value) return;
+  resetAfterSave.value = true;
+  saving.value = true;
+  try {
+    await invoiceEngine.value?.startPrint(true);
+  } catch {
+    resetAfterSave.value = false;
+  } finally {
+    saving.value = false;
+    // Cleared by onInvoiceSaved on success; fallback if save never resolves
+    // (validation error or dismissed confirm keeps the flag for the retry).
+    setTimeout(() => {
+      resetAfterSave.value = false;
+    }, 8000);
+  }
+}
+// Fill القديم from the debts book (invoices + loans) on demand.
+// Matches exactly like the book itself: by customer_id first, then by
+// name+phone — a customer can own rows under both keys (old unlinked
+// invoices + new linked ones), so every matching row is summed.
+async function fillOldDebt(): Promise<void> {
+  const id = invoiceData.value.customer_id;
+  const name = String(invoiceData.value.customer_name ?? "").trim();
+  const phone = normalizePhone(invoiceData.value.customer_phone);
+  if (!id && !name) {
+    notify("اختر العميل أولًا", "error");
+    return;
+  }
+  loadingDebt.value = true;
+  try {
+    const book = await debtsApi.fetchDebtsBook();
+    let sum = 0;
+    let hit = false;
+    for (const c of book) {
+      const byId = !!id && !!c.customer_id && c.customer_id === id;
+      const cname = String(c.name ?? "").trim();
+      const cphone = normalizePhone(c.phone);
+      const byNamePhone =
+        !byId &&
+        !!name &&
+        !!cname &&
+        name === cname &&
+        !!phone &&
+        !!cphone &&
+        phone === cphone;
+      if (byId || byNamePhone) {
+        hit = true;
+        sum = round2(sum + c.totalDebt);
+      }
+    }
+    if (hit && sum > 0) {
+      invoiceData.value.debt = sum;
+      notify(`تمت تعبئة القديم: ${formatePrice(sum)}`, "success");
+    } else {
+      invoiceData.value.debt = 0;
+      notify("لا توجد ديون سابقة لهذا العميل", "success");
+    }
+  } catch (e) {
+    console.error(e);
+    notify("تعذر جلب الديون", "error");
+  } finally {
+    loadingDebt.value = false;
+  }
+}
+function handleCtrlPlusS(e: KeyboardEvent): void {
+  if (e && (e.ctrlKey || e.metaKey) && e.code === "KeyS") {
+    e.preventDefault();
+    void invoiceEngine.value?.startPrint(true);
+  }
+}
 // FLAG [D1]: shared calc lives in useHelpers.calcLineTotal; kept local for template compat.
 const calcTotalOfForm = (
   form: Pick<InvoiceProductLine, "product_price" | "product_quantity">,
@@ -707,9 +807,8 @@ function selectedProd(form: InvoiceProductLine): Product | undefined {
 function unitsOf(form: InvoiceProductLine): ProductUnit[] {
   const product = selectedProd(form);
   if (!product) return [];
-  const available = sellableUnitsForProduct(product);
-  const historical = unitsForProduct(product).find((unit) => unit.id === form.unit_id);
-  return historical && !available.some((unit) => unit.id === historical.id) ? [...available, historical] : available;
+  // All saved units are selectable on sale lines (purchase-only included).
+  return unitsForProduct(product);
 }
 function selectedUnit(form: InvoiceProductLine): ProductUnit | undefined {
   const options = unitsOf(form);
@@ -717,7 +816,6 @@ function selectedUnit(form: InvoiceProductLine): ProductUnit | undefined {
 }
 function onPickUnit(form: InvoiceProductLine, unit?: ProductUnit): void {
   if (!unit) return;
-  if (unit.can_sell === false) return;
   form.unit_id = unit.id;
   form.unit_name = unit.name;
   form.unit_factor = unit.factor;
@@ -773,10 +871,10 @@ function onPickProduct(
     notify(`المنتج "${real?.name || ""}" غير متوفر بالمخزون حالياً.`, "error");
     return;
   }
-  const availableUnits = sellableUnitsForProduct(real);
+  const availableUnits = unitsForProduct(real);
   const baseUnit = availableUnits.find((unit) => unit.is_base) ?? availableUnits[0];
   if (!baseUnit) {
-    notify("لا توجد وحدة بيع مفعّلة لهذا المنتج. راجع إعدادات وحداته.", "error");
+    notify("لا توجد وحدات لهذا المنتج. راجع إعدادات وحداته.", "error");
     return;
   }
   if (wanted * Number(baseUnit?.factor || 1) - available > 1e-9) {
@@ -791,7 +889,9 @@ function onPickProduct(
   form.product_cost_price = Number(real?.cost_price ?? 0);
   form.product_name = real?.name ?? "";
   onPickUnit(form, baseUnit);
-  // No auto-collapse: the user locks the line explicitly with collapseLine().
+  // Never auto-collapse: the line stays expanded until the user locks it
+  // explicitly with collapseLine() (إغلاق).
+  expandedLines.add(form);
   prodSearch.delete(form);
   setProdSearch(form, "");
 }
@@ -920,26 +1020,7 @@ function removeLine(form: InvoiceProductLine): void {
   invoiceData.value.products.splice(index, 1);
 }
 
-// Date/time bridges for native inputs
-const dateModel = computed<Date | null>({
-  get: () => toDateSafe(invoiceData.value.date),
-  set: (v) => {
-    invoiceData.value.date = v;
-  },
-});
-const timeInput = computed<string>({
-  get: () => {
-    const t = invoiceData.value.time;
-    if (t instanceof Date && !isNaN(t.getTime())) {
-      return `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
-    }
-    if (typeof t === "string" && /^\d{1,2}:\d{2}/.test(t)) return t.slice(0, 5);
-    return "";
-  },
-  set: (v: string) => {
-    invoiceData.value.time = v;
-  },
-});
+// Date/time are automatic (now at save / edit refresh) — no inputs.
 
 // Coerce nullable/string numerics for UInputNumber (number-only model).
 function numOrUndef(v: unknown): number | undefined {
@@ -983,18 +1064,6 @@ watch(
   (n, o) => (o > n ? null : nextTick(scrollToTop)),
   { flush: "post" },
 );
-function moveIndexToNewValue(from: number, to: unknown): void {
-  if (typeof from !== "number" || !to) return;
-  const target = Number(to);
-  if (
-    !Number.isInteger(target) ||
-    target < 0 ||
-    target >= invoiceData.value.products.length
-  )
-    return;
-  const [product] = invoiceData.value.products.splice(from, 1);
-  if (product) invoiceData.value.products.splice(target, 0, product);
-}
 function addNewForm(): void {
   // New lines go on TOP; refuse while any line is still empty.
   if (invoiceData.value.products.some((l) => !l.product_id)) {
@@ -1015,7 +1084,7 @@ function updateProdsPrices(preserveHistoricalCosts = false): void {
   invoiceData.value.products.forEach((item) => {
     const prod = item.product_id ? productMap.get(item.product_id) : undefined;
     if (prod) {
-      const options = sellableUnitsForProduct(prod);
+      const options = unitsForProduct(prod);
       const unit = options.find((candidate) => candidate.id === item.unit_id) ?? options.find((candidate) => candidate.is_base) ?? options[0];
       if (!invoiceData.value.id) {
         if (!unit) return;
@@ -1074,5 +1143,9 @@ onMounted(async () => {
     }, 100);
   }
   await Promise.all([loadCustomers(), loadProds()]);
+  window.addEventListener("keydown", handleCtrlPlusS);
+});
+onUnmounted(() => {
+  window.removeEventListener("keydown", handleCtrlPlusS);
 });
 </script>

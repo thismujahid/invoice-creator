@@ -25,7 +25,7 @@
               <td class="p-2 font-mono text-xs" dir="ltr">{{ p.id }}</td>
               <td class="p-2 font-medium">{{ p.name }}</td>
               <td class="p-2 font-semibold text-amber-700">{{ toNum(p.stock_quantity) }}</td>
-              <td class="p-2">{{ lowStockThresholdOf(p) }}</td>
+              <td class="p-2">{{ thresholdDisplayOf(p) }}</td>
               <td v-if="showCost" class="p-2">{{ formatePrice(p.cost_price) }}</td>
               <td class="p-2"><UBadge color="warning" variant="soft">قليل الكمية</UBadge></td>
             </tr>
@@ -42,7 +42,7 @@ import type { Product } from "~/types";
 const props = defineProps<{ products: Product[]; showCost: boolean }>();
 const open = defineModel<boolean>("open", { required: true });
 const { formatePrice } = useHelpers();
-const { isLowStock, lowStockThresholdOf, toNum } = useFinance();
+const { isLowStock, thresholdDisplayOf, toNum } = useFinance();
 const search = ref("");
 const rows = computed(() => {
   const q = search.value.trim().toLocaleLowerCase();

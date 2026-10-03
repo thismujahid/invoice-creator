@@ -30,19 +30,15 @@
             <UCard variant="outline"><div class="text-lg font-bold">{{ newCount }}</div><div class="text-xs text-gray-500">منتجات جديدة مختارة</div></UCard>
             <UCard variant="outline"><div class="text-lg font-bold" :class="errorCount ? 'text-red-600' : 'text-emerald-700'">{{ errorCount }}</div><div class="text-xs text-gray-500">صفوف تحتاج مراجعة</div></UCard>
           </div>
-          <div class="flex items-center justify-between gap-2 rounded-lg bg-gray-50 px-3 py-2 text-sm">
-            <span>عرض {{ pageStart }}–{{ pageEnd }} من {{ rows.length }} صفًا</span>
-            <div class="flex gap-2">
-              <UButton size="sm" color="neutral" variant="outline" icon="i-lucide-chevron-right" :disabled="currentPage <= 1" aria-label="الصفحة السابقة" @click="currentPage--" />
-              <span class="flex items-center px-1 text-xs text-gray-500">{{ currentPage }} / {{ pageCount }}</span>
-              <UButton size="sm" color="neutral" variant="outline" icon="i-lucide-chevron-left" :disabled="currentPage >= pageCount" aria-label="الصفحة التالية" @click="currentPage++" />
-            </div>
-          </div>
-          <div class="max-h-[42vh] space-y-3 overflow-y-auto overscroll-contain pe-1">
-            <UCard v-for="row in visibleRows" :key="row.rowNumber" variant="outline" class="space-y-3">
+          <div v-if="problemRows.length" class="space-y-2">
+            <p class="text-xs font-bold text-amber-700">
+              صفوف تحتاج مراجعة ({{ problemRows.length }}) — باقي الصفوف سليمة وستُحفظ تلقائيًا
+            </p>
+            <div class="max-h-[38vh] space-y-2 overflow-y-auto overscroll-contain pe-1">
+              <UCard v-for="row in problemRows" :key="row.rowNumber" variant="outline" class="space-y-2 p-3">
               <div class="flex flex-wrap items-start justify-between gap-2">
                 <div class="min-w-0">
-                  <div class="font-bold">صف {{ row.rowNumber }} · {{ row.name || 'بدون اسم' }}</div>
+                  <div class="text-sm font-bold">صف {{ row.rowNumber }} · {{ row.name || 'بدون اسم' }}</div>
                   <div class="mt-0.5 font-mono text-xs text-gray-500" dir="ltr">{{ row.productId || 'بدون رقم منتج' }}</div>
                 </div>
                 <UBadge :color="row.product ? 'success' : row.createNew ? 'info' : 'warning'" variant="soft">
@@ -68,32 +64,18 @@
                   <UInput v-model="row.name" class="w-full" />
                 </UFormField>
               </div>
-              <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <UFormField :label="`الكمية المضافة${selectedUnit(row) ? ` (${selectedUnit(row)?.name})` : ''}`"><UInputNumber v-model="row.quantity" :min="0.01" :step="0.01" class="w-full" /></UFormField>
-                <UFormField :label="`تكلفة الشراء لكل ${selectedUnit(row)?.name || 'وحدة'}`"><UInputNumber v-model="row.unitCost" :min="0" :step="0.0001" class="w-full" /></UFormField>
-              </div>
-              <UFormField v-if="row.product && unitChoices(row).length > 1" label="وحدة الكمية والتكلفة"><USelectMenu :model-value="selectedUnit(row)" :items="unitChoices(row)" label-key="name" by="id" class="w-full" @update:model-value="(unit) => pickUnit(row, unit)" /></UFormField>
-              <template v-if="row.product">
-                <div class="grid grid-cols-2 gap-2 rounded-lg bg-gray-50 p-3 text-xs sm:grid-cols-3">
-                  <span>وحدة الشراء: <b>{{ selectedUnit(row)?.name || 'وحدة' }}</b> · {{ selectedUnit(row)?.factor || 1 }} {{ currentProduct(row)?.base_unit_name || 'وحدة أساسية' }}</span>
-                  <span>المخزون الحالي: <b>{{ toNum(currentProduct(row)?.stock_quantity) }}</b></span>
-                  <span>التكلفة الحالية: <b>{{ formatePrice(currentProduct(row)?.cost_price) }}</b></span>
-                  <span>تكلفة الدفعة: <b>{{ formatePrice(row.unitCost) }}</b></span>
-                  <span>المتوسط المتوقع: <b>{{ formatePrice(preview(row).avg) }}</b></span>
-                  <span>سعر البيع القديم: <b>{{ formatePrice(currentProduct(row)?.price) }}</b></span>
-                  <span>نسبة الربح القديمة: <b>{{ preview(row).rate === null ? 'غير متاحة' : `${round2((preview(row).rate ?? 0) * 100)}%` }}</b></span>
-                  <span>السعر المقترح: <b>{{ preview(row).price === null ? 'يتطلب سعرًا يدويًا' : formatePrice(preview(row).price) }}</b></span>
-                  <span>فرق السعر: <b>{{ priceDifference(row) === null ? '—' : formatePrice(priceDifference(row)) }}</b></span>
+                <div class="grid grid-cols-2 gap-2">
+                  <UFormField label="الكمية"><UInputNumber v-model="row.quantity" :min="0.01" :step="0.01" class="w-full" /></UFormField>
+                  <UFormField label="تكلفة الوحدة"><UInputNumber v-model="row.unitCost" :min="0" :step="0.0001" class="w-full" /></UFormField>
                 </div>
-                <template v-if="preview(row).applies">
-                  <UFormField label="قرار سعر البيع">
-                    <URadioGroup v-model="row.priceChoice" :items="priceChoices" />
-                  </UFormField>
-                  <UFormField v-if="row.priceChoice === 'proposed'" label="السعر المقترح (قابل للتعديل)" hint="السعر القديم ظاهر أعلاه كمرجع.">
-                    <UInputNumber v-model="row.approvedPrice" :min="0" :step="0.01" class="w-full" />
-                  </UFormField>
-                  <UFormField v-else label="سعر بيع مخصص"><UInputNumber v-model="row.customPrice" :min="0" :step="0.01" class="w-full" /></UFormField>
-                </template>
+                <UFormField v-if="row.product && unitChoices(row).length > 1" label="وحدة الكمية والتكلفة"><USelectMenu :model-value="selectedUnit(row)" :items="unitChoices(row)" label-key="name" by="id" :search-input="false" class="w-full" @update:model-value="(unit) => pickUnit(row, unit)" /></UFormField>
+              <template v-if="row.product && preview(row).applies">
+                <div class="rounded-lg bg-gray-50 p-2 text-xs">السعر المقترح: <b>{{ preview(row).price === null ? 'يتطلب سعرًا يدويًا' : formatePrice(preview(row).price) }}</b></div>
+                <UFormField label="قرار سعر البيع">
+                  <URadioGroup v-model="row.priceChoice" :items="priceChoices" />
+                </UFormField>
+                <UFormField v-if="row.priceChoice === 'proposed'" label="السعر المقترح (قابل للتعديل)"><UInputNumber v-model="row.approvedPrice" :min="0" :step="0.01" class="w-full" /></UFormField>
+                <UFormField v-else label="سعر بيع مخصص"><UInputNumber v-model="row.customPrice" :min="0" :step="0.01" class="w-full" /></UFormField>
               </template>
               <template v-else-if="row.createNew">
                 <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -102,11 +84,11 @@
                   <UFormField label="وحدة المخزون الأساسية" required><UInput v-model="row.baseUnitName" placeholder="مثال: قطعة أو جرام" class="w-full" /></UFormField>
                 </div>
               </template>
-              <UAlert v-if="row.duplicate" color="error" variant="soft" title="هذا الصف مكرر في الملف." />
               <ul v-if="rowErrors(row).length" class="list-inside list-disc text-xs text-red-700"><li v-for="error in rowErrors(row)" :key="error">{{ error }}</li></ul>
             </UCard>
+            </div>
           </div>
-          <UAlert v-if="tooManyRows" color="warning" variant="soft" icon="i-lucide-info" :title="`الفاتورة الواحدة تقبل حتى ${maxItems} أصناف من هذه الشاشة. الملف يحتوي ${rows.length} صنفًا، لذلك لن يُحفظ أي جزء منه. الملف الكبير يحتاج طريقة إدخال خاصة قبل تسجيله.`" />
+          <UAlert v-else color="success" variant="soft" icon="i-lucide-circle-check" title="كل الصفوف سليمة وجاهزة — أكّد الفاتورة مباشرة." />
           <div class="grid grid-cols-1 gap-2 rounded-lg border border-gray-200 p-3 sm:grid-cols-2">
             <div class="space-y-1 text-sm">
               <div class="flex justify-between gap-2"><span>إجمالي الفاتورة</span><b>{{ formatePrice(total) }} ج</b></div>
@@ -123,6 +105,7 @@
                 label-key="name"
                 by="id"
                 placeholder="اختر المورد"
+                :search-input="{ placeholder: 'بحث عن مورد...', icon: 'i-lucide-search' }"
                 class="w-full"
                 @update:model-value="(s) => onPickSupplier(s)"
               />
@@ -135,6 +118,33 @@
             <UFormField label="مرجع فاتورة المورد (اختياري)"><UInput v-model="supplierRef" dir="ltr" class="w-full" /></UFormField>
           </div>
           <UFormField label="ملاحظة (اختياري)"><UInput v-model="note" class="w-full" /></UFormField>
+          <div v-if="busy" class="overflow-hidden rounded-xl border border-emerald-200 bg-gradient-to-b from-emerald-50 to-white p-4">
+            <div class="flex items-center gap-3">
+              <span class="relative flex size-11 shrink-0 items-center justify-center">
+                <span class="absolute inset-0 animate-spin rounded-full border-2 border-emerald-200 border-t-emerald-600"></span>
+                <UIcon name="i-lucide-package-plus" class="size-5 text-emerald-700" />
+              </span>
+              <div class="min-w-0">
+                <div class="font-bold text-gray-900">{{ stageTitle }}</div>
+                <div v-if="stageSubtitle" class="text-xs text-gray-500">{{ stageSubtitle }}</div>
+              </div>
+            </div>
+            <UProgress :value="stagePct" class="mt-3" />
+            <ul class="mt-3 space-y-1.5 text-xs">
+              <li
+                v-for="(step, i) in stageSteps"
+                :key="step"
+                class="flex items-center gap-2"
+                :class="i < stageIndex ? 'text-emerald-700' : i === stageIndex ? 'font-bold text-gray-900' : 'text-gray-400'"
+              >
+                <UIcon
+                  :name="i < stageIndex ? 'i-lucide-circle-check' : i === stageIndex ? 'i-lucide-loader-circle' : 'i-lucide-circle'"
+                  :class="['size-4 shrink-0', i === stageIndex && 'animate-spin']"
+                />
+                {{ step }}
+              </li>
+            </ul>
+          </div>
         </template>
       </template>
       <template v-else>
@@ -144,8 +154,18 @@
           <div class="flex justify-between"><span>المدفوع</span><b>{{ formatePrice(result.paid) }} ج</b></div>
           <div class="flex justify-between"><span>الباقي</span><b>{{ formatePrice(result.remaining) }} ج</b></div>
         </div>
-        <div class="break-all text-xs text-gray-500">مرجع فاتورة الشراء: <span class="font-mono" dir="ltr">{{ result.id }}</span></div>
-        <UButton color="warning" variant="soft" icon="i-lucide-arrow-up-right" @click="navigateTo({ path: '/supplier-invoices', query: { invoice: result.id } })">عرض فاتورة المورد</UButton>
+        <div class="break-all text-xs text-gray-500">فواتير الشراء ({{ result.ids.length }}):</div>
+        <div class="flex flex-wrap gap-1.5">
+          <UButton
+            v-for="id in result.ids"
+            :key="id"
+            color="warning"
+            variant="soft"
+            size="sm"
+            icon="i-lucide-arrow-up-right"
+            @click="navigateTo({ path: '/supplier-invoices', query: { invoice: id } })"
+          >عرض {{ id.slice(0, 6) }}</UButton>
+        </div>
       </template>
       <UAlert v-if="submitError" color="error" variant="soft" :title="submitError" />
     </div>
@@ -185,7 +205,7 @@ interface ImportRow {
   unitName?: string;
   unitFactor: number;
 }
-interface ImportResult { id: string; total: number; paid: number; remaining: number; duplicate: boolean }
+interface ImportResult { ids: string[]; total: number; paid: number; remaining: number; duplicate: boolean }
 
 const props = defineProps<{ products: Product[]; cashBalance: number }>();
 const emit = defineEmits<{ done: [] }>();
@@ -236,8 +256,12 @@ const paidNow = ref(0);
 const supplierRef = ref("");
 const note = ref("");
 const result = ref<ImportResult | null>(null);
-const currentPage = ref(1);
-const pageSize = 20;
+// Staged modern loader for the import run (steps + progress).
+const stageSteps = ref<string[]>([]);
+const stageIndex = ref(0);
+const stagePct = ref(0);
+const stageTitle = ref("");
+const stageSubtitle = ref("");
 const productsById = computed(() => new Map(props.products.map((product) => [product.id, product])));
 const priceChoices = [
   { label: "اعتماد السعر المقترح", value: "proposed" },
@@ -246,11 +270,8 @@ const priceChoices = [
 const total = computed(() => round2(rows.value.reduce((sum, row) => sum + round2(toNum(row.quantity) * toNum(row.unitCost)), 0)));
 const remaining = computed(() => round2(total.value - toNum(paidNow.value)));
 const paidError = computed(() => paidNow.value < 0 || paidNow.value - total.value > 1e-9 || paidNow.value - props.cashBalance > 1e-9 ? "المدفوع يجب ألا يتجاوز الإجمالي أو رصيد الخزنة." : "");
-const tooManyRows = computed(() => rows.value.length > maxItems);
-const pageCount = computed(() => Math.max(1, Math.ceil(rows.value.length / pageSize)));
-const pageStart = computed(() => rows.value.length ? (currentPage.value - 1) * pageSize + 1 : 0);
-const pageEnd = computed(() => Math.min(currentPage.value * pageSize, rows.value.length));
-const visibleRows = computed(() => rows.value.slice(pageStart.value - 1, pageEnd.value));
+const problemRows = computed(() => rows.value.filter((row) => rowErrors(row).length > 0));
+const canSubmit = computed(() => !!fileHash.value && !!supplier.value?.id && rows.value.length > 0 && !busy.value && !errorCount.value && !paidError.value);
 const duplicateProductIds = computed(() => {
   const counts = new Map<string, number>();
   for (const row of rows.value) {
@@ -262,7 +283,6 @@ const duplicateProductIds = computed(() => {
 const matchedCount = computed(() => rows.value.filter((row) => !!row.product).length);
 const newCount = computed(() => rows.value.filter((row) => !row.product && row.createNew).length);
 const errorCount = computed(() => rows.value.filter((row) => rowErrors(row).length > 0).length);
-const canSubmit = computed(() => !!fileHash.value && !!supplier.value?.id && rows.value.length > 0 && !busy.value && !tooManyRows.value && !errorCount.value && !paidError.value);
 
 function numericCell(value: unknown): number | null {
   if (value === null || value === undefined || typeof value === "boolean" || String(value).trim() === "") return null;
@@ -329,7 +349,6 @@ async function onFile(event: Event): Promise<void> {
   selectedFileSize.value = file.size < 1024 * 1024
     ? `${Math.max(1, Math.round(file.size / 1024))} كيلوبايت`
     : `${(file.size / (1024 * 1024)).toFixed(1)} ميجابايت`;
-  currentPage.value = 1;
   if (!file.name.toLowerCase().endsWith(".xlsx") || file.size > 10 * 1024 * 1024) {
     fileError.value = "اختر ملف .xlsx لا يتجاوز حجمه 10 ميجابايت.";
     return;
@@ -354,7 +373,13 @@ async function onFile(event: Event): Promise<void> {
       seen.add(key);
     }
     rows.value = parsedRows;
-    for (const row of parsedRows) row.approvedPrice = preview(row).price;
+    // Unmatched rows default to new-product creation (the user unchecks +
+    // picks manually when it was just a mismatch); their missing fields
+    // surface in the compact review section.
+    for (const row of parsedRows) {
+      if (!row.product) row.createNew = true;
+      row.approvedPrice = preview(row).price;
+    }
     const digest = await crypto.subtle.digest("SHA-256", buffer);
     fileHash.value = [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
     await cashbox.fetchCashbox();
@@ -405,6 +430,11 @@ async function submit(): Promise<void> {
   submitError.value = "";
   if (!canSubmit.value) return;
   busy.value = true;
+  stageSteps.value = [];
+  stageIndex.value = 0;
+  stagePct.value = 0;
+  stageTitle.value = "";
+  stageSubtitle.value = "";
   try {
     const items = rows.value.map((row) => {
       const p = preview(row);
@@ -429,30 +459,72 @@ async function submit(): Promise<void> {
         units: row.product ? undefined : [{ id: "base", name: row.baseUnitName, factor: 1, selling_price: row.newPrice, is_base: true }],
       };
     });
-    const execution = await purchasing.executePurchase({
-      idempotencyKey: `import-${fileHash.value}`,
-      supplier_id: supplier.value?.id ?? null,
-      supplier_name: supplier.value?.name ?? null,
-      supplier_ref: supplierRef.value.trim() || null,
-      source: "excel_import",
-      items,
-      paidNow: paidNow.value,
-      note: note.value.trim() || `استيراد ${rows.value.length} صنفًا من Excel`,
-    });
-    if (!execution.ok) {
-      submitError.value = execution.error ?? "تعذر تنفيذ الاستيراد.";
-      if (execution.stale) {
-        await productsStore.fetchProducts();
-        submitError.value = `${submitError.value} تم تحديث بيانات المنتجات؛ راجع المعاينة ثم أكد مرة أخرى.`;
+    // No row cap: split into atomic invoices (maxItems each) so files of any
+    // size import in sequential batches with staged progress.
+    const chunks: typeof items[] = [];
+    for (let i = 0; i < items.length; i += maxItems) chunks.push(items.slice(i, i + maxItems));
+    const newTotal = rows.value.filter((row) => !row.product).length;
+    const existingTotal = rows.value.length - newTotal;
+    stageSteps.value = [
+      "فحص المنتجات",
+      `إضافة الكميات للمنتجات الموجودة (${existingTotal})`,
+      ...(newTotal > 0 ? [`إنشاء المنتجات الجديدة (${newTotal})`] : []),
+      ...chunks.map((_, i) => `حفظ الدفعة ${i + 1} من ${chunks.length}`),
+      "تحديث الأرصدة",
+    ];
+    stageIndex.value = 0;
+    stageTitle.value = "جاري فحص المنتجات…";
+    stageSubtitle.value = `${rows.value.length} صنفًا`;
+    await nextTick();
+    let paidLeft = round2(toNum(paidNow.value));
+    const ids: string[] = [];
+    let sumTotal = 0;
+    let sumPaid = 0;
+    let allDuplicate = chunks.length > 0;
+    const chunkBase = newTotal > 0 ? 3 : 2;
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i]!;
+      const chunkTotal = round2(chunk.reduce((s, it) => s + round2(toNum(it.quantity) * round4(toNum(it.unit_cost))), 0));
+      const chunkPaid = Math.min(paidLeft, chunkTotal);
+      paidLeft = round2(paidLeft - chunkPaid);
+      stageIndex.value = chunkBase + i;
+      stageTitle.value = `جاري حفظ الدفعة ${i + 1} من ${chunks.length}…`;
+      stageSubtitle.value = `${chunk.length} صنفًا · ${formatePrice(chunkTotal)} ج`;
+      stagePct.value = Math.round((i / chunks.length) * 100);
+      const execution = await purchasing.executePurchase({
+        idempotencyKey: `import-${fileHash.value}-part-${i + 1}-of-${chunks.length}`,
+        supplier_id: supplier.value?.id ?? null,
+        supplier_name: supplier.value?.name ?? null,
+        supplier_ref: supplierRef.value.trim() || null,
+        source: "excel_import",
+        items: chunk,
+        paidNow: chunkPaid,
+        note: note.value.trim() || `استيراد ${rows.value.length} صنفًا من Excel (دفعة ${i + 1}/${chunks.length})`,
+      });
+      if (!execution.ok) {
+        submitError.value = `${execution.error ?? "تعذر تنفيذ الاستيراد."}${i > 0 ? ` (تم حفظ ${i} من ${chunks.length} دفعات)` : ""}`;
+        if (execution.stale) {
+          await productsStore.fetchProducts();
+          submitError.value = `${submitError.value} تم تحديث بيانات المنتجات؛ راجع الأصناف ثم أكد مرة أخرى.`;
+        }
+        return;
       }
-      return;
+      if (execution.id) ids.push(execution.id);
+      sumTotal = round2(sumTotal + (execution.total ?? chunkTotal));
+      sumPaid = round2(sumPaid + (execution.paid ?? chunkPaid));
+      if (!execution.duplicate) allDuplicate = false;
+      stagePct.value = Math.round(((i + 1) / chunks.length) * 100);
     }
+    stageIndex.value = stageSteps.value.length - 1;
+    stageTitle.value = "جاري تحديث الأرصدة…";
+    stageSubtitle.value = "";
+    await cashbox.fetchCashbox();
     const purchaseResult: ImportResult = {
-      id: execution.id ?? "",
-      total: execution.total ?? total.value,
-      paid: execution.paid ?? paidNow.value,
-      remaining: execution.remaining ?? remaining.value,
-      duplicate: !!execution.duplicate,
+      ids,
+      total: sumTotal,
+      paid: sumPaid,
+      remaining: round2(sumTotal - sumPaid),
+      duplicate: allDuplicate,
     };
     result.value = purchaseResult;
     emit("done");

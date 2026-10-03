@@ -330,7 +330,7 @@
           title="ستُسجل كامل قيمة البضاعة في فاتورة الشراء، ويُخصم المدفوع الآن فقط من الخزنة."
         />
         <UFormField v-if="purchaseUnits.length > 1" label="وحدة الشراء">
-          <USelectMenu :model-value="purchaseUnit" :items="purchaseUnits" label-key="name" by="id" class="w-full" @update:model-value="(unit) => selectPurchaseUnit(unit)" />
+          <USelectMenu :model-value="purchaseUnit" :items="purchaseUnits" label-key="name" by="id" :search-input="false" class="w-full" @update:model-value="(unit) => selectPurchaseUnit(unit)" />
         </UFormField>
         <UFormField
           label="الكمية المشتراة"
@@ -586,7 +586,7 @@ import { toDateSafe } from "~/types";
 definePageMeta({ title: "المنتجات" });
 const searchText = ref<string>("");
 const { formatePrice } = useHelpers();
-const { round2, round4, toNum, movingAverageCost, proposedSellingPrice, isLowStock, unitsForProduct, purchasableUnitsForProduct, convertUnitPrice } =
+const { round2, round4, toNum, movingAverageCost, proposedSellingPrice, isLowStock, unitsForProduct, purchasableUnitsForProduct, convertUnitPrice, unitPurchasePrice } =
   useFinance();
 const productFormState = ref(false);
 const productsStore = useProductsStore();
@@ -810,9 +810,9 @@ function openPurchase(id?: string): void {
   const p = prodsList.value.find((x) => x.id === id);
   purchaseId.value = id;
   purchaseQty.value = undefined;
-  purchaseCost.value = p?.cost_price ?? undefined;
   const purchaseOptions = p ? purchasableUnitsForProduct(p) : [];
   const baseUnit = purchaseOptions.find((unit) => unit.is_base) ?? purchaseOptions[0];
+  purchaseCost.value = (p && baseUnit ? unitPurchasePrice(p, baseUnit) : null) ?? p?.cost_price ?? undefined;
   purchaseUnitId.value = baseUnit?.id ?? "";
   priceChoice.value = "proposed";
   purchasePrice.value = undefined;

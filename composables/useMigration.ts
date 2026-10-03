@@ -1,7 +1,7 @@
-import { collection, doc, getDoc, getDocs, query, where } from "firebase/firestore";
+import { collection, doc, getCountFromServer, getDoc, getDocs, limit, query, where } from "firebase/firestore";
 import type { Customer } from "~/types";
 import type { Invoice } from "~/types";
-import type { Product } from "~/types";
+import type { Product, ProductUnit } from "~/types";
 import type { PurchaseInvoice, Supplier } from "~/types/finance";
 import { ADMIN_EMAIL } from "~/constants/auth";
 import { deriveSupplierInvoiceStatus } from "~/types/finance";
@@ -16,16 +16,26 @@ const MIN_PHONE_DIGITS = 7;
 /** Customer/invoice link keys: normalized phone + name, with Egypt
  *  mobile country-code variants (01… ↔ 201…). Matching always requires
  *  exactly one unambiguous customer across all variants. */
-function matchKeys(phone: unknown, name: unknown): string[] {
+function phoneVariants(phone: unknown): string[] {
   const digits = normalizePhone(phone);
   if (digits.length < MIN_PHONE_DIGITS) return [];
-  const n = normalizeName(name);
-  if (!n) return [];
   const variants = new Set<string>([digits]);
   if (digits.length === 12 && digits.startsWith("20")) variants.add(`0${digits.slice(2)}`);
   if (digits.length === 14 && digits.startsWith("0020")) variants.add(`0${digits.slice(4)}`);
   if (digits.length === 11 && digits.startsWith("01")) variants.add(`20${digits.slice(1)}`);
-  return [...variants].map((p) => `${p}|${n}`);
+  return [...variants];
+}
+
+function matchKeys(phone: unknown, name: unknown): string[] {
+  const n = normalizeName(name);
+  if (!n) return [];
+  return phoneVariants(phone).map((p) => `${p}|${n}`);
+}
+
+function pushUnique(index: Map<string, string[]>, key: string, id: string): void {
+  if (!index.has(key)) index.set(key, []);
+  const bucket = index.get(key)!;
+  if (!bucket.includes(id)) bucket.push(id);
 }
 
 /** One-time, idempotent, chunked migration tools (F22). No replay of cash. */
@@ -39,9 +49,11 @@ export const useMigration = defineStore("migration", () => {
     return snapshot.docs.map((item) => ({ id: item.id, ...(item.data() as object) }) as T);
   }
 
-  /** Backfill invoice.customer_id ONLY on unambiguous matches:
-   *  normalized phone (≥7 digits, country-code variants tolerated) +
-   *  normalized name, exactly one customer. Ambiguous → left null. */
+  /** Backfill invoice.customer_id ONLY on unambiguous matches.
+   *  Pass 1: normalized phone (country-code variants tolerated) + name.
+   *  Pass 2 (phone-only): the invoice phone belongs to exactly one
+   *  customer — covers old invoices whose saved name differs slightly.
+   *  Ambiguous → left null. Never guesses. */
   async function backfillCustomerIds(
     onProgress?: (done: number, total: number) => void,
   ): Promise<{ total: number; matched: number; skipped: number }> {
@@ -52,13 +64,11 @@ export const useMigration = defineStore("migration", () => {
     ]);
     const existingDebtSummaryIds = new Set(debtSummaries.docs.map((item) => item.id));
     const index = new Map<string, string[]>();
+    const phoneIndex = new Map<string, string[]>();
     for (const c of customers) {
       if (!c.id) continue;
-      for (const k of matchKeys(c.phone, c.name)) {
-        if (!index.has(k)) index.set(k, []);
-        const bucket = index.get(k)!;
-        if (!bucket.includes(c.id)) bucket.push(c.id);
-      }
+      for (const k of matchKeys(c.phone, c.name)) pushUnique(index, k, c.id);
+      for (const p of phoneVariants(c.phone)) pushUnique(phoneIndex, p, c.id);
     }
     const targets: { id: string; customer_id: string }[] = [];
     for (const inv of invoices) {
@@ -69,6 +79,16 @@ export const useMigration = defineStore("migration", () => {
       }
       if (hits.size === 1) {
         const only = [...hits][0];
+        if (only) targets.push({ id: inv.id, customer_id: only });
+        continue;
+      }
+      if (hits.size > 1) continue; // ambiguous: never guess
+      const phoneHits = new Set<string>();
+      for (const p of phoneVariants(inv.customer_phone)) {
+        for (const id of phoneIndex.get(p) ?? []) phoneHits.add(id);
+      }
+      if (phoneHits.size === 1) {
+        const only = [...phoneHits][0];
         if (only) targets.push({ id: inv.id, customer_id: only });
       }
     }
@@ -95,10 +115,16 @@ export const useMigration = defineStore("migration", () => {
   async function repairCustomerLinks(
     onProgress?: (done: number, total: number) => void,
   ): Promise<{ reviewed: number; kept: number; cleared: number }> {
-    const [invoices, debtSummaries] = await Promise.all([
+    const [invoices, customers, debtSummaries] = await Promise.all([
       readAll<Invoice>("invoices"),
+      readAll<Customer>("customers"),
       getDocs(collection(db, "invoice_debt_summaries")),
     ]);
+    const phoneIndex = new Map<string, string[]>();
+    for (const c of customers) {
+      if (!c.id) continue;
+      for (const p of phoneVariants(c.phone)) pushUnique(phoneIndex, p, c.id);
+    }
     const existingDebtSummaryIds = new Set(debtSummaries.docs.map((item) => item.id));
     const linked = invoices.filter((inv) => inv.id && inv.customer_id);
     const cache = new Map<string, Customer | null>();
@@ -118,7 +144,17 @@ export const useMigration = defineStore("migration", () => {
       const invKeys = new Set(matchKeys(inv.customer_phone, inv.customer_name));
       const cusKeys = c ? matchKeys(c.phone, c.name) : [];
       const overlap = cusKeys.some((k) => invKeys.has(k));
-      if (!c || invKeys.size === 0 || !overlap) {
+      // Phone-only links (backfilled when the saved name differs) stay
+      // valid if the invoice phone is uniquely owned by this customer.
+      let phoneUnique = false;
+      if (!overlap && c?.id) {
+        const owners = new Set<string>();
+        for (const p of phoneVariants(inv.customer_phone)) {
+          for (const id of phoneIndex.get(p) ?? []) owners.add(id);
+        }
+        phoneUnique = owners.size === 1 && owners.has(c.id);
+      }
+      if (!c || invKeys.size === 0 || (!overlap && !phoneUnique)) {
         toClear.push(inv.id as string);
       }
       done += 1;
@@ -439,6 +475,70 @@ export const useMigration = defineStore("migration", () => {
     return { invoices: invoices.length, customers: customers.length, customerSummaries: docs.length, debtSummaries: debtSummariesToWrite.length, supplierInvoices: purchaseInvoices.length, suppliers: suppliers.length, dailyStats: dailyStats.size, monthlyStats: monthlyStats.size, returns: returnSnapshots.size, returnsTotal };
   }
 
+  /** Backfill per-unit pricing: ensures every product has a units[] array
+   *  with a base entry carrying selling_price (+purchase_price mirror).
+   *  Legacy docs without units get a synthesized base; existing additional
+   *  units keep purchase_price null until their first real purchase.
+   *  Idempotent: only writes when something is missing. */
+  async function backfillProductUnits(
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ total: number; updated: number; skipped: number }> {
+    const products = await readAll<Product>("products");
+    const targets: { id: string; units: ProductUnit[]; patch: Record<string, unknown> }[] = [];
+    for (const p of products) {
+      if (!p.id) continue;
+      const baseId = p.base_unit_id || "base";
+      const baseName = (p.base_unit_name || "وحدة").trim() || "وحدة";
+      const configured = Array.isArray(p.units) ? p.units.filter((u) => u && Number.isFinite(Number(u.factor)) && Number(u.factor) > 0) : [];
+      const baseEntry = configured.find((u) => u.is_base) ?? configured.find((u) => u.id === baseId) ?? null;
+      const needBase =
+        !baseEntry ||
+        baseEntry.selling_price === null ||
+        baseEntry.selling_price === undefined ||
+        baseEntry.purchase_price === null ||
+        baseEntry.purchase_price === undefined;
+      if (configured.length && !needBase) continue;
+      const units: ProductUnit[] = [
+        {
+          id: baseEntry?.id || baseId,
+          name: (baseEntry?.name || baseName).trim() || "وحدة",
+          factor: 1,
+          selling_price: baseEntry?.selling_price ?? p.price ?? null,
+          purchase_price: baseEntry?.purchase_price ?? p.cost_price ?? null,
+          is_base: true,
+          can_purchase: baseEntry?.can_purchase ?? true,
+          can_sell: true,
+        },
+        ...configured
+          .filter((u) => u !== baseEntry && !u.is_base && u.id !== (baseEntry?.id || baseId))
+          .map((u) => ({
+            id: u.id,
+            name: (u.name || "").trim(),
+            factor: Number(u.factor),
+            selling_price: u.selling_price ?? null,
+            purchase_price: u.purchase_price ?? null,
+            is_base: false,
+            can_purchase: u.can_purchase ?? true,
+            can_sell: u.can_sell ?? false,
+          })),
+      ];
+      const patch: Record<string, unknown> = { units };
+      if (!p.base_unit_id) patch.base_unit_id = baseId;
+      if (!p.base_unit_name) patch.base_unit_name = baseName;
+      targets.push({ id: p.id, units, patch });
+    }
+    for (let i = 0; i < targets.length; i += CHUNK) {
+      const batch = writeBatch(db);
+      for (const t of targets.slice(i, i + CHUNK)) {
+        batch.update(doc(db, "products", t.id), t.patch);
+      }
+      await batch.commit();
+      onProgress?.(Math.min(i + CHUNK, targets.length), targets.length);
+    }
+    onProgress?.(targets.length, targets.length);
+    return { total: products.length, updated: targets.length, skipped: products.length - targets.length };
+  }
+
   /** Explicit admin migration: intentionally scans purchase invoices once, then updates only missing or invalid status fields. */
   async function backfillSupplierInvoiceStatuses(
     onProgress?: (done: number, total: number) => void,
@@ -461,5 +561,60 @@ export const useMigration = defineStore("migration", () => {
     return { total: invoices.length, updated: targets.length, skipped: invoices.length - targets.length };
   }
 
-  return { backfillCustomerIds, repairCustomerLinks, normalizeCustomerPhones, setOpeningStocks, backfillDebtSummaries, backfillPerformanceSummaries, backfillSupplierInvoiceStatuses };
+  /** FACTORY RESET: deletes EVERY document in ALL app collections.
+   *  Admin-only (callers must verify the password first), chunked,
+   *  idempotent. There is no undo — the UI confirms twice. Auth users are
+   *  NOT touched (Firebase Auth is separate from Firestore). */
+  const FACTORY_RESET_COLLECTIONS = [
+    "invoices",
+    "invoice_debt_summaries",
+    "invoice_returns",
+    "customers",
+    "customer_summaries",
+    "customer_loans",
+    "debt_payments",
+    "suppliers",
+    "supplier_summaries",
+    "supplier_payments",
+    "purchase_invoices",
+    "products",
+    "inventory_transactions",
+    "inventory_cost_adjustments",
+    "cash_transactions",
+    "cashbox",
+    "store_stats",
+    "invoice_stats_daily",
+    "invoice_stats_monthly",
+  ];
+  async function factoryReset(
+    onProgress?: (done: number, total: number, collectionName: string) => void,
+  ): Promise<{ collections: number; documents: number }> {
+    if (auth.currentUser?.email !== ADMIN_EMAIL) throw new Error("Admin access is required.");
+    const BATCH = 400;
+    let documents = 0;
+    let collectionsDone = 0;
+    // Cheap count pass (aggregation, no doc reads) so progress has a total.
+    let total = 0;
+    for (const name of FACTORY_RESET_COLLECTIONS) {
+      total += (await getCountFromServer(collection(db, name))).data().count;
+    }
+    onProgress?.(0, total, "");
+    for (const name of FACTORY_RESET_COLLECTIONS) {
+      for (;;) {
+        const snap = await getDocs(query(collection(db, name), limit(BATCH)));
+        if (snap.empty) break;
+        const batch = writeBatch(db);
+        for (const d of snap.docs) batch.delete(d.ref);
+        await batch.commit();
+        documents += snap.size;
+        onProgress?.(documents, total, name);
+        if (snap.size < BATCH) break;
+      }
+      collectionsDone += 1;
+    }
+    onProgress?.(total, total, "");
+    return { collections: collectionsDone, documents };
+  }
+
+  return { backfillCustomerIds, repairCustomerLinks, normalizeCustomerPhones, backfillProductUnits, factoryReset, setOpeningStocks, backfillDebtSummaries, backfillPerformanceSummaries, backfillSupplierInvoiceStatuses };
 });

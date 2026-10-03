@@ -242,9 +242,21 @@ export const usePurchasing = defineStore("purchasing", () => {
               base_unit_cost: baseCost,
               line_total: round2(qty * unitCost),
             });
-            const updatedUnits = finalPrice === null
-              ? cur.units
-              : cur.units.map((unit) => unit.id === (cur.baseUnitId || cur.units.find((entry) => entry.is_base)?.id) ? { ...unit, selling_price: finalPrice } : unit);
+            const purchasedUnitId = it.unit_id ?? configuredUnit?.id ?? null;
+            const updatedUnits = cur.units.map((unit) => {
+              // Last purchase reference always follows the purchased unit…
+              let next = purchasedUnitId && unit.id === purchasedUnitId ? { ...unit, purchase_price: unitCost } : unit;
+              // …while sale proposals (base-denominated) update the base row
+              // and, converted by factor, the purchased row.
+              if (finalPrice !== null) {
+                const baseId = cur.baseUnitId || cur.units.find((entry) => entry.is_base)?.id;
+                if (unit.id === baseId) next = { ...next, selling_price: finalPrice };
+                else if (purchasedUnitId && unit.id === purchasedUnitId && factor > 0) {
+                  next = { ...next, selling_price: round2(finalPrice * factor) };
+                }
+              }
+              return next;
+            });
             productWrites.push({ id: it.product_id, isNew: false, name: cur.name, stock: applied.stock, cost: round4(newAvg), price: finalPrice ?? cur.price, movementId, units: updatedUnits });
             invLogs.push({
               type: "purchase",
@@ -292,7 +304,14 @@ export const usePurchasing = defineStore("purchasing", () => {
               cost: round4(baseCost),
               price,
               movementId,
-              units: it.units?.length ? it.units : [{ id: it.base_unit_id || "base", name: it.base_unit_name || "وحدة", factor: 1, selling_price: price, is_base: true }],
+              units: it.units?.length
+                ? it.units.map((entry) => ({
+                  ...entry,
+                  purchase_price:
+                    entry.purchase_price ??
+                    (entry.id === (it.unit_id ?? it.base_unit_id) ? round4(unitCost) : null),
+                }))
+                : [{ id: it.base_unit_id || "base", name: it.base_unit_name || "وحدة", factor: 1, selling_price: price, purchase_price: round4(baseCost), is_base: true }],
               base_unit_id: it.base_unit_id || "base",
               base_unit_name: it.base_unit_name?.trim() || "وحدة",
               low_stock_threshold: threshold,

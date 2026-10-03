@@ -227,6 +227,7 @@ async function doSave(saveOnly?: boolean) {
       if (res.cashSkipped) {
         notify("تم الحفظ بدون حركة نقدية — الخزنة غير مهيأة بعد.", "error");
       }
+      emit("saved", id);
     } else {
       // Atomic create: invoice + stock + inventory logs + cashbox (F9).
       const invoicesStore = useInvoicesStore();
@@ -262,18 +263,9 @@ const discountAmount = computed(() => {
   }
   return Number(props.invoiceData.discount || 0);
 });
-function handleCtrlPlusS(e: KeyboardEvent) {
-  if (e && e.ctrlKey && e.code === "KeyS") {
-    e.preventDefault();
-    void startPrint(true);
-  }
-}
-onMounted(() => {
-  window.addEventListener("keydown", handleCtrlPlusS);
-});
-onUnmounted(() => {
-  window.removeEventListener("keydown", handleCtrlPlusS);
-});
+// Ctrl+S lives on the host page (pages/index.vue) so hidden + preview
+// instances never double-fire.
+defineExpose({ startPrint });
 </script>
 
 <style scoped>

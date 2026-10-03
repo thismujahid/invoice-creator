@@ -4,6 +4,14 @@
       <h2 class="text-lg font-bold text-gray-900">الخزنة</h2>
       <div v-if="cashbox.initialized" class="flex flex-wrap gap-2">
         <UButton
+          icon="i-lucide-wrench"
+          color="neutral"
+          variant="soft"
+          :loading="fixAccountsBusy"
+          @click="runFixAccounts"
+          >تصحيح الحسابات</UButton
+        >
+        <UButton
           icon="i-lucide-plus"
           color="success"
           @click="depositOpen = true"
@@ -18,6 +26,14 @@
         >
       </div>
     </div>
+
+    <UAlert
+      v-if="fixAccountsMsg"
+      :color="fixAccountsOk ? 'success' : fixAccountsBusy ? 'info' : 'error'"
+      variant="soft"
+      class="mb-3"
+      :title="fixAccountsMsg"
+    />
 
     <UiAppStatsSkeleton v-if="cashbox.loading" />
     <!-- Onboarding: opening balance once -->
@@ -190,7 +206,9 @@
                       {{ descriptionPreview(t.note) }}
                     </button>
                     <template #content>
-                      <div class="max-w-sm whitespace-normal text-sm text-gray-700">
+                      <div
+                        class="max-w-sm whitespace-normal text-sm text-gray-700"
+                      >
                         {{ t.note }}
                       </div>
                     </template>
@@ -302,227 +320,154 @@
       </div>
     </template>
 
-    <!-- Admin migration tools (F22): idempotent, chunked, no cash replay -->
     <div class="mt-4 border-t border-gray-100 pt-3">
-      <p class="mb-2 text-xs font-bold text-gray-400">
-        أدوات التهيئة والترحيل (لمرة واحدة، آمنة التكرار)
-      </p>
-      <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-        <UCard variant="outline">
-          <div class="mb-1 text-sm font-bold">
-            ربط العملاء بالفواتير القديمة
-          </div>
-          <p class="mb-2 text-xs text-gray-500">
-            مطابقة (هاتف + اسم) مع تحمّل بادئة الدولة، وتخطي الغامض. {{ migCustomerMsg }}
-          </p>
-          <UProgress
-            v-if="migCustomerBusy"
-            :value="migCustomerPct"
-            class="mb-2"
-          />
-          <UButton
-            color="neutral"
-            variant="soft"
-            size="sm"
-            :loading="migCustomerBusy"
-            icon="i-lucide-link"
-            @click="runCustomerBackfill"
-            >بدء الربط</UButton
-          >
-        </UCard>
-        <UCard variant="outline">
-          <div class="mb-1 text-sm font-bold">توحيد صيغة الهواتف</div>
-          <p class="mb-2 text-xs text-gray-500">
-            يحوّل الهواتف المخزنة كأرقام إلى نصوص (الأرقام تفقد الصفر الأول
-            وتكسر فلترة الفواتير). {{ migPhoneMsg }}
-          </p>
-          <UProgress v-if="migPhoneBusy" :value="migPhonePct" class="mb-2" />
-          <UButton
-            color="neutral"
-            variant="soft"
-            size="sm"
-            :loading="migPhoneBusy"
-            icon="i-lucide-phone"
-            @click="runNormalizePhones"
-            >بدء التوحيد</UButton
-          >
-        </UCard>
-        <UCard variant="outline">
-          <div class="mb-1 text-sm font-bold">مراجعة الروابط وإصلاح الخاطئ</div>
-          <p class="mb-2 text-xs text-gray-500">
-            يفحص الروابط الحالية ويمسح غير الموثوق. {{ migRepairMsg }}
-          </p>
-          <UProgress v-if="migRepairBusy" :value="migRepairPct" class="mb-2" />
-          <UButton
-            color="neutral"
-            variant="soft"
-            size="sm"
-            :loading="migRepairBusy"
-            icon="i-lucide-shield-check"
-            @click="runRepairLinks"
-            >بدء المراجعة</UButton
-          >
-        </UCard>
-        <UCard variant="outline">
-          <div class="mb-1 text-sm font-bold">تهيئة الملخصات والإجماليات</div>
-          <p class="mb-2 text-xs text-gray-500">
-            إعادة بناء ملخصات الديون والعملاء وإجماليات الفواتير اليومية
-            والشهرية والكلية، بما فيها المرتجعات. إجراء إداري صريح ويمكن إعادة
-            تشغيله. {{ migSumMsg }}
-          </p>
-          <UProgress v-if="migSumBusy" :value="migSumPct" class="mb-2" />
-          <UButton
-            color="neutral"
-            variant="soft"
-            size="sm"
-            :loading="migSumBusy"
-            icon="i-lucide-list-checks"
-            @click="runSumBackfill"
-            >بدء التهيئة</UButton
-          >
-        </UCard>
-        <UCard variant="outline">
-          <div class="mb-1 text-sm font-bold">تهيئة حالات فواتير الموردين</div>
-          <p class="mb-2 text-xs text-gray-500">
-            تحديث حقل الحالة للفواتير القديمة التي لا تحتوي حالة صالحة. عملية
-            إدارية لمرة واحدة ويمكن إعادة تشغيلها بأمان.
-            {{ migSupplierStatusMsg }}
-          </p>
-          <UProgress
-            v-if="migSupplierStatusBusy"
-            :value="migSupplierStatusPct"
-            class="mb-2"
-          />
-          <UButton
-            color="neutral"
-            variant="soft"
-            size="sm"
-            :loading="migSupplierStatusBusy"
-            icon="i-lucide-refresh-cw"
-            @click="runSupplierStatusBackfill"
-            >تهيئة الحالات</UButton
-          >
-        </UCard>
-        <UCard variant="outline">
-          <div class="mb-1 text-sm font-bold">مراجعة متوسط تكلفة المخزون</div>
-          <p class="mb-2 text-xs text-gray-500">
-            إعادة تشغيل سجل الحركات ومقارنته بالمخزن — الإصلاح اليدوي فقط للصفوف
-            القابلة. {{ repairMsg }}
-          </p>
-          <UProgress v-if="repairBusy" :value="repairPct" class="mb-2" />
-          <UButton
-            color="neutral"
-            variant="soft"
-            size="sm"
-            :loading="repairBusy"
-            icon="i-lucide-scale"
-            @click="runRepairAnalyze"
-            >بدء التحليل</UButton
-          >
-        </UCard>
-        <UCard variant="outline" class="sm:col-span-2">
-          <div class="flex items-center flex-col md:flex-row justify-between">
-            <div>
-              <div class="mb-1 text-sm font-bold">
-                إدخال أرصدة المخزون الافتتاحية ({{ missingStock.length }})
-              </div>
-              <p class="mb-2 text-xs text-gray-500">
-                للمنتجات التي لم يُدخل رصيدها بعد فقط — يُحفظ مرة واحدة لكل
-                منتج. مؤشر الكمية القليلة افتراضيًا 5 ويمكن تغييره لكل منتج.
-                {{ migStockMsg }}
-              </p>
-            </div>
-            <UInput
-              v-if="missingStock.length"
-              v-model="stockSearch"
-              placeholder="بحث عن منتج بالاسم..."
-              icon="i-lucide-search"
-              size="md"
-              class="mb-2 w-full sm:max-w-xs"
-            />
-          </div>
-          <div
-            v-if="missingStock.length"
-            class="mb-2 grid max-h-64 grid-cols-1 gap-2 overflow-y-auto sm:grid-cols-2"
-          >
-            <div
-              v-for="p in visibleMissingStock"
-              :key="p.id"
-              class="space-y-2 rounded-lg border border-gray-200 p-2"
-            >
-              <div class="min-w-0">
-                <div class="truncate text-sm font-semibold">{{ p.name }}</div>
-                <div class="text-xs text-gray-500">
-                  التكلفة: {{ formatePrice(p.cost_price) }}
-                </div>
-              </div>
-              <div class="grid grid-cols-2 gap-2">
-                <UFormField label="الرصيد الافتتاحي">
-                  <UInputNumber
-                    v-model="openingQtys[p.id as string]"
-                    :min="0"
-                    :step="0.01"
-                    placeholder="الكمية"
-                    class="w-full"
-                  />
-                </UFormField>
-                <UFormField label="مؤشر الكمية القليلة">
-                  <UInputNumber
-                    :model-value="
-                      openingThresholds[p.id as string] ??
-                      p.low_stock_threshold ??
-                      5
-                    "
-                    :min="0"
-                    :step="0.01"
-                    placeholder="5"
-                    class="w-full"
-                    @update:model-value="
-                      (value) =>
-                        (openingThresholds[p.id as string] = value ?? 5)
-                    "
-                  />
-                </UFormField>
-              </div>
-            </div>
-            <div
-              v-if="!filteredMissingStock.length"
-              class="text-sm text-gray-400 sm:col-span-2"
-            >
-              لا توجد منتجات مطابقة للبحث.
-            </div>
-            <!-- Chunk footer: counter + load-more (no observer: simple, no timing edge cases) -->
-            <div
-              v-if="visibleMissingStock.length < filteredMissingStock.length"
-              class="flex flex-col items-center gap-1 py-1 sm:col-span-2"
-            >
-              <span class="text-xs text-gray-400">
-                عرض {{ visibleMissingStock.length }} من
-                {{ filteredMissingStock.length }}
-              </span>
-              <UButton
-                color="neutral"
-                variant="ghost"
-                size="xs"
-                @click="showMoreStock"
-                >عرض المزيد</UButton
-              >
-            </div>
-          </div>
-          <UProgress v-if="migStockBusy" :value="migStockPct" class="mb-2" />
-          <UButton
-            color="neutral"
-            variant="soft"
-            size="sm"
-            :loading="migStockBusy"
-            :disabled="!missingStock.length"
-            icon="i-lucide-archive"
-            @click="runStockEntry"
-            >حفظ الأرصدة والمؤشرات</UButton
-          >
-        </UCard>
-      </div>
+      <UCard variant="outline" class="border-red-200 sm:col-span-2">
+        <div class="mb-1 text-sm font-bold text-red-700">إعادة ضبط المصنع</div>
+        <p class="mb-2 text-xs text-gray-500">
+          مسح كل بيانات النظام من كل المجموعات بلا استثناء (الفواتير، العملاء،
+          المنتجات، الخزنة، الموردون، الملخصات والإحصائيات). لا يمكن التراجع.
+          يتطلب كلمة مرور المدير.
+        </p>
+        <UButton
+          color="error"
+          size="sm"
+          icon="i-lucide-trash-2"
+          @click="openFactoryReset"
+          >إعادة ضبط المصنع</UButton
+        >
+      </UCard>
     </div>
+
+    <!-- Factory reset: password gate + double confirm + wipe -->
+    <UiAppDialog v-model:open="resetOpen" title="إعادة ضبط المصنع">
+      <template v-if="resetStep === 'password'">
+        <p class="mb-3 text-sm text-gray-600">
+          أدخل كلمة مرور المدير للمتابعة إلى مسح البيانات.
+        </p>
+        <UFormField label="كلمة المرور">
+          <UInput
+            v-model="resetPassword"
+            type="password"
+            inputmode="numeric"
+            dir="ltr"
+            placeholder="••••••"
+            size="lg"
+            class="w-full"
+            :disabled="resetBusy"
+            @keydown.enter="verifyResetPassword"
+          />
+        </UFormField>
+        <UAlert
+          v-if="resetError"
+          color="error"
+          variant="soft"
+          class="mt-2"
+          :title="resetError"
+        />
+      </template>
+      <template v-else-if="resetStep === 'confirm'">
+        <UAlert
+          color="error"
+          variant="soft"
+          title="سيتم مسح كل شيء نهائيًا"
+          description="كل الفواتير والعملاء والمنتجات والخزنة والموردين والملخصات من كل المجموعات بلا استثناء. لا يوجد تراجع بعد التأكيد."
+        />
+        <UCheckbox
+          v-model="resetUnderstood"
+          label="أفهم أن المسح نهائي ولا يمكن التراجع عنه"
+          class="mt-3"
+        />
+        <UAlert
+          v-if="resetError"
+          color="error"
+          variant="soft"
+          class="mt-2"
+          :title="resetError"
+        />
+      </template>
+      <template v-else-if="resetStep === 'wiping'">
+        <div class="flex items-center gap-3">
+          <span
+            class="relative flex size-11 shrink-0 items-center justify-center"
+          >
+            <span
+              class="absolute inset-0 animate-spin rounded-full border-2 border-red-200 border-t-red-600"
+            ></span>
+            <UIcon name="i-lucide-trash-2" class="size-5 text-red-600" />
+          </span>
+          <div class="min-w-0">
+            <div class="font-bold text-gray-900">جاري مسح البيانات…</div>
+            <div v-if="resetMsg" class="text-xs text-gray-500">
+              {{ resetMsg }}
+            </div>
+          </div>
+        </div>
+        <UProgress :value="resetPct" class="mt-3" />
+      </template>
+      <template v-else>
+        <UAlert
+          color="success"
+          variant="soft"
+          icon="i-lucide-circle-check"
+          :title="resetResult"
+        />
+      </template>
+      <template #footer>
+        <div class="flex w-full flex-col gap-2">
+          <template v-if="resetStep === 'password'">
+            <UButton
+              color="error"
+              block
+              :loading="resetBusy"
+              @click="verifyResetPassword"
+              >تحقق والمتابعة</UButton
+            >
+            <UButton
+              color="neutral"
+              variant="ghost"
+              block
+              :disabled="resetBusy"
+              @click="resetOpen = false"
+              >إلغاء</UButton
+            >
+          </template>
+          <template v-else-if="resetStep === 'confirm'">
+            <UButton
+              color="error"
+              block
+              :loading="resetBusy"
+              :disabled="!resetUnderstood"
+              @click="runFactoryReset"
+              >مسح كل البيانات نهائيًا</UButton
+            >
+            <UButton
+              color="neutral"
+              variant="ghost"
+              block
+              :disabled="resetBusy"
+              @click="resetStep = 'password'"
+              >رجوع</UButton
+            >
+          </template>
+          <template v-else-if="resetStep === 'done'">
+            <UButton
+              color="success"
+              block
+              icon="i-lucide-refresh-cw"
+              @click="reloadApp"
+              >إعادة تحميل التطبيق</UButton
+            >
+            <UButton
+              color="neutral"
+              variant="ghost"
+              block
+              @click="resetOpen = false"
+              >إغلاق</UButton
+            >
+          </template>
+        </div>
+      </template>
+    </UiAppDialog>
 
     <!-- Cost repair review -->
     <UiAppDialog v-model:open="repairOpen" title="مراجعة متوسط التكلفة">
@@ -748,7 +693,16 @@ import { CASH_TYPE_LABELS } from "~/types/finance";
 import type { RepairRow } from "~/composables/useInventoryCostRepair";
 import { REPAIR_STATUS_LABELS } from "~/composables/useInventoryCostRepair";
 import { toDateSafe } from "~/types";
-import { collection, doc, documentId, getDoc, getDocs, query, where } from "firebase/firestore";
+import { ADMIN_EMAIL } from "~/constants/auth";
+import {
+  collection,
+  doc,
+  documentId,
+  getDoc,
+  getDocs,
+  query,
+  where,
+} from "firebase/firestore";
 import type { Invoice } from "~/types";
 import type { CashTransaction, PurchaseInvoice } from "~/types/finance";
 
@@ -876,25 +830,80 @@ async function refreshRepairRows(): Promise<void> {
   repairRows.value = await repairApi.analyze();
 }
 
-// Migration tools state (F22)
-const migCustomerBusy = ref(false);
-const migCustomerPct = ref(0);
-const migCustomerMsg = ref("");
-const migRepairBusy = ref(false);
-const migRepairPct = ref(0);
-const migRepairMsg = ref("");
-const migPhoneBusy = ref(false);
-const migPhonePct = ref(0);
-const migPhoneMsg = ref("");
+// One-button account repair state
+const fixAccountsBusy = ref(false);
+const fixAccountsMsg = ref("");
+const fixAccountsOk = ref(false);
 const migStockBusy = ref(false);
 const migStockPct = ref(0);
 const migStockMsg = ref("");
-const migSumBusy = ref(false);
-const migSumPct = ref(0);
-const migSumMsg = ref("");
 const migSupplierStatusBusy = ref(false);
 const migSupplierStatusPct = ref(0);
 const migSupplierStatusMsg = ref("");
+const migUnitBusy = ref(false);
+const migUnitPct = ref(0);
+const migUnitMsg = ref("");
+// Factory reset state machine: password -> confirm -> wiping -> done.
+const resetOpen = ref(false);
+const resetStep = ref<"password" | "confirm" | "wiping" | "done">("password");
+const resetPassword = ref("");
+const resetUnderstood = ref(false);
+const resetBusy = ref(false);
+const resetError = ref("");
+const resetPct = ref(0);
+const resetMsg = ref("");
+const resetResult = ref("");
+function openFactoryReset(): void {
+  resetStep.value = "password";
+  resetPassword.value = "";
+  resetUnderstood.value = false;
+  resetBusy.value = false;
+  resetError.value = "";
+  resetPct.value = 0;
+  resetMsg.value = "";
+  resetResult.value = "";
+  resetOpen.value = true;
+}
+async function verifyResetPassword(): Promise<void> {
+  resetError.value = "";
+  if (!resetPassword.value) {
+    resetError.value = "أدخل كلمة المرور.";
+    return;
+  }
+  resetBusy.value = true;
+  try {
+    const { auth, signInWithEmailAndPassword } = useFirebase();
+    await signInWithEmailAndPassword(auth, ADMIN_EMAIL, resetPassword.value);
+    resetPassword.value = "";
+    resetStep.value = "confirm";
+  } catch {
+    resetError.value = "كلمة المرور غير صحيحة.";
+  } finally {
+    resetBusy.value = false;
+  }
+}
+async function runFactoryReset(): Promise<void> {
+  resetError.value = "";
+  resetBusy.value = true;
+  resetStep.value = "wiping";
+  try {
+    const res = await migration.factoryReset((done, total, name) => {
+      resetPct.value = total ? Math.round((done / total) * 100) : 100;
+      resetMsg.value = name ? `مسح ${name}… (${done}/${total})` : "";
+    });
+    resetResult.value = `تم مسح ${res.documents} مستندًا من ${res.collections} مجموعة. أعد تحميل التطبيق لبداية نظيفة.`;
+    resetStep.value = "done";
+  } catch (error) {
+    console.error("Factory reset failed:", error);
+    resetError.value = `فشل المسح: ${migrationErrorDetail(error)}`;
+    resetStep.value = "confirm";
+  } finally {
+    resetBusy.value = false;
+  }
+}
+function reloadApp(): void {
+  if (import.meta.client) window.location.reload();
+}
 const openingQtys = ref<Record<string, number | undefined>>({});
 const openingThresholds = ref<Record<string, number | undefined>>({});
 const stockSearch = ref("");
@@ -924,73 +933,32 @@ watch(stockSearch, () => {
 function showMoreStock(): void {
   visibleCount.value += STOCK_PAGE;
 }
-async function runCustomerBackfill(): Promise<void> {
-  migCustomerBusy.value = true;
-  migCustomerMsg.value = "";
+/** One-button account repair: normalize phones → clean bad links →
+ *  link old invoices → rebuild summaries. Idempotent; safe to re-run. */
+async function runFixAccounts(): Promise<void> {
+  if (fixAccountsBusy.value) return;
+  fixAccountsBusy.value = true;
+  fixAccountsOk.value = false;
   try {
-    const res = await migration.backfillCustomerIds((d, t) => {
-      migCustomerPct.value = t ? Math.round((d / t) * 100) : 100;
-    });
-    migCustomerMsg.value = `تم: رُبط ${res.matched} من ${res.total} فاتورة.`;
-    notify(`اكتمل الربط: ${res.matched} فاتورة.`, "success");
-  } catch (error) {
-    console.error("Customer invoice linking failed:", error);
-    migCustomerMsg.value = `فشل الربط: ${migrationErrorDetail(error)}`;
-    notify(migCustomerMsg.value, "error");
-  } finally {
-    migCustomerBusy.value = false;
-  }
-}
-async function runNormalizePhones(): Promise<void> {
-  migPhoneBusy.value = true;
-  migPhoneMsg.value = "";
-  try {
-    const res = await migration.normalizeCustomerPhones((d, t) => {
-      migPhonePct.value = t ? Math.round((d / t) * 100) : 100;
-    });
-    migPhoneMsg.value = `تم: توحيد ${res.invoices} هاتف فواتير و${res.customers} هاتف عملاء.`;
-    notify("اكتمل توحيد الهواتف.", "success");
-  } catch (error) {
-    console.error("Phone normalization failed:", error);
-    migPhoneMsg.value = `فشل التوحيد: ${migrationErrorDetail(error)}`;
-    notify(migPhoneMsg.value, "error");
-  } finally {
-    migPhoneBusy.value = false;
-  }
-}
-async function runRepairLinks(): Promise<void> {
-  migRepairBusy.value = true;
-  migRepairMsg.value = "";
-  try {
-    const res = await migration.repairCustomerLinks((d, t) => {
-      migRepairPct.value = t ? Math.round((d / t) * 100) : 100;
-    });
-    migRepairMsg.value = `تمت مراجعة ${res.reviewed}: سليم ${res.kept}، مُصحح ${res.cleared}.`;
-    notify(`اكتملت المراجعة: صُحح ${res.cleared} رابط.`, "success");
-  } catch (error) {
-    console.error("Customer link repair failed:", error);
-    migRepairMsg.value = `فشلت المراجعة: ${migrationErrorDetail(error)}`;
-    notify(migRepairMsg.value, "error");
-  } finally {
-    migRepairBusy.value = false;
-  }
-}
-async function runSumBackfill(): Promise<void> {
-  migSumBusy.value = true;
-  migSumMsg.value = "";
-  try {
-    const performance = await migration.backfillPerformanceSummaries((d, t) => {
-      migSumPct.value = t ? Math.round((d / t) * 100) : 100;
-    });
-    migSumMsg.value = `ملخصات الديون ${performance.debtSummaries}؛ إجماليات ${performance.invoices} فاتورة، ${performance.dailyStats} يوم، ${performance.monthlyStats} شهر، و${performance.returns} مرتجع بقيمة ${formatePrice(performance.returnsTotal)}.`;
-    notify("اكتملت إعادة بناء الملخصات والإجماليات.", "success");
+    fixAccountsMsg.value = "جاري العمل: توحيد صيغة الهواتف…";
+    const phones = await migration.normalizeCustomerPhones();
+    fixAccountsMsg.value = "جاري العمل: مراجعة روابط العملاء…";
+    const repair = await migration.repairCustomerLinks();
+    fixAccountsMsg.value = "جاري العمل: ربط الفواتير بالعملاء…";
+    const linked = await migration.backfillCustomerIds();
+    fixAccountsMsg.value = "جاري العمل: إعادة بناء الملخصات والإجماليات…";
+    await migration.backfillPerformanceSummaries();
     await fetchStats();
+    fixAccountsOk.value = true;
+    fixAccountsMsg.value = `تم تصحيح الحسابات: توحيد ${phones.invoices + phones.customers} هاتف، مراجعة ${repair.reviewed} رابط، ربط ${linked.matched} فاتورة، وأُعيد بناء الملخصات.`;
+    notify("تم تصحيح الحسابات بنجاح.", "success");
   } catch (error) {
-    console.error("Summary initialization failed:", error);
-    migSumMsg.value = `فشلت التهيئة: ${migrationErrorDetail(error)}`;
-    notify(migSumMsg.value, "error");
+    console.error("Fix accounts failed:", error);
+    fixAccountsOk.value = false;
+    fixAccountsMsg.value = `فشل تصحيح الحسابات: ${migrationErrorDetail(error)}`;
+    notify(fixAccountsMsg.value, "error");
   } finally {
-    migSumBusy.value = false;
+    fixAccountsBusy.value = false;
   }
 }
 async function runSupplierStatusBackfill(): Promise<void> {
@@ -1012,6 +980,24 @@ async function runSupplierStatusBackfill(): Promise<void> {
     notify(migSupplierStatusMsg.value, "error");
   } finally {
     migSupplierStatusBusy.value = false;
+  }
+}
+async function runUnitBackfill(): Promise<void> {
+  migUnitBusy.value = true;
+  migUnitMsg.value = "";
+  try {
+    const result = await migration.backfillProductUnits((done, total) => {
+      migUnitPct.value = total ? Math.round((done / total) * 100) : 100;
+    });
+    migUnitMsg.value = `تم تحديث ${result.updated} من ${result.total} منتج.`;
+    notify(migUnitMsg.value, "success");
+    await products.fetchProducts(undefined, true);
+  } catch (error) {
+    console.error("Product unit initialization failed:", error);
+    migUnitMsg.value = `فشلت التهيئة: ${migrationErrorDetail(error)}`;
+    notify(migUnitMsg.value, "error");
+  } finally {
+    migUnitBusy.value = false;
   }
 }
 async function runStockEntry(): Promise<void> {
@@ -1064,7 +1050,9 @@ async function runStockEntry(): Promise<void> {
 }
 
 function migrationErrorDetail(error: unknown): string {
-  return error instanceof Error ? error.message : String(error || "خطأ غير معروف");
+  return error instanceof Error
+    ? error.message
+    : String(error || "خطأ غير معروف");
 }
 
 const depositOpen = ref(false);
@@ -1135,9 +1123,13 @@ async function fetchStats(): Promise<void> {
 }
 const paged = computed(() => cashbox.transactions);
 let referenceLookupVersion = 0;
-watch(paged, (transactions) => {
-  void resolveMissingReferenceNames(transactions);
-}, { immediate: true });
+watch(
+  paged,
+  (transactions) => {
+    void resolveMissingReferenceNames(transactions);
+  },
+  { immediate: true },
+);
 
 function formatDateTime(v: unknown): string {
   const d = toDateSafe(v);
@@ -1155,8 +1147,13 @@ function descriptionPreview(value: string | null | undefined): string {
 
 function refLabel(t: CashTransaction): string {
   const raw = String(t.reference_label || "").trim();
-  const name = resolvedReferenceNames.value[t.id || ""] || extractReferenceName(raw);
-  if (t.type === "invoice_sale" || t.type === "invoice_payment" || t.type === "invoice_edit_adjustment") {
+  const name =
+    resolvedReferenceNames.value[t.id || ""] || extractReferenceName(raw);
+  if (
+    t.type === "invoice_sale" ||
+    t.type === "invoice_payment" ||
+    t.type === "invoice_edit_adjustment"
+  ) {
     return `فاتورة بيع لـ ${name || "عميل"}`;
   }
   if (t.type === "inventory_purchase" || t.type === "supplier_payment") {
@@ -1168,27 +1165,47 @@ function refLabel(t: CashTransaction): string {
   if (t.type === "invoice_refund") return `مرتجع فاتورة ${name || "عميل"}`;
   if (t.type === "supplier_return") return `مرتجع للمورد ${name || "منتج"}`;
   if (t.type === "inventory_adjustment") return `تسوية مخزون ${name || "منتج"}`;
-  if (t.invoice_id || t.reference_type === "invoice") return `فاتورة بيع لـ ${name || "عميل"}`;
-  if (t.purchase_invoice_id || t.reference_type === "supplier_invoice") return `فاتورة توريد من ${name || "مورد"}`;
+  if (t.invoice_id || t.reference_type === "invoice")
+    return `فاتورة بيع لـ ${name || "عميل"}`;
+  if (t.purchase_invoice_id || t.reference_type === "supplier_invoice")
+    return `فاتورة توريد من ${name || "مورد"}`;
   if (t.loan_id || t.reference_type === "loan") return `سلفة ${name || "عميل"}`;
-  if (t.return_id || t.reference_type === "return") return `مرتجع فاتورة ${name || "عميل"}`;
-  if (t.product_id || t.reference_type === "product") return `تسوية مخزون ${name || "منتج"}`;
+  if (t.return_id || t.reference_type === "return")
+    return `مرتجع فاتورة ${name || "عميل"}`;
+  if (t.product_id || t.reference_type === "product")
+    return `تسوية مخزون ${name || "منتج"}`;
   return t.direction === "in" ? "إيداع نقدي" : "سحب نقدي";
 }
 
 function extractReferenceName(raw: string): string {
   const name = raw
-    .replace(/^(?:Invoice|Debt Payment|Customer Loan|Loan Payment|Supplier Invoice(?: Payment)?|Invoice Return|Supplier Return|Product Adjustment)\s*-\s*/i, "")
-    .replace(/\s*-\s*(?:Debt Payment|Customer Loan|Loan Payment|Supplier Invoice(?: Payment)?|Invoice Return|Supplier Return|Product Adjustment|Invoice)$/i, "")
-    .replace(/^(?:فاتورة(?: بيع لـ| توريد من| مورد)?|سلفة|مرتجع(?: فاتورة| للمورد)?|تسوية مخزون)\s*/u, "")
+    .replace(
+      /^(?:Invoice|Debt Payment|Customer Loan|Loan Payment|Supplier Invoice(?: Payment)?|Invoice Return|Supplier Return|Product Adjustment)\s*-\s*/i,
+      "",
+    )
+    .replace(
+      /\s*-\s*(?:Debt Payment|Customer Loan|Loan Payment|Supplier Invoice(?: Payment)?|Invoice Return|Supplier Return|Product Adjustment|Invoice)$/i,
+      "",
+    )
+    .replace(
+      /^(?:فاتورة(?: بيع لـ| توريد من| مورد)?|سلفة|مرتجع(?: فاتورة| للمورد)?|تسوية مخزون)\s*/u,
+      "",
+    )
     .trim();
-  return !name || /^(?:customer|supplier|product|عميل|مورد|غير مسمى|منتج)$/i.test(name) ? "" : name;
+  return !name ||
+    /^(?:customer|supplier|product|عميل|مورد|غير مسمى|منتج)$/i.test(name)
+    ? ""
+    : name;
 }
 
-async function resolveMissingReferenceNames(transactions: CashTransaction[]): Promise<void> {
+async function resolveMissingReferenceNames(
+  transactions: CashTransaction[],
+): Promise<void> {
   const version = ++referenceLookupVersion;
-  const needsName = transactions.filter((transaction) =>
-    canViewReference(transaction) && !extractReferenceName(String(transaction.reference_label || "")),
+  const needsName = transactions.filter(
+    (transaction) =>
+      canViewReference(transaction) &&
+      !extractReferenceName(String(transaction.reference_label || "")),
   );
   resolvedReferenceNames.value = {};
   const groups = [
@@ -1198,31 +1215,59 @@ async function resolveMissingReferenceNames(transactions: CashTransaction[]): Pr
   const resolved: Record<string, string> = {};
   for (const group of groups) {
     const groupTransactions = needsName.filter((transaction) => {
-      const isSupplier = transaction.reference_type === "supplier_invoice" || (!transaction.invoice_id && !!transaction.purchase_invoice_id);
+      const isSupplier =
+        transaction.reference_type === "supplier_invoice" ||
+        (!transaction.invoice_id && !!transaction.purchase_invoice_id);
       return isSupplier === group.isSupplier;
     });
-    const ids = [...new Set(groupTransactions.map((transaction) =>
-      transaction.reference_id || (group.isSupplier ? transaction.purchase_invoice_id : transaction.invoice_id),
-    ).filter((id): id is string => !!id))];
+    const ids = [
+      ...new Set(
+        groupTransactions
+          .map(
+            (transaction) =>
+              transaction.reference_id ||
+              (group.isSupplier
+                ? transaction.purchase_invoice_id
+                : transaction.invoice_id),
+          )
+          .filter((id): id is string => !!id),
+      ),
+    ];
     for (let index = 0; index < ids.length; index += 30) {
       const batch = ids.slice(index, index + 30);
       try {
-        const snapshot = await getDocs(query(collection(db, group.collectionName), where(documentId(), "in", batch)));
+        const snapshot = await getDocs(
+          query(
+            collection(db, group.collectionName),
+            where(documentId(), "in", batch),
+          ),
+        );
         for (const invoice of snapshot.docs) {
           const data = invoice.data();
-          const partyName = String(data[group.isSupplier ? "supplier_name" : "customer_name"] || "").trim();
+          const partyName = String(
+            data[group.isSupplier ? "supplier_name" : "customer_name"] || "",
+          ).trim();
           if (!partyName) continue;
           for (const transaction of groupTransactions) {
-            const invoiceId = transaction.reference_id || (group.isSupplier ? transaction.purchase_invoice_id : transaction.invoice_id);
-            if (invoiceId === invoice.id && transaction.id) resolved[transaction.id] = partyName;
+            const invoiceId =
+              transaction.reference_id ||
+              (group.isSupplier
+                ? transaction.purchase_invoice_id
+                : transaction.invoice_id);
+            if (invoiceId === invoice.id && transaction.id)
+              resolved[transaction.id] = partyName;
           }
         }
       } catch (error) {
-        console.error("Unable to resolve legacy cashbox reference names.", error);
+        console.error(
+          "Unable to resolve legacy cashbox reference names.",
+          error,
+        );
       }
     }
   }
-  if (version === referenceLookupVersion) resolvedReferenceNames.value = resolved;
+  if (version === referenceLookupVersion)
+    resolvedReferenceNames.value = resolved;
 }
 
 function canViewReference(transaction: CashTransaction): boolean {

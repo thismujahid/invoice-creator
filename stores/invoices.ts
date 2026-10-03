@@ -16,6 +16,22 @@ export const useInvoicesStore = defineStore("invoices", () => {
   const list = ref<Invoice[]>([]);
   const invoiceToEdit = ref<Invoice | undefined>(undefined);
 
+  // Full-collection cache backing true %text% substring search: Firestore
+  // has no middle-match operator, so one bounded read (reused across
+  // keystrokes via TTL) is filtered locally. Invalidated on any write.
+  let searchCache: { at: number; docs: { snap: QueryDocumentSnapshot; data: Invoice }[] } | null = null;
+  const SEARCH_CACHE_TTL_MS = 3 * 60 * 1000;
+  function invalidateCache(): void {
+    searchCache = null;
+  }
+  async function readAllInvoicesCached(): Promise<{ snap: QueryDocumentSnapshot; data: Invoice }[]> {
+    if (searchCache && Date.now() - searchCache.at < SEARCH_CACHE_TTL_MS) return searchCache.docs;
+    const snapshot = await getDocs(collection(db, "invoices"));
+    const docs = snapshot.docs.map((d) => ({ snap: d, data: { id: d.id, ...(d.data() as object) } as Invoice }));
+    searchCache = { at: Date.now(), docs };
+    return docs;
+  }
+
   function invoicesQuery(filters: Record<string, string | number | boolean | Date | null | undefined>) {
     let q: Query = collection(db, "invoices");
     if (filters.date instanceof Date) {
@@ -49,12 +65,144 @@ export const useInvoicesStore = defineStore("invoices", () => {
     return q;
   }
 
+  /** Client-side predicate for the merged fetch below: a row must satisfy
+   *  every active criterion (customer + search + date + remaining). */
+  function matchesScopedInvoice(
+    inv: Invoice,
+    criteria: {
+      customerId: string;
+      customerName: string;
+      phoneStr: string;
+      phoneNum: number;
+      date: Date | null;
+      remaining: number | null;
+      term: string;
+      termDigits: string;
+    },
+  ): boolean {
+    if (criteria.customerId && inv.customer_id !== criteria.customerId) {
+      // Fall back to name+phone when the row itself was never linked.
+      if (
+        !criteria.customerName ||
+        inv.customer_name !== criteria.customerName ||
+        !phonesEqual(inv.customer_phone, criteria.phoneStr, criteria.phoneNum)
+      ) {
+        return false;
+      }
+    } else if (criteria.customerName && criteria.phoneStr) {
+      if (inv.customer_name !== criteria.customerName || !phonesEqual(inv.customer_phone, criteria.phoneStr, criteria.phoneNum)) return false;
+    }
+    if (criteria.term) {
+      const name = String(inv.customer_name ?? "").toLocaleLowerCase();
+      const phoneText = String(inv.customer_phone ?? "");
+      const phoneDigits = phoneText.replace(/\D/g, "");
+      const termLower = criteria.term.toLocaleLowerCase();
+      const hit =
+        name.includes(termLower) ||
+        phoneText.includes(criteria.term) ||
+        (criteria.termDigits !== "" && phoneDigits.includes(criteria.termDigits));
+      if (!hit) return false;
+    }
+    if (criteria.date) {
+      const d = toDateSafe(inv.date);
+      if (!d || d.toDateString() !== criteria.date.toDateString()) return false;
+    }
+    if (criteria.remaining !== null) {
+      const outstanding = Number((inv as { remaining?: unknown }).remaining ?? 0);
+      if (!(outstanding >= criteria.remaining)) return false;
+    }
+    return true;
+  }
+
+  function phonesEqual(stored: unknown, phoneStr: string, phoneNum: number): boolean {
+    if (stored === phoneStr) return true;
+    if (typeof stored === "number" && Number.isFinite(phoneNum) && stored === phoneNum) return true;
+    if (typeof stored === "string" && phoneStr !== "") {
+      const a = stored.replace(/\D/g, "");
+      const b = phoneStr.replace(/\D/g, "");
+      if (a !== "" && a === b) return true;
+    }
+    return false;
+  }
+
   async function fetchInvoicePage(
     filters: Record<string, string | number | boolean | Date | null | undefined>,
     cursor: QueryDocumentSnapshot | null,
     pageSize = INVOICE_PAGE_SIZE,
-  ): Promise<{ items: Invoice[]; cursor: QueryDocumentSnapshot | null; hasMore: boolean }> {
+  ): Promise<{ items: Invoice[]; cursor: QueryDocumentSnapshot | null; hasMore: boolean; error?: string | null }> {
     try {
+      const customerId = String(filters.customer_id ?? "");
+      const customerName = String(filters.customer_name ?? "");
+      const phoneStr = String(filters.customer_phone ?? "");
+      const phoneDigits = phoneStr.replace(/\D/g, "");
+      const phoneNum = phoneDigits.length >= 7 ? Number(phoneDigits) : NaN;
+      const term = String(filters.search ?? "").trim();
+      const termDigits = term.replace(/\D/g, "");
+      const dateFilter = filters.date instanceof Date ? filters.date : null;
+      const remainingFilter =
+        filters.remaining === undefined || filters.remaining === null || filters.remaining === ""
+          ? null
+          : Number(filters.remaining);
+      const customerFiltered = !!customerId || (customerName !== "" && phoneStr !== "");
+      if (customerFiltered || term !== "") {
+        // Scoped fetch uses index-free server reads; candidates are merged,
+        // intersected, sorted and paginated client-side.
+        // - Customer-only scope: targeted equality queries (cheap).
+        // - Any search term: full-collection scan (cached) because Firestore
+        //   cannot match substrings server-side — this is what makes %text%
+        //   middle/end matching correct instead of prefix-only.
+        const seen = new Map<string, { snap: QueryDocumentSnapshot; data: Invoice }>();
+        const collect = (docs: { snap: QueryDocumentSnapshot; data: Invoice }[]): void => {
+          for (const entry of docs) {
+            if (!seen.has(entry.snap.id)) seen.set(entry.snap.id, entry);
+          }
+        };
+        if (term !== "") {
+          collect(await readAllInvoicesCached());
+        } else {
+          const subqueries: Query[] = [];
+          if (customerId) subqueries.push(query(collection(db, "invoices"), where("customer_id", "==", customerId)));
+          if (customerName !== "" && phoneStr !== "") {
+            subqueries.push(query(collection(db, "invoices"), where("customer_name", "==", customerName), where("customer_phone", "==", filters.customer_phone)));
+            if (Number.isFinite(phoneNum)) {
+              subqueries.push(query(collection(db, "invoices"), where("customer_name", "==", customerName), where("customer_phone", "==", phoneNum)));
+            }
+          }
+          for (const sub of subqueries) {
+            const snapshot = await getDocs(sub);
+            collect(snapshot.docs.map((d) => ({ snap: d, data: { id: d.id, ...(d.data() as object) } as Invoice })));
+          }
+        }
+        // Union fetches are a superset: intersect every active criterion here.
+        const criteria = {
+          customerId,
+          customerName,
+          phoneStr,
+          phoneNum,
+          date: dateFilter,
+          remaining: Number.isFinite(remainingFilter) ? (remainingFilter as number) : null,
+          term,
+          termDigits,
+        };
+        const sorted = [...seen.values()]
+          .filter((entry) => matchesScopedInvoice(entry.data, criteria))
+          .sort((a, b) => {
+          const ta = toDateSafe(a.data.date)?.getTime() ?? 0;
+          const tb = toDateSafe(b.data.date)?.getTime() ?? 0;
+          return tb - ta;
+        });
+        let start = 0;
+        if (cursor) {
+          const idx = sorted.findIndex((entry) => entry.snap.id === cursor.id);
+          start = idx >= 0 ? idx + 1 : 0;
+        }
+        const docs = sorted.slice(start, start + pageSize);
+        return {
+          items: docs.map((d) => d.data),
+          cursor: docs.at(-1)?.snap ?? null,
+          hasMore: sorted.length > start + pageSize,
+        };
+      }
       let q = query(invoicesQuery(filters), orderBy("date", "desc"));
       if (cursor) q = query(q, startAfter(cursor));
       q = query(q, fsLimit(pageSize + 1));
@@ -67,8 +215,19 @@ export const useInvoicesStore = defineStore("invoices", () => {
       };
     } catch (error) {
       console.error("Unable to load invoice page:", error);
-      return { items: [], cursor: null, hasMore: false };
+      return { items: [], cursor: null, hasMore: false, error: invoicePageErrorMessage(error) };
     }
+  }
+
+  function invoicePageErrorMessage(error: unknown): string {
+    const code = (error as { code?: string } | null)?.code ?? "";
+    const message = error instanceof Error ? error.message : String(error ?? "");
+    if (code === "failed-precondition" || /index/i.test(message)) {
+      return "تعذر تحميل الفواتير: الفهرس المطلوب غير مُنشأ. نفّذ الأمر firebase deploy --only firestore:indexes ثم أعد المحاولة.";
+    }
+    if (code === "permission-denied") return "تعذر تحميل الفواتير: لا توجد صلاحية قراءة. سجّل الدخول بحساب المدير.";
+    if (code === "unavailable") return "تعذر الاتصال بقاعدة البيانات. تحقق من الإنترنت ثم أعد المحاولة.";
+    return "تعذر تحميل الفواتير. أعد المحاولة.";
   }
 
   async function fetchInvoicesForExport(filters: Record<string, string | number | boolean | Date | null | undefined>): Promise<Invoice[]> {
@@ -88,11 +247,15 @@ export const useInvoicesStore = defineStore("invoices", () => {
   };
 
   const addInvoice = async (invoice: Omit<Invoice, "id">) => {
-    return await saveDataTo("invoices", invoice as Record<string, unknown>);
+    const saved = await saveDataTo("invoices", invoice as Record<string, unknown>);
+    if (saved) invalidateCache();
+    return saved;
   };
 
   const updateInvoice = async (id: string, updatedFields: Partial<Invoice>) => {
-    return await updateItem("invoices", id, updatedFields as Record<string, unknown>);
+    const result = await updateItem("invoices", id, updatedFields as Record<string, unknown>);
+    if (result !== null) invalidateCache();
+    return result;
   };
 
   /** Atomic invoice creation (F9/F29): invoice + stock decrement +
@@ -131,7 +294,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
           const product = stocks.get(pid)!;
           const unitId = typeof l.unit_id === "string" ? l.unit_id : product.baseUnitId ?? product.units.find((unit) => unit.is_base)?.id ?? product.units[0]?.id;
           const configuredUnit = product.units.find((unit) => unit.id === unitId);
-          if (product.units.length && (!configuredUnit || configuredUnit.can_sell === false || Math.abs(Number(configuredUnit.factor) - lineUnitFactor(l)) > STOCK_EPS)) {
+          if (product.units.length && (!configuredUnit || Math.abs(Number(configuredUnit.factor) - lineUnitFactor(l)) > STOCK_EPS)) {
             throw new Error("VALIDATION:وحدة البيع المختارة غير متاحة أو تغير إعدادها. حدّث الفاتورة وحاول مرة أخرى.");
           }
           if (!product.units.length && lineUnitFactor(l) !== 1) {
@@ -245,6 +408,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
         }
       });
       useProductsStore().invalidateCache();
+      invalidateCache();
       return { ok: true, id: invoiceId, cashSkipped };
     } catch (e) {
       if (e instanceof Error && e.message.startsWith("VALIDATION:")) {
@@ -505,6 +669,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
         }
       });
       useProductsStore().invalidateCache();
+      invalidateCache();
       return { ok: true, cashSkipped };
     } catch (e) {
       if (e instanceof Error && e.message.startsWith("VALIDATION:")) {
@@ -558,6 +723,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
         }
       });
       list.value = list.value.filter((inv) => inv.id !== id);
+      invalidateCache();
       return { ok: true };
     } catch (e) {
       if (e instanceof Error && e.message.startsWith("VALIDATION:")) {
@@ -685,6 +851,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
     fetchInvoices,
     fetchInvoicePage,
     fetchInvoicesForExport,
+    invalidateCache,
     addInvoice,
     updateInvoice,
     createInvoiceWithAccounting,

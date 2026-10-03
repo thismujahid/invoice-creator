@@ -17,6 +17,9 @@ export interface Product {
   stock_quantity?: number | null;
   /** Low-stock alert threshold (default 5 when missing). Fractional allowed. */
   low_stock_threshold?: number | null;
+  /** Unit the threshold was entered in (display + edit hydration).
+   *  The numeric threshold itself is always stored in base units. */
+  low_stock_unit_id?: string | null;
   base_unit_id?: string | null;
   base_unit_name?: string | null;
   units?: ProductUnit[];
@@ -36,6 +39,10 @@ export interface ProductUnit {
   name: string;
   factor: number;
   selling_price: number | null;
+  /** Last purchase unit-cost for THIS unit (reference value, in the unit's
+   *  own denomination). The moving average lives once, in base-unit terms,
+   *  on Product.cost_price — per-unit averages are derived, never stored. */
+  purchase_price?: number | null;
   is_base?: boolean;
   can_purchase?: boolean;
   can_sell?: boolean;

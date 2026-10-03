@@ -155,7 +155,9 @@ service cloud.firestore {
         && request.resource.data.get('stock_quantity', 0) is number
         && request.resource.data.get('stock_quantity', 0) >= 0
         && request.resource.data.get('low_stock_threshold', 5) is number
-        && request.resource.data.get('low_stock_threshold', 5) >= 0;
+        && request.resource.data.get('low_stock_threshold', 5) >= 0
+        && request.resource.data.get('units', []) is list
+        && request.resource.data.get('units', []).size() > 0;
       allow update: if isAdmin() || (isStaff()
         && (request.resource.data.get('stock_quantity', null) == resource.data.get('stock_quantity', null)
           || hasFreshInventoryMovement(id))

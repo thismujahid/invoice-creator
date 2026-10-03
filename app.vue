@@ -1,5 +1,5 @@
 <template>
-  <UApp>
+  <UApp dir="rtl">
     <UToaster />
     <NuxtLoadingIndicator color="#10b981" />
     <NuxtLayout>

@@ -22,16 +22,16 @@
     <UiAppDialog v-model:open="draftOpen" :title="draftSource ? 'مسودة فاتورة جديدة من فاتورة سابقة' : 'فاتورة مورد جديدة'">
       <div class="max-h-[65vh] space-y-4 overflow-y-auto pe-1">
         <UFormField label="المورد" required>
-          <USelectMenu :model-value="(draftSupplier ?? null) as Supplier | undefined" :items="supplierMenuItems" label-key="name" by="id" placeholder="اختر المورد" class="w-full" @update:model-value="(s) => onPickDraftSupplier(s)" />
+          <USelectMenu :model-value="(draftSupplier ?? null) as Supplier | undefined" :items="supplierMenuItems" label-key="name" by="id" placeholder="اختر المورد" :search-input="{ placeholder: 'بحث عن مورد...', icon: 'i-lucide-search' }" class="w-full" @update:model-value="(s) => onPickDraftSupplier(s)" />
           <FormsSupplier v-model="showSupplierModal" :refresher="reloadSuppliers" @done="onDraftSupplierCreated" />
         </UFormField>
         <UFormField v-if="draftSource && !draftSupplier" label="اسم المورد في الفاتورة السابقة" required><UInput v-model="supplierName" placeholder="اسم المورد" class="w-full" /></UFormField>
         <UFormField label="رقم فاتورة المورد"><UInput v-model="supplierRef" dir="ltr" class="w-full" /></UFormField>
         <div v-for="(line, index) in draftLines" :key="line.key" class="space-y-2 rounded-xl border border-gray-200 p-3">
           <div class="flex items-center justify-between"><b class="text-sm">صنف {{ index + 1 }}</b><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" aria-label="حذف الصنف" :disabled="draftLines.length <= 1" @click="draftLines.splice(index, 1)" /></div>
-          <UFormField label="المنتج"><USelectMenu :model-value="line.product" :items="productOptions(line)" label-key="name" by="id" placeholder="اختر المنتج" class="w-full" @update:model-value="(product) => pickProduct(line, product)" /></UFormField>
+          <UFormField label="المنتج"><USelectMenu :model-value="line.product" :items="productOptions(line)" label-key="name" by="id" placeholder="اختر المنتج" :search-input="{ placeholder: 'بحث عن منتج...', icon: 'i-lucide-search' }" class="w-full" @update:model-value="(product) => pickProduct(line, product)" /></UFormField>
           <div v-if="line.product" class="grid grid-cols-2 gap-2">
-            <UFormField label="وحدة الشراء"><USelectMenu :model-value="selectedUnit(line)" :items="unitOptions(line)" label-key="name" by="id" class="w-full" @update:model-value="(unit) => pickUnit(line, unit)" /></UFormField>
+            <UFormField label="وحدة الشراء"><USelectMenu :model-value="selectedUnit(line)" :items="unitOptions(line)" label-key="name" by="id" :search-input="false" class="w-full" @update:model-value="(unit) => pickUnit(line, unit)" /></UFormField>
             <UFormField label="الكمية"><UInputNumber v-model="line.quantity" :min="0.001" :step="0.01" class="w-full" /></UFormField>
             <UFormField label="تكلفة الوحدة المحددة"><UInputNumber v-model="line.unit_cost" :min="0" :step="0.0001" class="w-full" /></UFormField>
             <UFormField label="تأثير سعر البيع"><USelect :model-value="line.priceMode" :items="priceModeItems" value-key="value" label-key="label" class="w-full" @update:model-value="(mode) => setPriceMode(line, mode)" /></UFormField>
@@ -66,7 +66,7 @@ import type { Product, ProductUnit } from "~/types";
 import type { PurchaseInvoice, PurchaseInvoiceItem, Supplier, SupplierPayment } from "~/types/finance";
 import type { QueryDocumentSnapshot } from "firebase/firestore";
 import { deriveSupplierInvoiceStatus, supplierInvoiceStatus } from "~/types/finance";
-import { convertUnitPrice, proposedSellingPrice, purchasableUnitsForProduct, round2, toNum } from "~/composables/finance";
+import { convertUnitPrice, proposedSellingPrice, purchasableUnitsForProduct, round2, toNum, unitPurchasePrice } from "~/composables/finance";
 import { toDateSafe } from "~/types";
 import { useSuppliersStore } from "~/stores/suppliers";
 
@@ -171,7 +171,9 @@ function pickProduct(line: DraftLine, product?: Product): void {
   const options = purchasableUnitsForProduct(product);
   const base = options.find((unit) => unit.is_base) ?? options[0]!;
   line.unit_id = base.id; line.unit_name = base.name; line.unit_factor = base.factor;
-  line.unit_cost = toNum(product.cost_price);
+  // Prefill with the unit's last purchase price when known (more accurate
+  // than the blended base average for repeat buys of the same unit).
+  line.unit_cost = unitPurchasePrice(product, base) ?? toNum(product.cost_price);
   line.approvedProposal = previewLine(line).proposed;
 }
 function openUnitFromSnapshot(productId: string, name: string, unitId?: string | null, unitName?: string | null, factor?: number | null): DraftLine {

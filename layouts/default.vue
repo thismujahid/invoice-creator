@@ -80,8 +80,6 @@
             href="https://mejo.dev"
             >محمد إبراهيم مجاهد</NuxtLink
           >
-          <span class="mx-1 text-gray-600">•</span>
-          جميع الحقوق محفوظة @ {{ new Date().getFullYear() }}
         </p>
       </footer>
 

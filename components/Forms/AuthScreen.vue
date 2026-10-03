@@ -14,12 +14,18 @@
           :length="6"
           type="number"
           otp
+          mask
           autofocus
           dir="ltr"
           size="lg"
           class="justify-center"
+          :disabled="loading"
           @complete="login"
         />
+        <div v-if="loading" class="flex items-center justify-center gap-2 text-sm text-gray-500">
+          <UIcon name="i-lucide-loader-circle" class="size-4 animate-spin" />
+          جاري تسجيل الدخول…
+        </div>
         <UAlert v-if="error" color="error" variant="soft" :title="error" />
         <div v-if="!title" class="w-full text-center text-sm">
           برمجة وتطوير:

@@ -27,7 +27,7 @@
     <div class="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
       <UInput
         v-model="searchText"
-        placeholder="بحث في الصفحة بالاسم أو الهاتف"
+        placeholder="بحث في كل الفواتير بالاسم أو الهاتف"
         icon="i-lucide-search"
         size="lg"
         class="w-full"
@@ -129,6 +129,32 @@
         </div>
       </UCard>
     </div>
+    <div
+      v-if="hasCustomerFilter"
+      class="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2"
+    >
+      <UIcon name="i-lucide-user" class="size-4 shrink-0 text-blue-600" />
+      <span class="min-w-0 flex-1 truncate text-sm font-semibold text-blue-900">
+        فواتير: {{ customerFilter.name || customerFilter.id }}
+        <span v-if="customerFilter.phone" class="font-normal text-blue-600" dir="ltr">
+          ({{ customerFilter.phone }})
+        </span>
+      </span>
+      <UButton
+        size="xs"
+        color="neutral"
+        variant="soft"
+        icon="i-lucide-x"
+        @click="resetCustomerFilter"
+      >
+        مسح الفلتر وعرض الكل
+      </UButton>
+    </div>
+    <UAlert v-if="loadError" color="error" variant="soft" class="mb-3" :title="loadError">
+      <template #actions>
+        <UButton size="xs" color="error" variant="soft" :loading="loading" @click="() => loadInvoices(true)">إعادة المحاولة</UButton>
+      </template>
+    </UAlert>
     <UiAppTableSkeleton v-if="loading" />
     <template v-else>
       <!-- Desktop table -->
@@ -431,6 +457,44 @@ const currentPerPage = ref(25);
 const invoiceCursors = ref<(QueryDocumentSnapshot | null)[]>([null]);
 const hasMoreInvoices = ref(false);
 const loading = ref(true);
+const loadError = ref("");
+// Customer filter lives in local state (not the URL): incoming
+// ?customer_id=&customer_name=&customer_phone= links are consumed once,
+// applied, then stripped so the URL stays clean and shareable.
+const customerFilter = ref({ id: "", name: "", phone: "" });
+const hasCustomerFilter = computed(
+  () => customerFilter.value.id !== "" || customerFilter.value.name !== "",
+);
+
+function readCustomerQuery(): { id: string; name: string; phone: string } {
+  const q = route.query;
+  return {
+    id: typeof q.customer_id === "string" ? q.customer_id : "",
+    name: typeof q.customer_name === "string" ? q.customer_name : "",
+    phone: typeof q.customer_phone === "string" ? q.customer_phone : "",
+  };
+}
+
+function stripCustomerQuery(): void {
+  if (
+    route.query.customer_id === undefined &&
+    route.query.customer_name === undefined &&
+    route.query.customer_phone === undefined
+  ) {
+    return;
+  }
+  const q = { ...route.query };
+  delete q.customer_id;
+  delete q.customer_name;
+  delete q.customer_phone;
+  void navigateTo({ path: route.path, query: q }, { replace: true });
+}
+
+function resetCustomerFilter(): void {
+  customerFilter.value = { id: "", name: "", phone: "" };
+  stripCustomerQuery();
+  void loadInvoices(true);
+}
 const exporting = ref(false);
 const deleting = ref(false);
 const statsLoading = ref(true);
@@ -477,6 +541,15 @@ watch(selectedDate, () => {
 });
 watch(paid_amount_filter, () => { void loadInvoices(true); });
 watch(currentPerPage, () => { void loadInvoices(true); });
+// Server-side search across ALL Firestore invoices (not just the loaded
+// page): debounced so every keystroke doesn't fire a query round-trip.
+let searchTimer: ReturnType<typeof setTimeout> | undefined;
+watch(searchText, () => {
+  if (searchTimer) clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    void loadInvoices(true);
+  }, 400);
+});
 
 // HOME delta: settle debts in full (single or bulk) — preserved from home.
 async function payFull(listInvs: Invoice[] | null | undefined) {
@@ -572,19 +645,7 @@ const isFilteredInvoicesContainsDebts = computed<Invoice[] | null>(() => {
       : null;
   } else return null;
 });
-const filteredInvoices = computed<Invoice[]>(() => {
-  const q = searchText.value?.trim();
-  const customerId = String(route.query.customer_id ?? "");
-  const customerName = String(route.query.customer_name ?? "");
-  const customerPhone = String(route.query.customer_phone ?? "");
-  return invoicesStore.list.filter(
-    (invoice) =>
-      (!customerId || invoice.customer_id === customerId || (!invoice.customer_id && invoice.customer_name === customerName && String(invoice.customer_phone ?? "") === customerPhone)) &&
-      (!customerName || invoice.customer_name === customerName) &&
-      (!customerPhone || String(invoice.customer_phone ?? "") === customerPhone) &&
-      (!q || invoice.customer_name?.includes(q) || String(invoice.customer_phone ?? "").includes(q)),
-  );
-});
+const filteredInvoices = computed<Invoice[]>(() => invoicesStore.list);
 function discountAmount(invoice: Invoice): number {
   if (invoice.discount && invoice.discount_percentage) {
     return (calcTotal(invoice) * Number(invoice.discount)) / 100;
@@ -640,26 +701,39 @@ function invoiceFilters() {
   return {
     remaining: paid_amount_filter.value ?? undefined,
     date: selectedDate.value ?? undefined,
-    customer_id: route.query.customer_id ? String(route.query.customer_id) : undefined,
-    customer_name: route.query.customer_name ? String(route.query.customer_name) : undefined,
-    customer_phone: route.query.customer_phone ? String(route.query.customer_phone) : undefined,
+    customer_id: customerFilter.value.id || undefined,
+    customer_name: customerFilter.value.name || undefined,
+    customer_phone: customerFilter.value.phone || undefined,
+    search: searchText.value.trim() || undefined,
   };
 }
 async function loadInvoices(reset = false) {
   loading.value = true;
+  loadError.value = "";
   try {
     if (reset) { currentPage.value = 1; invoiceCursors.value = [null]; }
     const page = await invoicesStore.fetchInvoicePage(invoiceFilters(), invoiceCursors.value[currentPage.value - 1] ?? null, currentPerPage.value);
     invoicesStore.list = page.items;
     hasMoreInvoices.value = page.hasMore;
     if (page.cursor) invoiceCursors.value[currentPage.value] = page.cursor;
+    if (page.error) loadError.value = page.error;
   } finally {
     loading.value = false;
   }
 }
 async function nextInvoicePage(): Promise<void> { if (!hasMoreInvoices.value || loading.value) return; currentPage.value += 1; await loadInvoices(); }
 async function previousInvoicePage(): Promise<void> { if (currentPage.value <= 1 || loading.value) return; currentPage.value -= 1; await loadInvoices(); }
-watch(() => [route.query.customer_id, route.query.customer_name, route.query.customer_phone], () => { void loadInvoices(true); });
+// Deep-links from the customers page arrive as URL query while staying on
+// this route: adopt them into local state, then strip them from the URL.
+watch(() => [route.query.customer_id, route.query.customer_name, route.query.customer_phone], () => {
+  const next = readCustomerQuery();
+  if (!next.id && !next.name && !next.phone) return; // stripped or unrelated
+  const cur = customerFilter.value;
+  if (next.id === cur.id && next.name === cur.name && next.phone === cur.phone) return;
+  customerFilter.value = next;
+  stripCustomerQuery();
+  void loadInvoices(true);
+});
 type InvoiceRow = {
   id?: string;
   name: string | null;
@@ -805,6 +879,9 @@ onMounted(async () => {
     statsLoading.value = false;
     return; // layout redirects to /login
   }
+  // Consume a customer deep-link once, then clean the URL.
+  customerFilter.value = readCustomerQuery();
+  stripCustomerQuery();
   await Promise.all([loadInvoices(), loadInvoiceStats()]);
 });
 </script>

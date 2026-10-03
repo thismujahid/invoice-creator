@@ -2,12 +2,22 @@
   <div class="rounded-xl bg-white p-3 shadow-sm sm:p-4">
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
       <h2 class="text-lg font-bold text-gray-900">دفتر الديون</h2>
-      <UButton
-        icon="i-lucide-hand-coins"
-        color="success"
-        @click="openLoan(null)"
-        >إضافة سلفة</UButton
-      >
+      <div class="flex flex-wrap gap-2">
+        <UButton
+          icon="i-lucide-printer"
+          color="neutral"
+          variant="soft"
+          :loading="printingStatement"
+          @click="printDebtsStatement"
+          >طباعة كشف الديون</UButton
+        >
+        <UButton
+          icon="i-lucide-hand-coins"
+          color="success"
+          @click="openLoan(null)"
+          >إضافة سلفة</UButton
+        >
+      </div>
     </div>
     <UInput
       v-model="searchText"
@@ -626,6 +636,10 @@
         </div>
       </template>
     </UiAppDialog>
+    <!-- Hidden print source for the debts statement -->
+    <div class="hidden" aria-hidden="true">
+      <DebtsStatement :book="book" :invoices-by-key="statementMap" />
+    </div>
   </div>
 </template>
 
@@ -639,7 +653,7 @@ import { doc } from "firebase/firestore";
 
 definePageMeta({ title: "دفتر الديون" });
 const route = useRoute();
-const { formatePrice } = useHelpers();
+const { formatePrice, useDownloadPDF } = useHelpers();
 const { round2, loanStatusOf, normalizePhone, normalizeName } = useFinance();
 const debts = useDebts();
 const customers = useCustomersStore();
@@ -1056,6 +1070,53 @@ async function reload(): Promise<void> {
     }
   } finally {
     loading.value = false;
+  }
+}
+
+// Printable statement: full book + indebted invoices grouped by customer.
+// Invoice docs are fetched DIRECTLY by the book's obligation ids (debt
+// summary ids ARE invoice ids) — never by a `remaining` field query, which
+// old invoices may lack even though their summaries exist.
+const printingStatement = ref(false);
+const statementMap = ref<Record<string, Invoice[]>>({});
+async function printDebtsStatement(): Promise<void> {
+  if (printingStatement.value) return;
+  printingStatement.value = true;
+  try {
+    const freshBook = await debts.fetchDebtsBook();
+    if (!freshBook.length) {
+      notify("لا توجد ديون مستحقة للطباعة", "error");
+      return;
+    }
+    book.value = freshBook;
+    const invoiceIdToKey = new Map<string, string>();
+    for (const c of freshBook) {
+      for (const o of c.invoices) invoiceIdToKey.set(o.id, c.key);
+    }
+    const snaps = await Promise.all(
+      [...invoiceIdToKey.keys()].map((id) => getDoc(doc(db, "invoices", id))),
+    );
+    const map: Record<string, Invoice[]> = {};
+    for (const snap of snaps) {
+      if (!snap.exists()) continue;
+      const inv = { id: snap.id, ...(snap.data() as object) } as Invoice;
+      const key = invoiceIdToKey.get(snap.id);
+      if (!key) continue;
+      (map[key] ??= []).push(inv);
+    }
+    statementMap.value = map;
+    const invoiceCount = Object.values(map).reduce((s, arr) => s + arr.length, 0);
+    await nextTick();
+    await useDownloadPDF(
+      "debts-statement",
+      `كشف-الديون-${new Date().toLocaleDateString("ar-EG")}`,
+    );
+    notify(`تم تجهيز الكشف: ${freshBook.length} عميل و${invoiceCount} فاتورة`, "success");
+  } catch (e) {
+    console.error(e);
+    notify("تعذر تجهيز كشف الديون", "error");
+  } finally {
+    printingStatement.value = false;
   }
 }
 
