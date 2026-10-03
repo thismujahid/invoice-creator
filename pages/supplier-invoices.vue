@@ -32,14 +32,27 @@
           <UFormField label="المنتج"><USelectMenu :model-value="line.product" :items="productOptions(line)" label-key="name" by="id" placeholder="اختر المنتج" :search-input="{ placeholder: 'بحث عن منتج...', icon: 'i-lucide-search' }" class="w-full" @update:model-value="(product) => pickProduct(line, product)" /></UFormField>
           <div v-if="line.product" class="grid grid-cols-2 gap-2">
             <UFormField label="وحدة الشراء"><USelectMenu :model-value="selectedUnit(line)" :items="unitOptions(line)" label-key="name" by="id" :search-input="false" class="w-full" @update:model-value="(unit) => pickUnit(line, unit)" /></UFormField>
-            <UFormField label="الكمية"><UInputNumber v-model="line.quantity" :min="0.001" :step="0.01" class="w-full" /></UFormField>
+            <UFormField label="الكمية"><UInputNumber v-model="line.quantity" :min="1" :step="1" class="w-full" /></UFormField>
             <UFormField label="تكلفة الوحدة المحددة"><UInputNumber v-model="line.unit_cost" :min="0" :step="0.0001" class="w-full" /></UFormField>
             <UFormField label="تأثير سعر البيع"><USelect :model-value="line.priceMode" :items="priceModeItems" value-key="value" label-key="label" class="w-full" @update:model-value="(mode) => setPriceMode(line, mode)" /></UFormField>
-            <div class="col-span-full rounded-lg bg-amber-50 p-2 text-xs text-gray-700">سعر البيع الحالي: <b>{{ formatePrice(line.product.price) }} ج</b> · متوسط التكلفة المتوقع: <b>{{ formatePrice(previewLine(line).avg) }} ج</b> · السعر المقترح: <b>{{ previewLine(line).proposed === null ? 'أدخل سعرًا يدويًا' : `${formatePrice(previewLine(line).proposed)} ج` }}</b></div>
+            <div class="col-span-full rounded-lg bg-gray-50 p-2 text-xs text-gray-600">
+              الوحدة: <b>{{ line.unit_name || 'وحدة' }}</b> · المعامل: <b>×{{ line.unit_factor || 1 }} {{ line.product.base_unit_name || 'وحدة' }}</b><br>
+              سعر شراء الوحدة: <b>{{ formatePrice(line.unit_cost) }} ج</b> · تكلفة {{ line.product.base_unit_name || 'الوحدة الأساسية' }}: <b>{{ formatePrice(previewLine(line).baseCost) }} ج</b><br>
+              الكمية الأساسية: <b>{{ previewLine(line).baseQty }}</b> {{ line.product.base_unit_name || 'وحدة' }} · إجمالي السطر: <b>{{ formatePrice((line.quantity || 0) * (line.unit_cost || 0)) }} ج</b><br>
+              قبل الشراء: مخزون <b>{{ line.product.stock_quantity ?? 0 }}</b> · متوسط التكلفة <b>{{ formatePrice(line.product.cost_price) }} ج / {{ line.product.base_unit_name || 'وحدة' }}</b><br>
+              بعد الشراء: مخزون <b>{{ (line.product.stock_quantity ?? 0) + previewLine(line).baseQty }}</b> · متوسط التكلفة <b>{{ formatePrice(previewLine(line).avg) }} ج / {{ line.product.base_unit_name || 'وحدة' }}</b>
+            </div>
+            <div class="col-span-full rounded-lg bg-amber-50 p-2 text-xs text-gray-700">سعر البيع الحالي: <b>{{ formatePrice(line.product.price) }} ج</b> · متوسط التكلفة المتوقع: <b>{{ formatePrice(previewLine(line).avg) }} ج</b> · السعر المقترح: <b>{{ previewLine(line).proposed === null ? 'أدخل سعرًا يدويًا' : `${formatePrice(previewLine(line).proposed)} ج` }}</b>
+              <div v-if="proposalsForProduct(line.product.id).length > 1" class="mt-1 space-y-0.5">
+                <div v-for="p in proposalsForProduct(line.product.id)" :key="p.unitId" class="flex justify-between gap-2">
+                  <span>{{ p.unitName }} ×{{ p.factor }}: بيع {{ p.oldPrice === null ? '—' : formatePrice(p.oldPrice) }} → مقترح {{ p.proposed === null ? 'يدوي' : formatePrice(p.proposed) }}</span>
+                  <span class="text-gray-500">هامش {{ p.rate === null ? '—' : `${Math.round(p.rate * 10000) / 100}%` }}</span>
+                </div>
+              </div>
+            </div>
             <UFormField v-if="line.priceMode === 'proposed' && previewLine(line).proposed !== null" label="السعر المقترح (قابل للتعديل)"><UInputNumber v-model="line.approvedProposal" :min="0" :step="0.01" class="w-full" /></UFormField>
             <UFormField v-if="line.priceMode === 'custom'" label="سعر البيع المخصص"><UInputNumber v-model="line.customPrice" :min="0" :step="0.01" class="w-full" /></UFormField>
             <UAlert v-if="line.priceMode === 'proposed' && previewLine(line).proposed === null" class="col-span-full" color="warning" variant="soft" title="لا يمكن اشتقاق هامش ربح قديم لهذا المنتج؛ اختر سعرًا مخصصًا." />
-            <div class="rounded-lg bg-gray-50 p-2 text-xs text-gray-600">الكمية الأساسية: <b>{{ (line.quantity || 0) * (line.unit_factor || 1) }}</b> {{ line.product.base_unit_name || 'وحدة' }}<br>إجمالي السطر: <b>{{ formatePrice((line.quantity || 0) * (line.unit_cost || 0)) }} ج</b></div>
           </div>
         </div>
         <UButton color="neutral" variant="soft" icon="i-lucide-plus" @click="addDraftLine()">إضافة صنف</UButton>
@@ -50,7 +63,7 @@
     </UiAppDialog>
 
     <UiAppDialog v-model:open="detailsOpen" :title="`فاتورة ${selectedInvoice?.supplier_name || 'المورد'}`">
-      <div v-if="selectedInvoice" class="space-y-3"><div class="grid grid-cols-2 gap-2 text-sm"><span>الرقم</span><b>{{ selectedInvoice.invoice_number || selectedInvoice.supplier_ref || selectedInvoice.id }}</b><span>التاريخ</span><b>{{ formatDateOnly(selectedInvoice.created_at) }}</b><span>الإجمالي</span><b>{{ formatePrice(selectedInvoice.total_amount) }} ج</b><span>المدفوع</span><b>{{ formatePrice(selectedInvoice.paid_amount) }} ج</b><span>الباقي</span><b class="text-red-600">{{ formatePrice(selectedInvoice.remaining_amount) }} ج</b></div><div class="max-h-[40vh] space-y-2 overflow-y-auto"><UCard v-for="(item, index) in selectedInvoice.items" :key="`${item.product_id}-${index}`" variant="outline"><div class="flex justify-between gap-2 text-sm"><b>{{ item.product_name }}</b><span>{{ item.quantity }} {{ item.unit_name || 'وحدة' }}</span></div><div class="mt-1 flex justify-between text-xs text-gray-500"><span>{{ formatePrice(item.unit_cost) }} ج / وحدة</span><b>{{ formatePrice(item.line_total) }} ج</b></div></UCard></div><div class="no-print flex flex-wrap gap-2"><UButton color="neutral" variant="soft" icon="i-lucide-printer" @click="printInvoice">طباعة الفاتورة</UButton><UButton color="neutral" variant="soft" icon="i-lucide-history" :disabled="!selectedInvoice.payment_ids?.length" @click="loadPayments(selectedInvoice)">سجل السداد</UButton></div></div>
+      <div v-if="selectedInvoice" class="space-y-3"><div class="grid grid-cols-2 gap-2 text-sm"><span>الرقم</span><b>{{ selectedInvoice.invoice_number || selectedInvoice.supplier_ref || selectedInvoice.id }}</b><span>التاريخ</span><b>{{ formatDateOnly(selectedInvoice.created_at) }}</b><span>الإجمالي</span><b>{{ formatePrice(selectedInvoice.total_amount) }} ج</b><span>المدفوع</span><b>{{ formatePrice(selectedInvoice.paid_amount) }} ج</b><span>الباقي</span><b class="text-red-600">{{ formatePrice(selectedInvoice.remaining_amount) }} ج</b></div><div class="max-h-[40vh] space-y-2 overflow-y-auto"><UCard v-for="(item, index) in selectedInvoice.items" :key="`${item.product_id}-${index}`" variant="outline"><div class="flex justify-between gap-2 text-sm"><b>{{ item.product_name }}</b><span>{{ item.quantity }} {{ item.unit_name || 'وحدة' }}</span></div><div class="mt-1 text-xs text-gray-500">الوحدة: {{ item.unit_name || 'وحدة' }} · المعامل ×{{ item.unit_factor || 1 }} · سعر الشراء {{ formatePrice(item.unit_cost) }} ج<br>تكلفة الوحدة الأساسية: {{ item.base_unit_cost == null ? '—' : `${formatePrice(item.base_unit_cost)} ج` }} · الكمية الأساسية: {{ item.base_quantity ?? '—' }} · إجمالي السطر <b>{{ formatePrice(item.line_total) }} ج</b></div></UCard></div><div class="no-print flex flex-wrap gap-2"><UButton color="neutral" variant="soft" icon="i-lucide-printer" @click="printInvoice">طباعة الفاتورة</UButton><UButton color="neutral" variant="soft" icon="i-lucide-history" :disabled="!selectedInvoice.payment_ids?.length" @click="loadPayments(selectedInvoice)">سجل السداد</UButton></div></div>
     </UiAppDialog>
     <UiAppDialog v-model:open="paymentOpen" :title="`سداد فاتورة ${paymentTarget?.supplier_name || 'المورد'}`">
       <div v-if="paymentTarget" class="space-y-3"><div class="grid grid-cols-2 gap-2 rounded-lg bg-gray-50 p-3 text-sm"><span>الباقي</span><b>{{ formatePrice(paymentTarget.remaining_amount) }} ج</b><span>رصيد الخزنة</span><b>{{ formatePrice(cashbox.balance) }} ج</b></div><UFormField label="مبلغ الدفعة" :error="paymentError || undefined"><UInputNumber v-model="paymentAmount" :min="0" :max="Math.min(paymentTarget.remaining_amount, cashbox.balance)" :step="0.01" class="w-full" /></UFormField><UFormField label="ملاحظة"><UInput v-model="paymentNote" class="w-full" /></UFormField><UAlert v-if="paymentError" color="warning" variant="soft" :title="paymentError" /></div>
@@ -66,7 +79,7 @@ import type { Product, ProductUnit } from "~/types";
 import type { PurchaseInvoice, PurchaseInvoiceItem, Supplier, SupplierPayment } from "~/types/finance";
 import type { QueryDocumentSnapshot } from "firebase/firestore";
 import { deriveSupplierInvoiceStatus, supplierInvoiceStatus } from "~/types/finance";
-import { convertUnitPrice, proposedSellingPrice, purchasableUnitsForProduct, round2, toNum, unitPurchasePrice } from "~/composables/finance";
+import { convertUnitPrice, proposedSellingPrice, purchaseLineBaseCost, purchaseLineBaseQuantity, purchasePreviewAverage, purchaseUnitProposals, purchasableUnitsForProduct, round2, round4, toNum, unitPurchasePrice } from "~/composables/finance";
 import { toDateSafe } from "~/types";
 import { useSuppliersStore } from "~/stores/suppliers";
 
@@ -122,8 +135,8 @@ const savingDraft = ref(false);
 const draftError = ref("");
 const requestKey = ref("");
 const priceModeItems = [{ label: "الإبقاء على السعر الحالي", value: "keep" }, { label: "اعتماد السعر المقترح", value: "proposed" }, { label: "سعر مخصص", value: "custom" }];
-const draftTotal = computed(() => round2(draftLines.value.reduce((sum, line) => sum + round2(toNum(line.quantity) * toNum(line.unit_cost)), 0)));
-const draftReady = computed(() => !savingDraft.value && !!(draftSupplier.value?.id || (draftSource.value && supplierName.value.trim())) && draftLines.value.length > 0 && draftLines.value.every((line) => line.product?.id && line.quantity > 0 && line.unit_cost >= 0 && (!pricePolicyApplies(line) || line.priceMode !== "keep") && (line.priceMode !== "proposed" || previewLine(line).proposed !== null && Number(line.approvedProposal) >= 0) && (line.priceMode !== "custom" || Number(line.customPrice) >= 0)) && toNum(paidNow.value) >= 0 && toNum(paidNow.value) <= draftTotal.value && toNum(paidNow.value) <= cashbox.balance);
+const draftTotal = computed(() => round2(draftLines.value.reduce((sum, line) => sum + round2(toNum(line.quantity) * round4(toNum(line.unit_cost))), 0)));
+const draftReady = computed(() => !savingDraft.value && !!(draftSupplier.value?.id || (draftSource.value && supplierName.value.trim())) && draftLines.value.length > 0 && draftLines.value.every((line) => line.product?.id && line.quantity > 0 && Number.isInteger(line.quantity) && line.unit_cost >= 0 && (!pricePolicyApplies(line) || line.priceMode !== "keep") && (line.priceMode !== "proposed" || previewLine(line).proposed !== null && Number(line.approvedProposal) >= 0) && (line.priceMode !== "custom" || Number(line.customPrice) >= 0)) && toNum(paidNow.value) >= 0 && toNum(paidNow.value) <= draftTotal.value && toNum(paidNow.value) <= cashbox.balance);
 const draftMessage = computed(() => draftError.value);
 const visibleInvoices = computed(() => [...new Map([...pinnedInvoices.value, ...pageInvoices.value].map((invoice) => [invoice.id, invoice])).values()].filter((invoice) => {
   const query = search.value.trim().toLocaleLowerCase();
@@ -158,11 +171,19 @@ function unitOptions(line: DraftLine): ProductUnit[] { return line.product ? pur
 function selectedUnit(line: DraftLine): ProductUnit | undefined { return unitOptions(line).find((unit) => unit.id === line.unit_id) ?? unitOptions(line)[0]; }
 function newLine(): DraftLine { return { key: id(), unit_id: "", unit_name: "", unit_factor: 1, quantity: 1, unit_cost: 0, priceMode: "keep" }; }
 function addDraftLine(): void { draftLines.value.push(newLine()); }
-function productOptions(line: DraftLine): Product[] { return productsStore.list.filter((product) => !draftLines.value.some((other) => other !== line && other.product?.id === product.id)); }
+function productOptions(line: DraftLine): Product[] {
+  // Same product may appear in several purchase units (e.g. cartons + pieces);
+  // exact duplicate rows (same product + same unit) are rejected at save.
+  return [...productsStore.list];
+}
 function pickUnit(line: DraftLine, unit?: ProductUnit): void {
   if (!unit) return;
   const oldFactor = Number(line.unit_factor) > 0 ? Number(line.unit_factor) : 1;
-  line.unit_cost = convertUnitPrice(line.unit_cost, oldFactor, unit.factor);
+  // سعر الشراء يتبع الوحدة المختارة نفسها (آخر سعر شراء مسجل عليها).
+  const unitLastCost = line.product ? unitPurchasePrice(line.product, unit) : null;
+  line.unit_cost = unitLastCost !== null && unitLastCost !== undefined
+    ? unitLastCost
+    : convertUnitPrice(line.unit_cost, oldFactor, unit.factor);
   line.unit_id = unit.id; line.unit_name = unit.name; line.unit_factor = unit.factor;
 }
 function pickProduct(line: DraftLine, product?: Product): void {
@@ -209,13 +230,32 @@ function priceDecision(line: DraftLine): { mode: "keep" } | { mode: "proposed"; 
   if (!line.product || line.priceMode === "keep") return { mode: "keep" };
   return proposal === null ? { mode: "keep" } : { mode: "proposed", approvedProposed: proposal, price: toNum(line.approvedProposal ?? proposal) };
 }
-function previewLine(line: DraftLine): { avg: number; proposed: number | null } {
-  if (!line.product) return { avg: 0, proposed: null };
-  const stock = toNum(line.product.stock_quantity);
-  const added = toNum(line.quantity) * Number(line.unit_factor || 1);
-  const baseCost = toNum(line.unit_cost) / Number(line.unit_factor || 1);
-  const avg = stock <= 0 ? baseCost : (stock * toNum(line.product.cost_price) + added * baseCost) / (stock + added);
-  return { avg: round2(avg), proposed: proposedSellingPrice(line.product.cost_price, line.product.price, avg).proposed };
+function previewLine(line: DraftLine): { avg: number; proposed: number | null; baseQty: number; baseCost: number } {
+  if (!line.product) return { avg: 0, proposed: null, baseQty: 0, baseCost: 0 };
+  // Same canonical helpers as the committed transaction (no rounding drift).
+  const baseQty = purchaseLineBaseQuantity(line.quantity, line.unit_factor || 1);
+  const baseCost = purchaseLineBaseCost(line.unit_cost, line.unit_factor || 1);
+  // Aggregate sibling lines of the same product so the preview matches the
+  // atomic average (mixed units: cartons + pieces).
+  let totalQty = 0;
+  let totalCost = 0;
+  for (const other of draftLines.value) {
+    if (!other.product || other.product.id !== line.product.id) continue;
+    const q = purchaseLineBaseQuantity(other.quantity, other.unit_factor || 1);
+    const c = purchaseLineBaseCost(other.unit_cost, other.unit_factor || 1);
+    totalQty = round2(totalQty + q);
+    totalCost += q * c;
+  }
+  const combinedCost = totalQty > 0 ? totalCost / totalQty : baseCost;
+  const avg = purchasePreviewAverage(line.product.stock_quantity, line.product.cost_price, totalQty, combinedCost);
+  return { avg: round4(avg), proposed: proposedSellingPrice(line.product.cost_price, line.product.price, avg).proposed, baseQty, baseCost: round4(baseCost) };
+}
+
+function proposalsForProduct(productId: string | undefined): { unitId: string; unitName: string; factor: number; oldAvg: number | null; oldPrice: number | null; newAvg: number | null; rate: number | null; proposed: number | null }[] {
+  const line = draftLines.value.find((l) => l.product?.id === productId);
+  const product = line?.product;
+  if (!product) return [];
+  return purchaseUnitProposals(product as Product, previewLine(line).avg);
 }
 function pricePolicyApplies(line: DraftLine): boolean { return !!line.product && previewLine(line).avg - toNum(line.product.price) > 1e-9; }
 function setPriceMode(line: DraftLine, mode: string): void {

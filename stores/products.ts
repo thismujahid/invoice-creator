@@ -49,51 +49,61 @@ export const useProductsStore = defineStore("products", () => {
     return ok;
   };
 
+  /** Archive a product instead of destructive deletion.
+   *  Products with accounting history (invoices/movements) are never destroyed:
+   *  they are marked inactive so reports keep their integrity. A real supplier
+   *  return is a separate explicit financial workflow — deletion never mints
+   *  cash. The legacy `recover` flag is ignored (no fake supplier_return). */
+  async function archiveProduct(id: string): Promise<{ ok: true } | { ok: false; error: string }> {
+    try {
+      await runTx(async (tx) => {
+        const pRef = doc(db, "products", id);
+        const pSnap = await tx.get(pRef);
+        if (!pSnap.exists()) throw new Error("VALIDATION:المنتج غير موجود.");
+        tx.update(pRef, { is_active: false });
+      });
+      list.value = list.value.map((p) => (p.id === id ? { ...p, is_active: false } : p));
+      return { ok: true };
+    } catch (e) {
+      if (e instanceof Error && e.message.startsWith("VALIDATION:")) {
+        return { ok: false, error: e.message.slice("VALIDATION:".length) };
+      }
+      console.error(e);
+      return { ok: false, error: "تعذر أرشفة المنتج." };
+    }
+  }
+
   /** Atomic delete with optional stock-value recovery to the cashbox.
-   *  Always writes an inventory audit record when stock is destroyed. */
+   *  DEPRECATED: deleting never creates cash (no fake supplier_return).
+   *  Prefer archiveProduct(). Kept for backward compat; `recover` is ignored
+   *  and no cash movement is written. Destroys the doc only when explicitly
+   *  requested by legacy callers. */
   async function deleteProductWithRecovery(
     id: string,
-    recover: boolean,
+    _recover: boolean,
   ): Promise<{ ok: true; recovered: number } | { ok: false; error: string }> {
+    void _recover;
     try {
-      let recovered = 0;
       await runTx(async (tx) => {
         const pRef = doc(db, "products", id);
         const pSnap = await tx.get(pRef);
         if (!pSnap.exists()) throw new Error("VALIDATION:المنتج غير موجود.");
         const data = pSnap.data();
         const stock = round2(toNum(data.stock_quantity));
-        const value = round2(stock * toNum(data.cost_price));
         const now = serverTimestamp();
         const by = (authStore.currentUserKey as string) || null;
-        if (recover && stock > 0 && value > 0) {
-          const cRef = doc(db, "cashbox", "current");
-          const cSnap = await tx.get(cRef);
-          const bal = cSnap.exists() ? round2(Number(cSnap.data().balance || 0)) : 0;
-          tx.set(cRef, { balance: round2(bal + value), updated_at: now }, { merge: true });
-          tx.set(doc(collection(db, "cash_transactions")), {
-            type: "supplier_return",
-            direction: "in",
-            amount: value,
-            product_id: id,
-            reference_type: "product",
-            reference_id: id,
-            reference_label: `مرتجع للمورد ${String(data.name || "منتج")}`,
-            note: `استرجاع منتجات للمورد: ${String(data.name || "")}`,
-            created_by: by,
-            created_at: now,
-          });
-          recovered = value;
-        }
         if (stock > 0) {
           tx.set(doc(collection(db, "inventory_transactions")), {
             type: "manual_adjustment",
             product_id: id,
             product_name: String(data.name || ""),
             quantity: stock,
+            base_quantity: stock,
+            unit_factor: 1,
             direction: "out",
-            unit_cost: round2(toNum(data.cost_price)),
-            note: "حذف المنتج من السجل",
+            unit_cost: null,
+            reason: "product_delete",
+            note: "حذف المنتج من السجل (بدون أثر نقدي — استخدم الأرشفة للمنتجات ذات السجل المحاسبي)",
             created_by: by,
             created_at: now,
           });
@@ -101,7 +111,7 @@ export const useProductsStore = defineStore("products", () => {
         tx.delete(pRef);
       });
       list.value = list.value.filter((p) => p.id !== id);
-      return { ok: true, recovered };
+      return { ok: true, recovered: 0 };
     } catch (e) {
       if (e instanceof Error && e.message.startsWith("VALIDATION:")) {
         return { ok: false, error: e.message.slice("VALIDATION:".length) };
@@ -111,5 +121,5 @@ export const useProductsStore = defineStore("products", () => {
     }
   }
 
-  return { list, loaded, lastFetchedAt, fetchProducts, addProduct, updateProduct, patchCached, upsertCached, invalidateCache, deleteProduct, deleteProductWithRecovery };
+  return { list, loaded, lastFetchedAt, fetchProducts, addProduct, updateProduct, patchCached, upsertCached, invalidateCache, deleteProduct, deleteProductWithRecovery, archiveProduct };
 });

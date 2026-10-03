@@ -118,7 +118,7 @@
                   {{ form.product_name ? formatInvoiceLineName(form.product_name, form.unit_name, form.option) : "—" }}
                 </div>
                 <div class="mt-0.5 text-[11px] text-gray-400">
-                  المتاح بالمخزون: {{ stockOf(form) }}
+                  المتاح بالمخزون: {{ stockOf(form) }} {{ form.unit_name || "وحدة أساسية" }}
                 </div>
                 <div
                   class="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-gray-500"
@@ -135,7 +135,7 @@
                     />
                     <UInput
                       :model-value="qtyText(form)"
-                      inputmode="decimal"
+                      inputmode="numeric"
                       aria-label="الكمية"
                       class="w-20"
                       size="xs"
@@ -165,7 +165,7 @@
                   v-if="qtyExceeds(form)"
                   class="mt-0.5 text-xs font-bold text-red-600"
                 >
-                  تتجاوز المتاح بالمخزون ({{ stockOf(form) }}) — لن تُحفظ
+                  تتجاوز المتاح بالمخزون ({{ stockOf(form) }} {{ form.unit_name || "وحدة أساسية" }}) — لن تُحفظ
                 </div>
               </div>
               <div class="flex shrink-0 gap-1.5">
@@ -250,7 +250,7 @@
                 <UFormField
                   :label="
                     form.product_id
-                      ? `الكمية (المتاح: ${stockOf(form)})`
+                      ? `الكمية (المتاح: ${stockOf(form)} ${form.unit_name || 'وحدة'})`
                       : 'الكمية'
                   "
                 >
@@ -258,7 +258,7 @@
                     <UInput
                       :model-value="qtyText(form)"
                       placeholder="0"
-                      inputmode="decimal"
+                      inputmode="numeric"
                       class="min-w-0 flex-1 text-center"
                       :ui="{
                         base: 'text-center',
@@ -311,7 +311,7 @@
                   />
                   <template v-if="form.product_cost_price" #hint>
                     <span class="text-xs text-gray-500"
-                      >التكلفة ({{ form.product_cost_price }})</span
+                      >متوسط التكلفة: {{ formatePrice(Number(form.product_cost_price ?? 0) * Number(form.unit_factor || 1)) }} ج / {{ form.unit_name || "وحدة" }}</span
                     >
                   </template>
                 </UFormField>
@@ -636,11 +636,25 @@ watch(
 );
 
 function isCostGreaterThanPrice(
-  product: Pick<InvoiceProductLine, "product_price" | "product_cost_price">,
+  product: Pick<InvoiceProductLine, "product_price" | "product_cost_price" | "unit_factor" | "base_cost_snapshot" | "cost_groups">,
 ): boolean {
-  return (
-    Number(product.product_price) < Number(product.product_cost_price)
-  );
+  // Same-unit comparison: selling price (selected unit) vs derived average
+  // cost of the SAME unit (base average × factor).
+  const factor = Number((product as { unit_factor?: unknown }).unit_factor) > 0
+    ? Number((product as { unit_factor?: unknown }).unit_factor)
+    : 1;
+  const groups = (product as { cost_groups?: { base_quantity: unknown; unit_cost: unknown }[] }).cost_groups;
+  let baseAvg: number;
+  if (Array.isArray(groups) && groups.length) {
+    const qty = groups.reduce((s, g) => s + Number(g.base_quantity), 0);
+    baseAvg = qty > 1e-9
+      ? groups.reduce((s, g) => s + Number(g.base_quantity) * Number(g.unit_cost), 0) / qty
+      : Number((product as { base_cost_snapshot?: unknown }).base_cost_snapshot ?? product.product_cost_price);
+  } else {
+    baseAvg = Number((product as { base_cost_snapshot?: unknown }).base_cost_snapshot ?? product.product_cost_price);
+  }
+  if (!Number.isFinite(baseAvg)) return false;
+  return Number(product.product_price) - baseAvg * factor < -1e-9;
 }
 function resetInvoice(): void {
   invoiceData.value = emptyInvoice();
@@ -900,8 +914,8 @@ function onProductModalDone(prod: Product | null | undefined): void {
   productModalLine.value = null;
 }
 // Free-typed quantity drafts (object identity, never persisted).
-// Allows intermediate states like "." or ".5" while typing; valid numbers
-// commit to the line immediately so totals update live.
+// Quantities are integers only; fractional typing stays as a visible draft
+// without committing until the value is a valid integer.
 const qtyDrafts = reactive(new Map<InvoiceProductLine, string>());
 function qtyText(form: InvoiceProductLine): string {
   const d = qtyDrafts.get(form);
@@ -917,8 +931,8 @@ function setQtyText(form: InvoiceProductLine, v: string): void {
     return;
   }
   const n = Number(t);
-  if (!Number.isFinite(n)) {
-    qtyDrafts.set(form, v); // garbage: keep visible, don't commit
+  if (!Number.isFinite(n) || !Number.isInteger(n)) {
+    qtyDrafts.set(form, v); // fractional/garbage: keep visible, don't commit
     return;
   }
   form.product_quantity = Math.max(0, n);
@@ -943,16 +957,17 @@ function stockOf(form: InvoiceProductLine): number {
 function qtyExceeds(form: InvoiceProductLine): boolean {
   return lineBaseQuantity(form) - Number(products.list.find((p) => p.id === form.product_id)?.stock_quantity ?? 0) > 1e-9;
 }
-// Quick +/- steppers in compact view (floor at 0; precise halves via edit mode).
+// Quick +/- steppers (integer quantities only, floor at 0).
 function changeQty(form: InvoiceProductLine, delta: number): void {
-  const next = Number(form.product_quantity || 0) + delta;
+  const next = Math.trunc(Number(form.product_quantity || 0)) + Math.trunc(delta);
   form.product_quantity = Math.max(0, Number.isFinite(next) ? next : 0);
   form.base_quantity = form.product_quantity * Number(form.unit_factor || 1);
+  qtyDrafts.delete(form);
 }
-// Step matches the quantity shape: whole numbers step by 1,
-// fractional (KG) quantities step by 0.5.
-function stepOf(form: InvoiceProductLine): number {
-  return Number.isInteger(Number(form.product_quantity || 0)) ? 1 : 0.5;
+// Quantities are integers — step is always 1.
+function stepOf(_form: InvoiceProductLine): number {
+  void _form;
+  return 1;
 }
 // Explicit lock: collapse the line, then auto-append a fresh line on top
 // so the entry flow continues (only when no empty line exists).

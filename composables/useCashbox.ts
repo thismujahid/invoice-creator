@@ -85,7 +85,9 @@ export const useCashbox = defineStore("cashbox", () => {
   }
 
   /** Atomic balance mutation + immutable ledger record (F29).
-   *  Never allow negative balance via normal ops (opening excluded). */
+   *  Never allow negative balance via normal ops (opening excluded).
+   *  Non-opening ops require an initialized cashbox; opening is enforced
+   *  transactionally (not via client flag) so concurrent tabs can't double-apply. */
   async function adjustCash(input: CashAdjustInput): Promise<{ ok: true } | { ok: false; error: string }> {
     const amount = round2(input.amount);
     if (!Number.isFinite(amount) || amount <= 0) {
@@ -96,6 +98,11 @@ export const useCashbox = defineStore("cashbox", () => {
       await runTx(async (tx) => {
         const ref = CASHBOX_REF();
         const snap = await tx.get(ref);
+        if (input.type === "opening_balance") {
+          if (snap.exists()) throw new Error("ALREADY_INITIALIZED");
+        } else if (!snap.exists()) {
+          throw new Error("CASHBOX_NOT_INITIALIZED");
+        }
         const current = snap.exists() ? round2(Number(snap.data().balance || 0)) : 0;
         if (input.direction === "out" && input.type !== "opening_balance" && current < amount) {
           throw new Error("INSUFFICIENT_FUNDS");
@@ -136,14 +143,20 @@ export const useCashbox = defineStore("cashbox", () => {
       if (e instanceof Error && e.message === "INSUFFICIENT_FUNDS") {
         return { ok: false, error: "الرصيد الحالي لا يكفي لهذه العملية." };
       }
+      if (e instanceof Error && e.message === "ALREADY_INITIALIZED") {
+        return { ok: false, error: "الخزنة مهيأة مسبقاً." };
+      }
+      if (e instanceof Error && e.message === "CASHBOX_NOT_INITIALIZED") {
+        return { ok: false, error: "هيّئ الخزنة بالرصيد الافتتاحي أولاً." };
+      }
       console.error(e);
       return { ok: false, error: "تعذر حفظ العملية، لم يتم تعديل الخزنة أو المخزون." };
     }
   }
 
-  /** One-time opening balance (idempotent — refuses if cashbox exists). */
+  /** One-time opening balance — idempotency enforced INSIDE the transaction
+   *  (client flag is only a fast-path; two tabs/devices can't double-apply). */
   async function ensureOpeningBalance(amount: number, note?: string | null) {
-    if (initialized.value) return { ok: false as const, error: "الخزنة مهيأة مسبقاً." };
     return adjustCash({ type: "opening_balance", direction: "in", amount, note: note || "رصيد افتتاحي" });
   }
 

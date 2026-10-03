@@ -1,5 +1,5 @@
 import type { Invoice } from "~/types";
-import { grossProfitOf, invoiceTotals, lineBaseQuantity, outstandingDebtOf, round2, toNum } from "./finance.ts";
+import { getInvoiceBreakdown, grossProfitOf, invoiceTotals, lineBaseQuantity, outstandingDebtOf, round2, toNum } from "./finance.ts";
 
 export interface InvoiceStats {
   total_sales: number;
@@ -38,6 +38,7 @@ export function invoicePaymentStatus(invoice: Invoice): InvoicePaymentStatus {
 export function invoiceStatsOf(invoice: Invoice | null | undefined): InvoiceStats {
   if (!invoice) return { ...ZERO_INVOICE_STATS };
   const totals = invoiceTotals(invoice);
+  const breakdown = getInvoiceBreakdown(invoice);
   const remaining = outstandingDebtOf(invoice);
   const paid = invoice.paid_amount === null || invoice.paid_amount === undefined
     ? round2(Math.max(0, totals.net - remaining))
@@ -50,9 +51,13 @@ export function invoiceStatsOf(invoice: Invoice | null | undefined): InvoiceStat
   }, 0));
   const status = invoicePaymentStatus(invoice);
   return {
-    total_sales: totals.net,
-    gross_sales: totals.gross,
-    total_discount: totals.discountValue,
+    // Previous customer debt (previousBalance) is excluded from sales/revenue:
+    // only the current sale (lines + current extras, discount-allocated) counts.
+    total_sales: breakdown.salesNet,
+    gross_sales: breakdown.salesGross,
+    total_discount: totals.gross > 1e-9 && breakdown.salesGross > 0
+      ? round2((totals.discountValue * breakdown.salesGross) / totals.gross)
+      : totals.discountValue,
     total_paid: paid,
     outstanding_customer_debt: remaining,
     total_cost: totalCost,

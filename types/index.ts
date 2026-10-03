@@ -23,6 +23,8 @@ export interface Product {
   base_unit_id?: string | null;
   base_unit_name?: string | null;
   units?: ProductUnit[];
+  /** Soft archive flag: inactive products keep historical integrity. */
+  is_active?: boolean | null;
   /** Latest inventory movement linked to a stock change. */
   last_inventory_transaction_id?: string | null;
   /** Purchase invoice that authorizes the latest purchase stock/cost update. */

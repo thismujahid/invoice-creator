@@ -343,7 +343,7 @@ export const useMigration = defineStore("migration", () => {
         outstanding_debt: 0,
       };
       aggregate.invoice_count += 1;
-      aggregate.total_sales = round2(aggregate.total_sales + totals.total);
+      aggregate.total_sales = round2(aggregate.total_sales + totals.sales);
       aggregate.outstanding_debt = round2(aggregate.outstanding_debt + totals.remaining);
       aggregates.set(id, aggregate);
     }

@@ -24,7 +24,7 @@
           :model-value="numOrUndef(productForm.count)"
           placeholder="العدد"
           :min="0"
-          :step="0.01"
+          :step="1"
           size="lg"
           class="w-full"
           :disabled="saving"
@@ -62,12 +62,12 @@
             <div class="min-w-0 text-xs">
               <span class="font-bold">
                 {{ productForm.base_unit_name?.trim() || "وحدة" }}
-                <span class="font-normal text-gray-400">(أساسية)</span>
+                <span class="font-normal text-gray-400">(الوحدة الأساسية)</span>
               </span>
               <span class="mt-0.5 block text-gray-500">
-                بيع {{ baseSalePrice == null ? "—" : formatePrice(baseSalePrice) }}
-                ·
-                شراء {{ basePurchasePrice == null ? "—" : formatePrice(basePurchasePrice) }}
+                سعر البيع {{ baseSalePrice == null ? "—" : `${formatePrice(baseSalePrice)} ج` }}
+                · متوسط التكلفة {{ avgBaseText }}
+                · آخر سعر شراء {{ basePurchasePrice == null ? "—" : `${formatePrice(basePurchasePrice)} ج` }}
               </span>
             </div>
             <div class="flex shrink-0 gap-1">
@@ -89,14 +89,15 @@
             class="flex items-center justify-between gap-2 rounded-lg border border-gray-100 p-2"
           >
             <div class="min-w-0 text-xs">
-              <span class="font-bold">{{ unit.name?.trim() || "وحدة جديدة" }}</span>
+              <span class="font-bold">{{ unit.name?.trim() || "وحدة جديدة" }} × {{ unit.factor }} {{ productForm.base_unit_name?.trim() || "وحدة" }}</span>
               <span class="text-gray-400">
-                تحتوى {{ unit.factor }} {{ productForm.base_unit_name?.trim() || "وحدة" }} · {{ unitUsageLabel(unit.usage) }}
+                معامل التحويل ×{{ unit.factor }} · {{ unitUsageLabel(unit.usage) }}
               </span>
               <span class="mt-0.5 block text-gray-500">
-                بيع {{ !unit.can_sell ? "لا تباع" : unit.selling_price == null ? "—" : formatePrice(unit.selling_price) }}
-                ·
-                شراء {{ unit.purchase_price == null ? "—" : formatePrice(unit.purchase_price) }}
+                سعر البيع {{ !unit.can_sell ? "لا تباع" : unit.selling_price == null ? "—" : `${formatePrice(unit.selling_price)} ج` }}
+                · متوسط التكلفة {{ unitAvgText(unit) }}
+                · آخر سعر شراء {{ unit.purchase_price == null ? "—" : `${formatePrice(unit.purchase_price)} ج` }}
+                <span v-if="unit.can_sell && unit.selling_price != null">· هامش الربح {{ unitMarginText(unit) }}</span>
               </span>
             </div>
             <div class="flex shrink-0 gap-1">
@@ -145,7 +146,7 @@
             v-model="thresholdInput"
             placeholder="5"
             :min="0"
-            :step="0.01"
+            :step="1"
             size="lg"
             class="min-w-0 flex-1"
             :disabled="saving"
@@ -171,8 +172,8 @@
           <UFormField v-if="!unitDraft.isBase" label="تحتوي وحدات أساسية" required>
             <UInputNumber
               v-model="unitDraft.factor"
-              :min="1"
-              :step="0.01"
+              :min="2"
+              :step="1"
               size="lg"
               class="w-full"
               dir="ltr"
@@ -363,6 +364,27 @@ function unitUsageLabel(usage: unknown): string {
   if (usage === "purchase") return "شراء فقط";
   return "شراء وبيع";
 }
+// Canonical display: average cost derived from base average (never stored per-unit).
+const avgBaseValue = computed(() => {
+  const raw = (productForm.value.cost_price ?? basePurchasePrice.value) as unknown;
+  const v = Number(raw);
+  return Number.isFinite(v) ? v : null;
+});
+const avgBaseText = computed(() => (avgBaseValue.value === null ? "—" : `${formatePrice(avgBaseValue.value)} ج`));
+function unitAvgText(unit: { factor: unknown }): string {
+  if (avgBaseValue.value === null) return "—";
+  const f = Number(unit.factor);
+  if (!Number.isFinite(f) || f <= 0) return "—";
+  return `${formatePrice(avgBaseValue.value * f)} ج`;
+}
+function unitMarginText(unit: { selling_price: unknown; factor: unknown }): string {
+  if (avgBaseValue.value === null || unit.selling_price === null || unit.selling_price === undefined) return "—";
+  const f = Number(unit.factor);
+  const avg = avgBaseValue.value * (Number.isFinite(f) && f > 0 ? f : 1);
+  if (!(avg > 0)) return "—";
+  const rate = (Number(unit.selling_price) - avg) / avg;
+  return `${Math.round(rate * 10000) / 100}%`;
+}
 // Unit editor modal: one draft edited in a focused dialog (mobile-friendly
 // slideover) instead of cramped inline grid inputs.
 type UnitDraft = EditableProductUnit & { key: number | "base" | "new"; isBase: boolean };
@@ -439,8 +461,8 @@ function confirmUnitModal(): void {
     unitModalError.value = "اسم الوحدة مطلوب.";
     return;
   }
-  if (!d.isBase && !(Number(d.factor) > 1 && Number.isFinite(Number(d.factor)))) {
-    unitModalError.value = "معامل التحويل يجب أن يكون أكبر من 1.";
+  if (!d.isBase && (!Number.isInteger(Number(d.factor)) || !(Number(d.factor) > 1))) {
+    unitModalError.value = "معامل التحويل يجب أن يكون رقمًا صحيحًا أكبر من 1.";
     return;
   }
   if (
@@ -566,11 +588,16 @@ function validate(): boolean {
   }
   const countNeg = positiveNumberRule(productForm.value.count);
   if (countNeg !== true) e.count = countNeg;
+  else if (productForm.value.count !== null && productForm.value.count !== undefined && !Number.isInteger(Number(productForm.value.count))) {
+    e.count = "العدد يجب أن يكون رقمًا صحيحًا.";
+  }
   const thr: unknown = thresholdInput.value;
   if (thr !== null && thr !== undefined && thr !== "") {
     const thrNum = Number(thr);
     if (!Number.isFinite(thrNum) || thrNum < 0) {
       e.low_stock_threshold = "مؤشر النقص يجب أن يكون صفرًا أو رقمًا موجبًا.";
+    } else if (!Number.isInteger(thrNum)) {
+      e.low_stock_threshold = "مؤشر النقص يجب أن يكون رقمًا صحيحًا.";
     }
   }
   if (!productForm.value.base_unit_name?.trim())
@@ -584,6 +611,7 @@ function validate(): boolean {
         Number(unit.purchase_price) < 0);
     if (
       !unit.name.trim() ||
+      !Number.isInteger(Number(unit.factor)) ||
       !(Number(unit.factor) > 1) ||
       !Number.isFinite(Number(unit.factor)) ||
       unitIds.has(unit.id) ||

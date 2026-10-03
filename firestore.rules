@@ -8,10 +8,21 @@ service cloud.firestore {
     function isAdmin() { return signedIn() && request.auth.token.email == 'mohamed.mojahead@gmail.com'; }
     function isStaff() { return isAdmin(); }
 
+    // Invoice invariants enforceable in Rules (client transaction code owns
+    // the full accounting orchestration — multi-document atomicity such as
+    // stock/cash/debt consistency and paid<=payable / per-line factor checks
+    // CANNOT be proven by Rules alone (no list iteration/aggregation) and must
+    // eventually move to a trusted server/Cloud Function layer; Rules here
+    // only reject obviously invalid shapes while keeping single-admin compat).
     function validInvoice() {
       return request.resource.data.customer_name is string
         && request.resource.data.products is list
-        && request.resource.data.products.size() > 0;
+        && request.resource.data.products.size() > 0
+        && request.resource.data.products.size() <= 200
+        && (!('paid_amount' in request.resource.data) || request.resource.data.paid_amount == null || (request.resource.data.paid_amount is number && request.resource.data.paid_amount >= 0))
+        && (!('remaining' in request.resource.data) || request.resource.data.remaining == null || (request.resource.data.remaining is number && request.resource.data.remaining >= 0))
+        && (!('debt' in request.resource.data) || request.resource.data.debt == null || (request.resource.data.debt is number && request.resource.data.debt >= 0) || (request.resource.data.debt is string))
+        && (!('discount' in request.resource.data) || request.resource.data.discount == null || (request.resource.data.discount is number && request.resource.data.discount >= 0) || (request.resource.data.discount is string));
     }
 
     function hasFreshInventoryMovement(productId) {

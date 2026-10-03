@@ -168,7 +168,8 @@ export const useDebts = defineStore("debts", () => {
       await runTx(async (tx) => {
         const cRef = doc(db, "cashbox", "current");
         const cSnap = await tx.get(cRef);
-        const bal = cSnap.exists() ? round2(Number(cSnap.data().balance || 0)) : 0;
+        if (!cSnap.exists()) throw new Error("VALIDATION:لا يمكن منح سلفة قبل تهيئة الخزنة.");
+        const bal = round2(Number(cSnap.data().balance || 0));
         if (bal < amount) throw new Error("VALIDATION:رصيد الخزنة لا يكفي مبلغ السلفة.");
         const now = serverTimestamp();
         const loanRef = doc(collection(db, "customer_loans"));
@@ -270,10 +271,11 @@ export const useDebts = defineStore("debts", () => {
             states.push({ a, remaining: rem, paid: round2(toNum(d.paid_amount)), kind: "loan", doc: d });
           }
         }
-        // 2. Cashbox in (always valid direction).
+        // 2. Cashbox in (requires initialized cashbox — no implicit onboarding).
         const cRef = doc(db, "cashbox", "current");
         const cSnap = await tx.get(cRef);
-        const bal = cSnap.exists() ? round2(Number(cSnap.data().balance || 0)) : 0;
+        if (!cSnap.exists()) throw new Error("VALIDATION:لا يمكن تحصيل الديون قبل تهيئة الخزنة.");
+        const bal = round2(Number(cSnap.data().balance || 0));
         const now = serverTimestamp();
         const by = creator();
         // 3. Parent payment doc (id known for cash refs).

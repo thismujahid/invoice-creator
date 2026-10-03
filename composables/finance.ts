@@ -158,6 +158,187 @@ export function lineBaseQuantity(line: Pick<InvoiceProductLine, "product_quantit
   return round2(Number.isFinite(snapshot) && snapshot >= 0 ? snapshot : toNum(line.product_quantity) * lineUnitFactor(line));
 }
 
+/** Canonical unit conversion (base ↔ selected unit).
+ *  factor means: 1 selected unit = factor × base units.
+ *  Stock and average cost are always stored in BASE terms. */
+export function toBaseQuantity(quantityInUnit: unknown, factor: unknown): number {
+  const factorNum = Number(factor);
+  const safe = Number.isFinite(factorNum) && factorNum > 0 ? factorNum : 1;
+  return round2(toNum(quantityInUnit) * safe);
+}
+
+export function toUnitQuantity(baseQuantity: unknown, factor: unknown): number {
+  const factorNum = Number(factor);
+  const safe = Number.isFinite(factorNum) && factorNum > 0 ? factorNum : 1;
+  return toNum(baseQuantity) / safe;
+}
+
+/** Canonical average cost of ONE BASE UNIT (Product.cost_price semantics). */
+export function getBaseUnitCost(product: Pick<Product, "cost_price">): number {
+  return toNum(product.cost_price);
+}
+
+/** Canonical derived average cost of ONE SELECTED UNIT:
+ *  baseAverage × factor. Never persisted per-unit. */
+export function getUnitAverageCost(baseAverageCost: unknown, factor: unknown): number | null {
+  const factorNum = Number(factor);
+  if (!Number.isFinite(factorNum) || factorNum <= 0) return null;
+  return round4(toNum(baseAverageCost) * factorNum);
+}
+
+/** Selected-unit average cost for display/validation (same-unit compare). */
+export function selectedUnitAverageCost(product: Pick<Product, "cost_price">, unit: Pick<ProductUnit, "factor">): number | null {
+  return getUnitAverageCost(getBaseUnitCost(product), unit.factor);
+}
+
+/** True when a selected-unit selling price is below its own average cost. */
+export function isBelowUnitCost(sellingPrice: unknown, baseAverageCost: unknown, factor: unknown): boolean {
+  const avg = getUnitAverageCost(baseAverageCost, factor);
+  if (avg === null) return false;
+  return toNum(sellingPrice) - avg < -1e-9;
+}
+
+/** Line-level revenue/cost/profit (historical-cost aware). */
+export function getLineRevenue(line: Pick<InvoiceProductLine, "product_price" | "product_quantity">): number {
+  return round2(toNum(line.product_price) * toNum(line.product_quantity));
+}
+
+export function getLineCost(line: Pick<InvoiceProductLine, "product_cost_price" | "product_quantity" | "base_quantity" | "cost_groups">): number {
+  if (Array.isArray(line.cost_groups) && line.cost_groups.length) {
+    return round2(line.cost_groups.reduce((sum, group) => sum + toNum(group.base_quantity) * toNum(group.unit_cost), 0));
+  }
+  return round2(toNum(line.product_cost_price) * lineBaseQuantity(line as InvoiceProductLine));
+}
+
+export function getLineProfit(line: Pick<InvoiceProductLine, "product_price" | "product_cost_price" | "product_quantity" | "base_quantity" | "cost_groups">): number {
+  return round2(getLineRevenue(line) - getLineCost(line));
+}
+
+/** Canonical invoice breakdown separating previous debt from current sales.
+ *  - currentSaleSubtotal: Σ line revenue (selected-unit price × qty)
+ *  - invoiceExtras: delivery + feeds + mahros (current charges)
+ *  - previousBalance: debt field (old customer balance, NOT new sales)
+ *  - gross = current + extras + previous
+ *  - discountValue computed on gross (legacy behavior preserved)
+ *  - invoicePayable = gross - discount
+ *  - salesNet: current sale after proportional discount allocation
+ *    (previous debt never inflates sales/revenue/profit). */
+export interface InvoiceBreakdown {
+  currentSaleSubtotal: number;
+  invoiceExtras: number;
+  previousBalance: number;
+  gross: number;
+  discountValue: number;
+  invoicePayable: number;
+  salesNet: number;
+  salesGross: number;
+  paid: number;
+  remaining: number;
+}
+
+export function getInvoiceBreakdown(
+  inv: Pick<Invoice, "products" | "discount" | "discount_percentage" | "debt" | "delivery_price" | "amount_of_animal_feeds" | "amount_of_mahros" | "paid_amount">,
+): InvoiceBreakdown {
+  const lines = Array.isArray(inv.products) ? inv.products : [];
+  const currentSaleSubtotal = round2(lines.reduce((s, l) => s + toNum(l.product_price) * toNum(l.product_quantity), 0));
+  const invoiceExtras = round2(toNum(inv.delivery_price) + toNum(inv.amount_of_animal_feeds) + toNum(inv.amount_of_mahros));
+  const previousBalance = round2(toNum(inv.debt));
+  const gross = round2(currentSaleSubtotal + invoiceExtras + previousBalance);
+  const discountValue = inv.discount_percentage
+    ? round2((gross * toNum(inv.discount)) / 100)
+    : round2(toNum(inv.discount));
+  const invoicePayable = round2(gross - discountValue);
+  const currentGross = round2(currentSaleSubtotal + invoiceExtras);
+  let salesNet = round2(currentGross - discountValue);
+  if (gross > 1e-9 && currentGross > 0) {
+    // Allocate discount proportionally so debt discount never becomes sales.
+    salesNet = round2(currentGross - (discountValue * currentGross) / gross);
+  } else if (gross <= 1e-9) {
+    salesNet = 0;
+  }
+  const paid = round2(toNum(inv.paid_amount));
+  return {
+    currentSaleSubtotal,
+    invoiceExtras,
+    previousBalance,
+    gross,
+    discountValue,
+    invoicePayable,
+    salesNet,
+    salesGross: currentGross,
+    paid,
+    remaining: round2(invoicePayable - paid),
+  };
+}
+
+/** Current-sale total (lines + extras, after proportional discount).
+ *  Use for sales/revenue statistics — never invoiceTotals().net. */
+export function getInvoiceSalesTotal(inv: Parameters<typeof getInvoiceBreakdown>[0]): number {
+  return getInvoiceBreakdown(inv).salesNet;
+}
+
+/** Amount the customer must settle (current sale + previous balance - discount). */
+export function getInvoicePayableTotal(inv: Parameters<typeof getInvoiceBreakdown>[0]): number {
+  return getInvoiceBreakdown(inv).invoicePayable;
+}
+
+/** Purchase-line canonical math (selected unit → base terms, full precision).
+ *  Same helper for preview AND committed transaction. */
+export function purchaseLineBaseQuantity(quantity: unknown, factor: unknown): number {
+  return toBaseQuantity(quantity, factor);
+}
+
+export function purchaseLineBaseCost(unitCost: unknown, factor: unknown): number {
+  const factorNum = Number(factor);
+  const safe = Number.isFinite(factorNum) && factorNum > 0 ? factorNum : 1;
+  return toNum(unitCost) / safe;
+}
+
+export function purchasePreviewAverage(currentStock: unknown, currentAvg: unknown, addedBaseQty: unknown, addedBaseCost: unknown): number {
+  return movingAverageCost(currentStock, currentAvg, addedBaseQty, addedBaseCost);
+}
+
+/** Aggregate multi-unit purchase lines of one product into base terms so the
+ *  weighted average stays correct and deterministic. */
+export function aggregatePurchaseByProduct(
+  lines: { product_id: string; baseQty: number; lineTotal: number }[],
+): Map<string, { baseQty: number; totalCost: number; baseCost: number }> {
+  const map = new Map<string, { baseQty: number; totalCost: number; baseCost: number }>();
+  const sorted = [...lines].sort((a, b) => String(a.product_id).localeCompare(String(b.product_id)));
+  for (const line of sorted) {
+    const entry = map.get(line.product_id) ?? { baseQty: 0, totalCost: 0, baseCost: 0 };
+    entry.baseQty = round2(entry.baseQty + toNum(line.baseQty));
+    entry.totalCost = entry.totalCost + toNum(line.lineTotal);
+    map.set(line.product_id, entry);
+  }
+  for (const entry of map.values()) {
+    entry.baseCost = entry.baseQty > 0 ? entry.totalCost / entry.baseQty : 0;
+  }
+  return map;
+}
+
+/** Selling-price proposals for EVERY sellable unit after an average-cost
+ *  change. Each unit preserves its own previous margin:
+ *  oldUnitAvg = oldBaseAvg × factor, newUnitAvg = newBaseAvg × factor. */
+export function purchaseUnitProposals(
+  product: Pick<Product, "cost_price" | "price" | "units" | "base_unit_id">,
+  newBaseAvg: unknown,
+): { unitId: string; unitName: string; factor: number; oldAvg: number | null; oldPrice: number | null; newAvg: number | null; rate: number | null; proposed: number | null }[] {
+  const units = unitsForProduct(product as Product).filter((u) => u.can_sell !== false);
+  const newAvg = toNum(newBaseAvg);
+  return units.map((unit) => {
+    const factor = Number(unit.factor) > 0 ? Number(unit.factor) : 1;
+    const oldAvg = product.cost_price === null || product.cost_price === undefined ? null : round4(toNum(product.cost_price) * factor);
+    const oldPrice = unitSellingPrice(product as Product, unit);
+    const newUnitAvg = round4(newAvg * factor);
+    if (oldAvg === null || oldPrice === null) {
+      return { unitId: unit.id, unitName: unit.name, factor, oldAvg, oldPrice, newAvg: newUnitAvg, rate: null, proposed: null };
+    }
+    const { rate, proposed } = proposedSellingPrice(oldAvg, oldPrice, newUnitAvg);
+    return { unitId: unit.id, unitName: unit.name, factor, oldAvg, oldPrice, newAvg: newUnitAvg, rate, proposed };
+  });
+}
+
 /** Estimated collected (cash-in-hand) share of gross profit.
  *  Proportional to the paid share of net total — an approximation, since
  *  payments are not tracked per product line. */
@@ -225,6 +406,28 @@ export function applyStockGroup(
   }
   s = round2(s + costQty + plainQty);
   return { stock: s, avg: a };
+}
+
+/** Cash-movement requirements (atomicity invariants, tested pure):
+ *  - A sale with paid > 0 MUST move cash; missing cashbox rejects the op.
+ *  - An edit with any paid delta MUST move cash; missing cashbox rejects it.
+ *  - A cash refund (returns) with amount > 0 requires an initialized cashbox. */
+export function requiresCashForSale(paidAmount: unknown): boolean {
+  return toNum(paidAmount) > 0;
+}
+
+export function requiresCashForEdit(paidDelta: unknown): boolean {
+  return Math.abs(toNum(paidDelta)) > 1e-9;
+}
+
+export function requiresCashForRefund(cashRefund: unknown): boolean {
+  return toNum(cashRefund) > 0;
+}
+
+/** Opening-balance idempotency guard (transactional): existence of the cashbox
+ *  doc itself is the lock — client flags must never be the authority. */
+export function openingBalanceAlreadyApplied(cashboxExists: boolean): boolean {
+  return cashboxExists;
 }
 
 /** Selling-price policy after a purchase (S2): keep the old markup rate
@@ -532,7 +735,10 @@ export function loanStatusOf(paid: unknown, remaining: unknown): "open" | "parti
 }
 
 /** Inventory aggregates for the cashbox dashboard.
- *  Uses stock_quantity ONLY — legacy `count` means pieces-per-package. */
+ *  Uses stock_quantity ONLY — legacy `count` means pieces-per-package.
+ *  - costValue: reliable accounting value (base qty × base average cost).
+ *  - saleValue: EXPECTED sales at BASE-unit price only (forecast, not realized).
+ *    Products with multiple sale units may realize different prices. */
 export function inventoryAggregates(products: Pick<Product, "stock_quantity" | "price" | "cost_price">[]): {
   costValue: number;
   saleValue: number;
@@ -626,4 +832,25 @@ export const useFinance = () => ({
   unitAverageCost,
   unitStockDisplay,
   convertUnitPrice,
+  toBaseQuantity,
+  toUnitQuantity,
+  getBaseUnitCost,
+  getUnitAverageCost,
+  selectedUnitAverageCost,
+  isBelowUnitCost,
+  getLineRevenue,
+  getLineCost,
+  getLineProfit,
+  getInvoiceBreakdown,
+  getInvoiceSalesTotal,
+  getInvoicePayableTotal,
+  purchaseLineBaseQuantity,
+  purchaseLineBaseCost,
+  purchasePreviewAverage,
+  aggregatePurchaseByProduct,
+  purchaseUnitProposals,
+  requiresCashForSale,
+  requiresCashForEdit,
+  requiresCashForRefund,
+  openingBalanceAlreadyApplied,
 });

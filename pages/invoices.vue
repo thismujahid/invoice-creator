@@ -410,7 +410,7 @@
             <div class="min-w-0 text-sm font-bold">{{ formatInvoiceLineName(r.product_name, r.unit_name) }}</div>
             <div class="shrink-0 text-xs text-gray-500">{{ r.unit_name }} • سعر البيع: {{ formatePrice(r.unit_price) }} • المتاح: {{ r.maxQty }}</div>
           </div>
-          <UInputNumber v-model="r.qty" :min="0" :max="r.maxQty" :step="0.01" size="lg" class="w-full" />
+          <UInputNumber v-model="r.qty" :min="0" :max="r.maxQty" :step="1" size="lg" class="w-full" />
           <div class="mt-1 text-xs text-gray-500">قيمة الاسترداد: {{ formatePrice(previewRefund(r)) }}</div>
         </div>
         <UEmpty v-if="!returnRows.length" icon="i-lucide-undo-2" title="لا توجد أصناف قابلة للإرجاع" />
@@ -823,7 +823,7 @@ async function openReturn(inv: Invoice): Promise<void> {
 }
 /** Exact preview refund for a cost-group row: spread over its own lines. */
 function rowRefundValue(r: ReturnRow, ratio: number): number {
-  let need = Math.min(round2(toNum(r.qty)), r.maxQty);
+  let need = Math.min(Math.trunc(round2(toNum(r.qty))), r.maxQty);
   let total = 0;
   for (const ln of r.lines) {
     if (need <= 0) break;
@@ -851,13 +851,13 @@ async function submitReturn(): Promise<void> {
   returnError.value = "";
   returnBusy.value = true;
   try {
-    const res = await returnsApi.createReturn(
-      returnInvoice.value,
-      returnRows.value
-        .map((r) => ({ rowKey: r.key, quantity: Math.min(round2(toNum(r.qty)), r.maxQty) }))
-        .filter((i) => i.quantity > 0),
-      returnNote.value.trim() || null,
-    );
+      const res = await returnsApi.createReturn(
+        returnInvoice.value,
+        returnRows.value
+          .map((r) => ({ rowKey: r.key, quantity: Math.min(Math.trunc(round2(toNum(r.qty))), r.maxQty) }))
+          .filter((i) => i.quantity > 0),
+        returnNote.value.trim() || null,
+      );
     if (!res.ok) {
       returnError.value = res.error;
       return;

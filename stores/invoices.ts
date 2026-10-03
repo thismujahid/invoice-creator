@@ -16,13 +16,21 @@ export const useInvoicesStore = defineStore("invoices", () => {
   const list = ref<Invoice[]>([]);
   const invoiceToEdit = ref<Invoice | undefined>(undefined);
 
-  // Full-collection cache backing true %text% substring search: Firestore
-  // has no middle-match operator, so one bounded read (reused across
-  // keystrokes via TTL) is filtered locally. Invalidated on any write.
+  // Substring search without per-keystroke full scans:
+  // - New docs carry normalized `customer_name_norm` + `customer_phone_digits`
+  //   so prefix queries serve the common case with bounded reads.
+  // - True middle-match still falls back to one TTL-cached full read, but only
+  //   when prefix candidates are insufficient (not on every keystroke path).
   let searchCache: { at: number; docs: { snap: QueryDocumentSnapshot; data: Invoice }[] } | null = null;
   const SEARCH_CACHE_TTL_MS = 3 * 60 * 1000;
   function invalidateCache(): void {
     searchCache = null;
+  }
+  function invoiceSearchKeys(name: unknown, phone: unknown): { customer_name_norm: string; customer_phone_digits: string } {
+    return {
+      customer_name_norm: String(name ?? "").trim().toLocaleLowerCase(),
+      customer_phone_digits: String(phone ?? "").replace(/\D/g, ""),
+    };
   }
   async function readAllInvoicesCached(): Promise<{ snap: QueryDocumentSnapshot; data: Invoice }[]> {
     if (searchCache && Date.now() - searchCache.at < SEARCH_CACHE_TTL_MS) return searchCache.docs;
@@ -30,6 +38,39 @@ export const useInvoicesStore = defineStore("invoices", () => {
     const docs = snapshot.docs.map((d) => ({ snap: d, data: { id: d.id, ...(d.data() as object) } as Invoice }));
     searchCache = { at: Date.now(), docs };
     return docs;
+  }
+  async function readPrefixCandidates(term: string, termDigits: string, pageSize: number): Promise<{ snap: QueryDocumentSnapshot; data: Invoice }[]> {
+    const out = new Map<string, { snap: QueryDocumentSnapshot; data: Invoice }>();
+    const collect = (docs: { snap: QueryDocumentSnapshot; data: Invoice }[]): void => {
+      for (const entry of docs) if (!out.has(entry.snap.id)) out.set(entry.snap.id, entry);
+    };
+    try {
+      const lower = term.toLocaleLowerCase();
+      if (lower) {
+        // Prefix on normalized name (bounded, indexed single-field range).
+        const nameQ = query(
+          collection(db, "invoices"),
+          where("customer_name_norm", ">=", lower),
+          where("customer_name_norm", "<=", `${lower}\uf8ff`),
+          fsLimit(Math.max(pageSize * 2, 25)),
+        );
+        const nameSnap = await getDocs(nameQ);
+        collect(nameSnap.docs.map((d) => ({ snap: d, data: { id: d.id, ...(d.data() as object) } as Invoice })));
+      }
+      if (termDigits) {
+        const phoneQ = query(
+          collection(db, "invoices"),
+          where("customer_phone_digits", ">=", termDigits),
+          where("customer_phone_digits", "<=", `${termDigits}\uf8ff`),
+          fsLimit(Math.max(pageSize * 2, 25)),
+        );
+        const phoneSnap = await getDocs(phoneQ);
+        collect(phoneSnap.docs.map((d) => ({ snap: d, data: { id: d.id, ...(d.data() as object) } as Invoice })));
+      }
+    } catch {
+      // Missing normalized fields/indexes on legacy docs → caller falls back.
+    }
+    return [...out.values()];
   }
 
   function invoicesQuery(filters: Record<string, string | number | boolean | Date | null | undefined>) {
@@ -145,12 +186,8 @@ export const useInvoicesStore = defineStore("invoices", () => {
           : Number(filters.remaining);
       const customerFiltered = !!customerId || (customerName !== "" && phoneStr !== "");
       if (customerFiltered || term !== "") {
-        // Scoped fetch uses index-free server reads; candidates are merged,
-        // intersected, sorted and paginated client-side.
-        // - Customer-only scope: targeted equality queries (cheap).
-        // - Any search term: full-collection scan (cached) because Firestore
-        //   cannot match substrings server-side — this is what makes %text%
-        //   middle/end matching correct instead of prefix-only.
+        // Scoped fetch: bounded prefix queries first (cheap), full cached scan
+        // only as a middle-match fallback when prefixes are insufficient.
         const seen = new Map<string, { snap: QueryDocumentSnapshot; data: Invoice }>();
         const collect = (docs: { snap: QueryDocumentSnapshot; data: Invoice }[]): void => {
           for (const entry of docs) {
@@ -158,7 +195,10 @@ export const useInvoicesStore = defineStore("invoices", () => {
           }
         };
         if (term !== "") {
-          collect(await readAllInvoicesCached());
+          collect(await readPrefixCandidates(term, termDigits, pageSize));
+          // Fallback preserves %text% middle-match correctness for legacy docs
+          // lacking normalized keys or non-prefix hits — still TTL-cached.
+          if (seen.size < pageSize) collect(await readAllInvoicesCached());
         } else {
           const subqueries: Query[] = [];
           if (customerId) subqueries.push(query(collection(db, "invoices"), where("customer_id", "==", customerId)));
@@ -309,12 +349,17 @@ export const useInvoicesStore = defineStore("invoices", () => {
           }
           st.stock = round2(st.stock - need);
         }
-        // 2. Cashbox state (missing doc = not onboarded → skip cash, flag it).
+        // 2. Cashbox state. Atomicity invariant: a paid invoice MUST have its
+        // cash movement. Missing cashbox + paid > 0 rejects the whole op —
+        // no invoice, no stock change, no partial effects.
         const cashRef = doc(db, "cashbox", "current");
         const cashSnap = await tx.get(cashRef);
         const cashReady = cashSnap.exists();
         const cashBal = cashReady ? round2(Number(cashSnap.data()?.balance || 0)) : 0;
-        cashSkipped = paid > 0 && !cashReady;
+        if (paid > 0 && !cashReady) {
+          throw new Error("VALIDATION:لا يمكن حفظ فاتورة مدفوعة قبل تهيئة الخزنة. هيّئ الخزنة أولاً ثم أعد الحفظ.");
+        }
+        cashSkipped = false;
         // 3. Invoice doc (id known upfront for log references).
         // Line costs are snapshotted from the txn-read products above —
         // form costs may predate a newer purchase and must not leak in.
@@ -334,7 +379,8 @@ export const useInvoicesStore = defineStore("invoices", () => {
           ...(payload as Record<string, unknown>),
           products: pricedLines,
           inventory_applied: true,
-          cashbox_applied: !(paid > 0 && !cashReady),
+          cashbox_applied: paid > 0,
+          ...invoiceSearchKeys(payload.customer_name, payload.customer_phone),
         });
         // 3b. Debt summary for the lightweight debt book (same txn).
         writeDebtSummary(tx, db, {
@@ -349,7 +395,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
         const newSummary = summarizeInvoice(payload as Invoice);
         writeCustomerSummaryDelta(tx, db, payload as Invoice, {
           invoice_count: 1,
-          total_sales: newSummary.total,
+          total_sales: newSummary.sales,
           outstanding_debt: newSummary.remaining,
         });
         // 4. Stock (final balances from step 1) + per-line inventory logs.
@@ -528,18 +574,19 @@ export const useInvoicesStore = defineStore("invoices", () => {
             throw new Error(`VALIDATION:الكمية المطلوبة تتجاوز المخزون المتاح لمنتج ${d.product_name}.`);
           }
         }
-        // 3. Cashbox state.
+        // 3. Cashbox state. Any paid delta requires an initialized cashbox;
+        // otherwise the whole edit is rejected (no partial effects).
         const cashRef = doc(db, "cashbox", "current");
         const cashSnap = await tx.get(cashRef);
         const cashReady = cashSnap.exists();
         const cashBal = cashReady ? round2(Number(cashSnap.data()?.balance || 0)) : 0;
-        if (paidDelta < 0 && !cashReady) {
-          throw new Error("VALIDATION:لا يمكن تقليل المبلغ المدفوع قبل تهيئة الخزنة.");
+        if (paidDelta !== 0 && !cashReady) {
+          throw new Error("VALIDATION:لا يمكن تغيير المبلغ المدفوع قبل تهيئة الخزنة. هيّئ الخزنة أولاً ثم أعد الحفظ.");
         }
         if (paidDelta < 0 && invoiceEditCashOutflowError(cashBal, paidDelta)) {
           throw new Error("VALIDATION:رصيد الخزنة لا يكفي لتقليل المبلغ المدفوع بهذه القيمة.");
         }
-        cashSkipped = paidDelta !== 0 && !cashReady;
+        cashSkipped = false;
         const now = serverTimestamp();
         const by = (authStore.currentUserKey as string) || null;
         // 4. Invoice doc.
@@ -547,7 +594,8 @@ export const useInvoicesStore = defineStore("invoices", () => {
           ...(effectivePayload as Record<string, unknown>),
           products: effectiveLines,
           inventory_applied: true,
-          cashbox_applied: !(paidDelta !== 0 && !cashReady),
+          cashbox_applied: true,
+          ...invoiceSearchKeys(effectivePayload.customer_name, effectivePayload.customer_phone),
         });
         writeDebtSummary(tx, db, {
           invoice_id: id,
@@ -562,18 +610,18 @@ export const useInvoicesStore = defineStore("invoices", () => {
         writeInvoiceStatsDelta(tx, db, oldInvoice, effectivePayload as Invoice);
         if (oldCustomerSummaryId === newCustomerSummaryId) {
           writeCustomerSummaryDelta(tx, db, effectivePayload as Invoice, {
-            total_sales: round2(newSummary.total - oldSummary.total),
+            total_sales: round2(newSummary.sales - oldSummary.sales),
             outstanding_debt: round2(newSummary.remaining - oldSummary.remaining),
           });
         } else {
           writeCustomerSummaryDelta(tx, db, orig as unknown as Invoice, {
             invoice_count: -1,
-            total_sales: -oldSummary.total,
+            total_sales: -oldSummary.sales,
             outstanding_debt: -oldSummary.remaining,
           });
           writeCustomerSummaryDelta(tx, db, effectivePayload as Invoice, {
             invoice_count: 1,
-            total_sales: newSummary.total,
+            total_sales: newSummary.sales,
             outstanding_debt: newSummary.remaining,
           });
         }

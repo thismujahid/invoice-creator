@@ -60,14 +60,14 @@
             <strong>الإجمالي {{ invoiceData.discount ? "النهائي" : "" }}/</strong>
             <span>{{ formatePrice(calcTotal(invoiceData) - discountAmount) }}</span>
           </div>
-          <!-- HOME delta: paid / remaining rows (debts feature). -->
-          <div v-if="invoiceData.paid_amount">
+          <!-- paid / remaining rows: 0 is a valid financial value, never hide it. -->
+          <div v-if="invoiceData.paid_amount !== null && invoiceData.paid_amount !== undefined">
             <strong>المدفوع/</strong>
             <span>{{ formatePrice(invoiceData.paid_amount) }}</span>
           </div>
-          <div v-if="invoiceData.paid_amount">
+          <div v-if="invoiceData.paid_amount !== null && invoiceData.paid_amount !== undefined">
             <strong>المتبقي/</strong>
-            <span>{{ formatePrice((calcTotal(invoiceData) - discountAmount) - Number(invoiceData.paid_amount)) }}</span>
+            <span>{{ formatePrice((calcTotal(invoiceData) - discountAmount) - Number(invoiceData.paid_amount ?? 0)) }}</span>
           </div>
         </div>
       </div>
@@ -185,9 +185,21 @@ async function startPrint(saveOnly?: boolean) {
   const _time = resolveTime(props.invoiceData.date, props.invoiceData.time);
   void _time;
   if (!costConfirmed.value) {
-    const belowCost = lines.some(
-      (element) => Number(element.product_price) < Number(element.product_cost_price)
-    );
+    // Same-unit comparison: selected-unit price vs derived selected-unit
+    // average (base average × factor). Never compare against base cost directly.
+    const belowCost = lines.some((element) => {
+      const factor = Number(element.unit_factor) > 0 ? Number(element.unit_factor) : 1;
+      const baseCost = Number(element.product_cost_price);
+      if (!Number.isFinite(baseCost)) return false;
+      // product_cost_price on the form may already be a selected-unit average
+      // for legacy lines; prefer cost_groups/base snapshot when available.
+      const historicalBase = Array.isArray(element.cost_groups) && element.cost_groups.length
+        ? element.cost_groups.reduce((s, g) => s + Number(g.base_quantity) * Number(g.unit_cost), 0) /
+          Math.max(1e-9, element.cost_groups.reduce((s, g) => s + Number(g.base_quantity), 0))
+        : Number(element.base_cost_snapshot ?? element.product_cost_price);
+      const avgForUnit = Number.isFinite(historicalBase) ? historicalBase * factor : baseCost;
+      return Number(element.product_price) - avgForUnit < -1e-9;
+    });
     if (belowCost) {
       pendingSaveOnly.value = saveOnly;
       costConfirmOpen.value = true;
@@ -224,9 +236,6 @@ async function doSave(saveOnly?: boolean) {
         notify(res.error, "error");
         return;
       }
-      if (res.cashSkipped) {
-        notify("تم الحفظ بدون حركة نقدية — الخزنة غير مهيأة بعد.", "error");
-      }
       emit("saved", id);
     } else {
       // Atomic create: invoice + stock + inventory logs + cashbox (F9).
@@ -236,9 +245,6 @@ async function doSave(saveOnly?: boolean) {
         printing.value = false;
         notify(res.error, "error");
         return;
-      }
-      if (res.cashSkipped) {
-        notify("تم الحفظ بدون حركة نقدية — الخزنة غير مهيأة بعد.", "error");
       }
       emit("saved", res.id);
     }

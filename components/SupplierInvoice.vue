@@ -15,7 +15,7 @@
       </thead>
       <tbody>
         <tr v-for="(item, index) in invoice.items || []" :key="`${item.product_id}-${index}`">
-          <td class="text-start">{{ item.product_name }}</td>
+          <td class="text-start">{{ item.product_name }}<div class="text-[11px] font-normal text-gray-500">المعامل ×{{ item.unit_factor || 1 }} · تكلفة الأساسية {{ item.base_unit_cost == null ? "—" : `${formatePrice(item.base_unit_cost)} ج` }} · الأساسية {{ item.base_quantity ?? "—" }}</div></td>
           <td>{{ item.unit_name || "وحدة" }}</td>
           <td>{{ item.quantity }}</td>
           <td>{{ formatePrice(item.unit_cost) }}</td>

@@ -99,10 +99,10 @@
               <th class="p-2 text-start font-medium">الاسم</th>
               <th class="p-2 text-start font-medium">سعر البيع</th>
               <th class="p-2 text-start font-medium">
-                سعر التكلفة
+                متوسط التكلفة
               </th>
               <th class="p-2 text-start font-medium">العدد</th>
-              <th class="p-2 text-start font-medium">المخزون</th>
+              <th class="p-2 text-start font-medium">المخزون (أساسية)</th>
               <th class="p-2 text-start font-medium">الأدوات</th>
             </tr>
           </thead>
@@ -120,7 +120,7 @@
                   @update:model-value="p.id && toggleSelect({ id: p.id })"
                 />
               </td>
-              <td class="p-2 font-medium">{{ p.name }}</td>
+              <td class="p-2 font-medium">{{ p.name }}<div v-if="p.cost_detail" class="text-[11px] font-normal text-gray-400">{{ p.cost_detail }}</div></td>
               <td class="p-2">{{ p.price }}</td>
               <td class="p-2 text-gray-600">
                 {{ p.cost_price }}
@@ -130,7 +130,7 @@
                 class="p-2 font-semibold"
                 :class="p.stock === null ? 'text-gray-400' : ''"
               >
-                {{ p.stock ?? "—" }}
+                {{ p.stock ?? "—" }} {{ p.base_name }}
               </td>
               <td class="p-2" @click.stop>
                 <div class="flex gap-2">
@@ -203,13 +203,13 @@
                 <div class="truncate font-bold">{{ p.name }}</div>
                 <div class="text-sm text-gray-500">
                   بيع: {{ p.price }}
-                  <span>| تكلفة: {{ p.cost_price }}</span>
+                  <span>| {{ p.cost_price }}</span>
                 </div>
                 <div
                   class="text-xs"
                   :class="p.stock === null ? 'text-gray-400' : 'text-gray-500'"
                 >
-                  المخزون: {{ p.stock ?? "غير مُدخل" }}
+                  {{ p.stock_label }}
                 </div>
               </div>
             </div>
@@ -276,31 +276,23 @@
         size="sm"
       />
     </div>
-    <UiAppDialog v-model:open="deleteOpen" title="هل أنت متأكد">
-      <p class="mb-4 text-gray-600">
-        أنت علي وشك حذف المنتج {{ confirmDelete?.name }}
+    <UiAppDialog v-model:open="deleteOpen" title="أرشفة / حذف المنتج">
+      <p class="mb-2 text-gray-600">
+        {{ confirmDelete?.name }} — الأرشفة تحفظ السجل المحاسبي (مفضلة للمنتجات ذات الفواتير/الحركات).
       </p>
-      <label
-        v-if="deleteStock > 0"
-        class="mb-4 flex cursor-pointer items-start gap-2 rounded-lg border border-gray-200 p-2.5"
-      >
-        <UCheckbox v-model="recoverToCashbox" class="mt-0.5" />
-        <span class="text-sm">
-          استرداد قيمة الكمية المتبقية ({{ deleteStock }}) للخزنة —
-          <strong>{{ formatePrice(deleteRecoverValue) }}</strong>
-          <span class="block text-xs text-gray-500"
-            >عملية "استرجاع منتجات للمورد" تُسجل في الخزنة</span
-          >
-        </span>
-      </label>
+      <p v-if="deleteStock > 0" class="mb-4 text-xs text-gray-500">
+        المخزون المتبقي: {{ deleteStock }} {{ deleteTarget?.base_unit_name || "وحدة أساسية" }} — الحذف لا ينشئ نقدًا؛ إرجاع المورد عملية مالية مستقلة.
+      </p>
       <template #footer>
         <div class="flex w-full flex-col gap-2">
+          <UButton color="warning" block :loading="deleting" @click="archiveConfirmed">أرشفة (موصى به)</UButton>
           <UButton
             color="error"
+            variant="soft"
             block
             :loading="deleting"
             @click="deleteConfirmed"
-            >حذف</UButton
+            >حذف نهائي</UButton
           >
           <UButton
             color="neutral"
@@ -324,11 +316,6 @@
           variant="soft"
           :title="`المخزون الحالي: ${purchaseCountText}`"
         />
-        <UAlert
-          color="neutral"
-          variant="soft"
-          title="ستُسجل كامل قيمة البضاعة في فاتورة الشراء، ويُخصم المدفوع الآن فقط من الخزنة."
-        />
         <UFormField v-if="purchaseUnits.length > 1" label="وحدة الشراء">
           <USelectMenu :model-value="purchaseUnit" :items="purchaseUnits" label-key="name" by="id" :search-input="false" class="w-full" @update:model-value="(unit) => selectPurchaseUnit(unit)" />
         </UFormField>
@@ -339,8 +326,8 @@
         >
           <UInputNumber
             v-model="purchaseQty"
-            :min="0"
-            :step="0.01"
+            :min="1"
+            :step="1"
             size="lg"
             class="w-full"
           />
@@ -360,23 +347,31 @@
         </UFormField>
         <div class="space-y-1 rounded-lg bg-gray-50 p-3 text-sm">
           <div class="flex justify-between">
-            <span>إجمالي الفاتورة</span
+            <span>إجمالي الشراء</span
             ><b>{{ formatePrice(purchaseTotal) }} ج</b>
           </div>
           <div class="flex justify-between">
             <span>رصيد الخزنة</span><b>{{ formatePrice(cashBalance) }} ج</b>
           </div>
+          <div class="flex items-center justify-between gap-2">
+            <span>المدفوع الآن</span>
+            <UInputNumber
+              :model-value="purchasePaid"
+              :min="0"
+              :max="Math.min(purchaseTotal, cashBalance)"
+              :step="0.01"
+              size="sm"
+              class="w-40"
+              @update:model-value="setPurchasePaid"
+            />
+          </div>
+          <p v-if="purchasePaidError" class="text-xs text-red-600">{{ purchasePaidError }}</p>
           <div class="flex justify-between">
             <span>الباقي المستحق</span
             ><b class="text-amber-700"
               >{{ formatePrice(purchaseTotal - (purchasePaid ?? 0)) }} ج</b
             >
           </div>
-        </div>
-        <div class="text-sm text-gray-600">
-          متوسط التكلفة المتوقع بعد الشراء:
-          {{ formatePrice(purchasePreviewAvg) }} (الحالي:
-          {{ formatePrice(purchaseCurrentCost) }})
         </div>
         <!-- Selling-price policy: shown only when the new average exceeds price -->
         <div
@@ -404,6 +399,13 @@
                 )
               }}</span
             >
+          </div>
+          <div v-if="purchaseProposals.length > 1" class="space-y-1 rounded-lg bg-white/70 p-2 text-xs">
+            <div class="font-bold">المقترح لكل وحدة قابلة للبيع:</div>
+            <div v-for="p in purchaseProposals" :key="p.unitId" class="flex justify-between gap-2">
+              <span>{{ p.unitName }} ×{{ p.factor }}: {{ p.oldPrice === null ? "—" : formatePrice(p.oldPrice) }} → {{ p.proposed === null ? "يدوي" : formatePrice(p.proposed) }} ج</span>
+              <span class="text-gray-500">هامش {{ p.rate === null ? "—" : `${Math.round(p.rate * 10000) / 100}%` }}</span>
+            </div>
           </div>
           <URadioGroup
             v-model="priceChoice"
@@ -440,12 +442,17 @@
         </div>
         <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
           <UFormField label="المورد (اختياري)">
-            <UInput
-              v-model="purchaseSupplier"
-              placeholder="اسم المورد"
-              size="lg"
+            <USelectMenu
+              :model-value="(purchaseSupplier ?? null) as Supplier | undefined"
+              :items="supplierMenuItems"
+              label-key="name"
+              by="id"
+              placeholder="اختر المورد"
+              :search-input="{ placeholder: 'بحث عن مورد...', icon: 'i-lucide-search' }"
               class="w-full"
+              @update:model-value="(s) => onPickPurchaseSupplier(s)"
             />
+            <FormsSupplier v-model="showSupplierModal" :refresher="reloadPurchaseSuppliers" @done="onPurchaseSupplierCreated" />
           </UFormField>
           <UFormField label="مرجع فاتورة المورد (اختياري)">
             <UInput
@@ -457,21 +464,6 @@
             />
           </UFormField>
         </div>
-        <UFormField
-          label="المدفوع الآن"
-          :error="purchasePaidError || undefined"
-          :hint="`رصيد الخزنة: ${formatePrice(cashBalance)} — الباقي يصبح دينًا على المحل`"
-        >
-          <UInputNumber
-            :model-value="purchasePaid"
-            :min="0"
-            :max="Math.min(purchaseTotal, cashBalance)"
-            :step="0.01"
-            size="lg"
-            class="w-full"
-            @update:model-value="setPurchasePaid"
-          />
-        </UFormField>
         <UFormField label="ملاحظة">
           <UInput
             v-model="purchaseNote"
@@ -535,7 +527,7 @@
           <UInputNumber
             v-model="adjustNew"
             :min="0"
-            :step="0.01"
+            :step="1"
             size="lg"
             class="w-full"
           />
@@ -581,12 +573,14 @@
 <script setup lang="ts">
 import type { Invoice, Product } from "~/types";
 import type { ProductUnit } from "~/types";
+import type { Supplier } from "~/types/finance";
+import { useSuppliersStore } from "~/stores/suppliers";
 import { toDateSafe } from "~/types";
 
 definePageMeta({ title: "المنتجات" });
 const searchText = ref<string>("");
 const { formatePrice } = useHelpers();
-const { round2, round4, toNum, movingAverageCost, proposedSellingPrice, isLowStock, unitsForProduct, purchasableUnitsForProduct, convertUnitPrice, unitPurchasePrice } =
+const { round2, round4, toNum, movingAverageCost, proposedSellingPrice, isLowStock, unitsForProduct, purchasableUnitsForProduct, convertUnitPrice, unitPurchasePrice, purchaseLineBaseQuantity, purchaseLineBaseCost, purchasePreviewAverage, purchaseUnitProposals } =
   useFinance();
 const productFormState = ref(false);
 const productsStore = useProductsStore();
@@ -612,6 +606,14 @@ function selectPurchaseUnit(unit?: ProductUnit): void {
   const currentUnit = purchaseUnits.value.find((candidate) => candidate.id === purchaseUnitId.value);
   const currentFactor = Number(currentUnit?.factor) > 0 ? Number(currentUnit?.factor) : 1;
   purchaseUnitId.value = unit.id;
+  const product = prodsList.value.find((item) => item.id === purchaseId.value);
+  // سعر الشراء يتبع الوحدة المختارة نفسها (آخر سعر شراء مسجل عليها)،
+  // وليس تحويلاً من المتوسط الحالي.
+  const unitLastCost = product ? unitPurchasePrice(product, unit) : null;
+  if (unitLastCost !== null && unitLastCost !== undefined) {
+    purchaseCost.value = unitLastCost;
+    return;
+  }
   purchaseCost.value = convertUnitPrice(purchaseCost.value ?? purchaseCurrentCost.value, currentFactor, unit.factor);
 }
 const priceChoice = ref<"proposed" | "custom">("proposed");
@@ -619,7 +621,31 @@ const purchasePrice = ref<number | undefined>(undefined);
 const purchaseApproved = ref<number | null>(null);
 const purchasePaid = ref<number | undefined>(undefined);
 const purchasePaidTouched = ref(false);
-const purchaseSupplier = ref("");
+const suppliersStore = useSuppliersStore();
+const purchaseSupplier = ref<Supplier | undefined>();
+const CREATE_SUPPLIER_ID = "__create__";
+const showSupplierModal = ref(false);
+const supplierMenuItems = computed<Supplier[]>(() => [
+  { id: CREATE_SUPPLIER_ID, name: "+ إضافة مورد جديد" } as Supplier,
+  ...suppliersStore.list,
+]);
+function onPickPurchaseSupplier(s: Supplier | null | undefined): void {
+  if (!s) {
+    purchaseSupplier.value = undefined;
+    return;
+  }
+  if (s.id === CREATE_SUPPLIER_ID) {
+    showSupplierModal.value = true;
+    return;
+  }
+  purchaseSupplier.value = suppliersStore.list.find((item) => item.id === s.id) ?? s;
+}
+async function reloadPurchaseSuppliers(): Promise<void> {
+  await suppliersStore.fetchSuppliers(true);
+}
+function onPurchaseSupplierCreated(s: Supplier | null | undefined): void {
+  if (s?.id) purchaseSupplier.value = suppliersStore.list.find((item) => item.id === s.id) ?? s;
+}
 const purchaseSupplierRef = ref("");
 const purchaseKey = ref("");
 const purchaseNote = ref("");
@@ -665,15 +691,27 @@ const paginateArray = computed(() => {
         (toDateSafe(a.date)?.getTime() ?? 0),
     )
     .slice(startIndex, startIndex + currentPerPage.value)
-    .map((prod) => ({
-      id: prod.id,
-      select: false,
-      name: prod.name,
-      price: formatePrice(prod.price),
-      cost_price: formatePrice(prod.cost_price),
-      count: prod.count,
-      stock: prod.stock_quantity ?? null,
-    }));
+    .map((prod) => {
+      const baseName = prod.base_unit_name?.trim() || prod.units?.find((u) => u.is_base)?.name || "وحدة";
+      const units = unitsForProduct(prod);
+      const derived = units
+        .filter((u) => !u.is_base && u.id !== prod.base_unit_id)
+        .slice(0, 3)
+        .map((u) => `${u.name} ×${u.factor}: ${formatePrice((prod.cost_price ?? 0) * Number(u.factor || 1))}`)
+        .join(" · ");
+      return {
+        id: prod.id,
+        select: false,
+        name: prod.name,
+        price: `${formatePrice(prod.price)} ج / ${baseName}`,
+        cost_price: `متوسط ${formatePrice(prod.cost_price)} ج / ${baseName}`,
+        cost_detail: derived,
+        count: prod.count,
+        stock: prod.stock_quantity ?? null,
+        stock_label: `المخزون: ${prod.stock_quantity ?? "غير مُدخل"} ${baseName}`,
+        base_name: baseName,
+      };
+    });
 });
 function isSelected(item: { id?: string }): boolean {
   return !!item.id && selectProducts.value.includes(item.id);
@@ -699,7 +737,9 @@ const stockSubmitError = ref("");
 // Live field errors: empty = untouched (no red); message only when truly invalid.
 const purchaseQtyError = computed(() => {
   if (purchaseQty.value === undefined || purchaseQty.value === null) return "";
-  return purchaseQty.value > 0 ? "" : "الكمية يجب أن تكون أكبر من صفر.";
+  if (!(purchaseQty.value > 0)) return "الكمية يجب أن تكون أكبر من صفر.";
+  if (!Number.isInteger(purchaseQty.value)) return "الكمية يجب أن تكون رقمًا صحيحًا.";
+  return "";
 });
 const purchaseCostError = computed(() => {
   if (purchaseCost.value === undefined || purchaseCost.value === null)
@@ -723,7 +763,9 @@ const purchasePaidError = computed(() => {
 });
 const adjustNewError = computed(() => {
   if (adjustNew.value === undefined || adjustNew.value === null) return "";
-  return adjustNew.value >= 0 ? "" : "الكمية الجديدة غير صالحة.";
+  if (!(adjustNew.value >= 0)) return "الكمية الجديدة غير صالحة.";
+  if (!Number.isInteger(adjustNew.value)) return "الكمية يجب أن تكون رقمًا صحيحًا.";
+  return "";
 });
 const purchaseTotal = computed(() =>
   round2((purchaseQty.value || 0) * (purchaseCost.value || 0)),
@@ -736,24 +778,17 @@ function setPurchasePaid(value: number | undefined): void {
   purchasePaidTouched.value = true;
   purchasePaid.value = value;
 }
-// Live pricing-policy preview (S2): same helper the txn will use.
-const purchaseCurrentCost = computed(() =>
-  toNum(prodsList.value.find((p) => p.id === purchaseId.value)?.cost_price),
-);
-const purchaseCurrentPrice = computed(() =>
-  toNum(prodsList.value.find((p) => p.id === purchaseId.value)?.price),
-);
+// Live pricing-policy preview: SAME canonical helpers as the transaction.
+const purchaseProduct = computed(() => prodsList.value.find((p) => p.id === purchaseId.value));
+const purchaseCurrentCost = computed(() => toNum(purchaseProduct.value?.cost_price));
+const purchaseCurrentPrice = computed(() => toNum(purchaseProduct.value?.price));
+const purchaseBaseQty = computed(() => purchaseLineBaseQuantity(purchaseQty.value ?? 0, purchaseUnit.value?.factor ?? 1));
+const purchaseBaseCost = computed(() => purchaseLineBaseCost(purchaseCost.value ?? 0, purchaseUnit.value?.factor ?? 1));
 const purchasePreviewAvg = computed(() =>
-  round4(
-    movingAverageCost(
-      toNum(
-        prodsList.value.find((p) => p.id === purchaseId.value)?.stock_quantity,
-      ),
-      purchaseCurrentCost.value,
-      round2((purchaseQty.value ?? 0) * Number(purchaseUnit.value?.factor ?? 1)),
-      round4((purchaseCost.value ?? 0) / Number(purchaseUnit.value?.factor ?? 1)),
-    ),
-  ),
+  round4(purchasePreviewAverage(purchaseProduct.value?.stock_quantity, purchaseCurrentCost.value, purchaseBaseQty.value, purchaseBaseCost.value)),
+);
+const purchaseProposals = computed(() =>
+  purchaseProduct.value ? purchaseUnitProposals(purchaseProduct.value, purchasePreviewAvg.value) : [],
 );
 const purchasePreview = computed(() =>
   proposedSellingPrice(
@@ -819,7 +854,7 @@ function openPurchase(id?: string): void {
   purchaseApproved.value = null;
   purchasePaid.value = undefined;
   purchasePaidTouched.value = false;
-  purchaseSupplier.value = "";
+  purchaseSupplier.value = undefined;
   purchaseSupplierRef.value = "";
   purchaseNote.value = "";
   stockSubmitError.value = "";
@@ -828,6 +863,7 @@ function openPurchase(id?: string): void {
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
   void cashbox.fetchCashbox();
+  void suppliersStore.fetchSuppliers();
   purchaseOpen.value = true;
 }
 function openAdjust(id?: string): void {
@@ -897,7 +933,8 @@ async function doPurchase(): Promise<void> {
       unit_factor: purchaseUnit.value?.factor ?? 1,
       pricing,
       paidNow: purchasePaid.value ?? undefined,
-      supplier_name: purchaseSupplier.value.trim() || null,
+      supplier_id: purchaseSupplier.value?.id ?? null,
+      supplier_name: purchaseSupplier.value?.name ?? null,
       supplier_ref: purchaseSupplierRef.value.trim() || null,
       idempotencyKey:
         purchaseKey.value || `${Date.now()}-${Math.floor(Math.random() * 1e9)}`,
@@ -967,18 +1004,10 @@ const deleteOpen = computed({
     if (!v) confirmDelete.value = null;
   },
 });
-// Recovery option state (reset on every open).
-const recoverToCashbox = ref(false);
-watch(confirmDelete, () => {
-  recoverToCashbox.value = false;
-});
 const deleteTarget = computed(() =>
   prodsList.value.find((p) => p.id === confirmDelete.value?.id),
 );
 const deleteStock = computed(() => toNum(deleteTarget.value?.stock_quantity));
-const deleteRecoverValue = computed(() =>
-  round2(deleteStock.value * toNum(deleteTarget.value?.cost_price)),
-);
 async function loadProds(): Promise<void> {
   loading.value = true;
   try {
@@ -987,31 +1016,31 @@ async function loadProds(): Promise<void> {
     loading.value = false;
   }
 }
+async function archiveConfirmed(): Promise<void> {
+  const id = confirmDelete.value?.id;
+  if (!id) return;
+  deleting.value = true;
+  try {
+    const res = await productsStore.archiveProduct(id);
+    if (!res.ok) {
+      stockSubmitError.value = res.error;
+      return;
+    }
+    notifyToast("تمت أرشفة المنتج مع حفظ سجله المحاسبي.", "success");
+    await loadProds();
+  } finally {
+    deleting.value = false;
+    confirmDelete.value = null;
+  }
+}
 async function deleteConfirmed(): Promise<void> {
   const id = confirmDelete.value?.id;
   if (!id) return;
   deleting.value = true;
   try {
-    if (recoverToCashbox.value && deleteStock.value > 0) {
-      const res = await productsStore.deleteProductWithRecovery(id, true);
-      if (!res.ok) {
-        stockSubmitError.value = res.error;
-        // Concurrency path (§2.3): reload fresh product data so the preview
-        // re-derives; the user re-confirms explicitly.
-        if ("stale" in res && res.stale) {
-          await productsStore.fetchProducts();
-        }
-        return;
-      }
-      if (res.recovered > 0) {
-        notifyToast(
-          `تم حذف المنتج واسترداد ${formatePrice(res.recovered)} للخزنة.`,
-          "success",
-        );
-      }
-    } else {
-      await productsStore.deleteProduct(id);
-    }
+    // No cash is ever created by deletion; supplier returns are separate.
+    await productsStore.deleteProduct(id);
+    notifyToast("تم حذف المنتج نهائيًا (بدون أثر نقدي).", "success");
     await loadProds();
   } finally {
     deleting.value = false;

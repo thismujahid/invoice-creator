@@ -84,30 +84,33 @@
 
     <template v-else>
       <!-- Dashboard -->
-      <div class="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-5">
+      <div class="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-3">
         <UCard variant="outline">
-          <div class="text-lg font-bold text-emerald-700 sm:text-xl">
-            {{ formatePrice(cashbox.balance) }}
+          <div class="mb-1 text-xs text-gray-500">النقدية والأصول</div>
+          <div class="space-y-1 text-sm">
+            <div class="flex justify-between gap-2">
+              <span class="text-gray-500">النقدية الحالية</span>
+              <b class="text-emerald-700">{{ formatePrice(cashbox.balance) }}</b>
+            </div>
+            <div class="flex justify-between gap-2">
+              <span class="text-gray-500">المخزون بالتكلفة</span>
+              <b>{{ formatePrice(agg.costValue) }}</b>
+            </div>
+            <div class="flex justify-between gap-2 border-t border-gray-100 pt-1">
+              <span class="text-gray-500">إجمالي الأصول</span>
+              <b class="text-emerald-700">{{ formatePrice(cashbox.balance + agg.costValue) }}</b>
+            </div>
           </div>
-          <div class="text-xs text-gray-500">النقدية الحالية</div>
         </UCard>
         <UCard variant="outline">
-          <div class="text-lg font-bold sm:text-xl">
-            {{ formatePrice(agg.costValue) }}
+          <div class="text-lg font-bold text-red-600 sm:text-xl">
+            {{ formatePrice(supplierPayable) }}
           </div>
-          <div class="text-xs text-gray-500">قيمة المخزون بالتكلفة</div>
-        </UCard>
-        <UCard variant="outline">
-          <div class="text-lg font-bold text-emerald-700 sm:text-xl">
-            {{ formatePrice(cashbox.balance + agg.costValue) }}
+          <div class="text-xs text-gray-500">الديون اللي علينا (موردين)</div>
+          <div class="mt-1 border-t border-gray-100 pt-1 text-xs text-gray-500">
+            النقد + المخزون بعد السداد:
+            <b>{{ formatePrice(cashbox.balance + agg.costValue - supplierPayable) }}</b>
           </div>
-          <div class="text-xs text-gray-500">إجمالي أصول المحل</div>
-        </UCard>
-        <UCard variant="outline">
-          <div class="text-lg font-bold sm:text-xl">
-            {{ formatePrice(agg.saleValue) }}
-          </div>
-          <div class="text-xs text-gray-500">قيمة بيع المخزون</div>
         </UCard>
         <UCard variant="outline">
           <div class="text-lg font-bold text-blue-600 sm:text-xl">
@@ -115,7 +118,7 @@
           </div>
           <div class="text-xs text-gray-500">
             الربح المتوقع من المخزون
-            <span class="text-gray-400">(غير محقق)</span>
+            <span class="text-gray-400">(غير محقق — توقع بسعر الأساس فقط)</span>
           </div>
         </UCard>
       </div>
@@ -130,7 +133,7 @@
         class="mb-3"
         title="إجماليات المبيعات تحتاج تهيئة لمرة واحدة من أدوات المدير أدناه."
       />
-      <div v-else class="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-5">
+      <div v-else class="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-3">
         <UCard variant="outline">
           <div class="text-lg font-bold text-emerald-700 sm:text-xl">
             {{ formatePrice(stats.sales) }}
@@ -141,7 +144,36 @@
           <div class="text-lg font-bold text-red-600 sm:text-xl">
             {{ formatePrice(stats.debts) }}
           </div>
-          <div class="text-xs text-gray-500">إجمالي الديون</div>
+          <div class="text-xs text-gray-500">إجمالي الديون اللي لينا</div>
+          <div class="mt-1 border-t border-gray-100 pt-1 text-xs text-gray-500">
+            رصيدنا بعد التحصيل:
+            <b>{{ formatePrice(cashbox.balance + stats.debts) }}</b>
+          </div>
+        </UCard>
+        <UCard variant="outline" :class="netCashAfterSettlement < 0 ? '!border-red-300' : ''">
+          <div class="mb-1 text-xs text-gray-500">وضعنا الحالي</div>
+          <div class="space-y-1 text-sm">
+            <div class="flex justify-between gap-2">
+              <span class="text-gray-500">اللي لينا</span>
+              <b>{{ formatePrice(stats.debts) }}</b>
+            </div>
+            <div class="flex justify-between gap-2">
+              <span class="text-gray-500">اللي علينا</span>
+              <b class="text-red-600">{{ formatePrice(supplierPayable) }}</b>
+            </div>
+            <div class="flex justify-between gap-2 border-t border-gray-100 pt-1">
+              <span class="text-gray-500">صافي النقد بعد التسوية</span>
+              <b :class="netCashAfterSettlement < 0 ? 'text-red-600' : 'text-emerald-700'">{{
+                formatePrice(netCashAfterSettlement)
+              }}</b>
+            </div>
+          </div>
+          <div
+            class="mt-1 text-xs font-bold"
+            :class="netCashAfterSettlement < 0 ? 'text-red-600' : 'text-emerald-700'"
+          >
+            {{ settlementStatusText }}
+          </div>
         </UCard>
         <UCard variant="outline">
           <div class="text-lg font-bold text-emerald-600 sm:text-xl">
@@ -1121,6 +1153,33 @@ async function fetchStats(): Promise<void> {
     statsLoading.value = false;
   }
 }
+
+// إجمالي المستحق للموردين (الديون اللي علينا) من ملخصات الموردين.
+const supplierPayable = ref(0);
+async function fetchSupplierPayable(): Promise<void> {
+  try {
+    const snapshot = await getDocs(collection(db, "supplier_summaries"));
+    let sum = 0;
+    for (const d of snapshot.docs) sum = round2(sum + toNum(d.data().outstanding_payable));
+    supplierPayable.value = sum;
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+// صافي النقد بعد التسوية: الخزنة + اللي لينا (ديون العملاء) − اللي علينا
+// (مستحق الموردين). الحكم على أساس تغطية الكاش للديون، مش الفرق بين
+// الدينين فقط — خزنة 430 وعلينا 400 ولينا 0 = تمام والمتبقي 30.
+const netCashAfterSettlement = computed(() =>
+  round2(cashbox.balance + stats.value.debts - supplierPayable.value),
+);
+const settlementStatusText = computed(() => {
+  if (supplierPayable.value <= 0 && stats.value.debts <= 0) return "تمام";
+  const net = netCashAfterSettlement.value;
+  if (net > 0) return "تمام";
+  if (net < 0) return "عجز";
+  return "متعادل";
+});
 const paged = computed(() => cashbox.transactions);
 let referenceLookupVersion = 0;
 watch(
@@ -1396,6 +1455,7 @@ onMounted(async () => {
     cashbox.fetchTransactions(),
     products.fetchProducts(),
     fetchStats(),
+    fetchSupplierPayable(),
   ]);
 });
 </script>

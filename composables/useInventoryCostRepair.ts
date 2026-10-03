@@ -80,7 +80,12 @@ function classify(t: InventoryTransaction): ReplayStep | { invalid: string } {
       if (!hasKnownCost(t.unit_cost)) return { invalid: "refund without cost" };
       return { stockIn: qty, stockOut: 0, knownCost: Number(t.unit_cost) };
     case "manual_adjustment":
-      if (t.direction === "in") return { stockIn: qty, stockOut: 0, knownCost: null };
+      // Inbound manual adjustments now carry the current average cost
+      // (explicit cost basis); legacy costless ones stay costless → untrusted.
+      if (t.direction === "in") {
+        if (hasKnownCost(t.unit_cost)) return { stockIn: qty, stockOut: 0, knownCost: Number(t.unit_cost) };
+        return { stockIn: qty, stockOut: 0, knownCost: null };
+      }
       if (t.direction === "out") return { stockIn: 0, stockOut: qty, knownCost: null };
       return { invalid: "unknown adjustment direction" };
     default:
@@ -130,20 +135,64 @@ export const useInventoryCostRepair = defineStore("inventoryCostRepair", () => {
   const { db, serverTimestamp, readFrom } = useFirebase();
   const authStore = useAuth();
 
-  /** Analyze all products: replay full movement history, compare, classify. */
-  async function analyze(
+  interface AnalyzeScope {
+    productIds?: string[];
+    dateFrom?: Date | null;
+    dateTo?: Date | null;
+    onlySuspicious?: boolean;
+  }
+
+  /** Scoped analysis: single product / suspicious / date range without always
+   *  downloading the complete ledger. Full scan stays available explicitly. */
+  async function analyzeScoped(
+    scope: AnalyzeScope = {},
     onProgress?: (done: number, total: number) => void,
   ): Promise<RepairRow[]> {
-    const [products, txSnap] = await Promise.all([
-      readFrom<Product>("products"),
-      getDocs(query(collection(db, "inventory_transactions"))),
-    ]);
+    const { productIds, dateFrom, dateTo, onlySuspicious } = scope;
+    let products = await readFrom<Product>("products");
+    if (productIds?.length) {
+      const ids = new Set(productIds);
+      products = products.filter((p) => p.id && ids.has(p.id));
+    }
+    // Targeted ledger reads: one product → single filtered query; few
+    // products → chunked `in` queries (≤30 per Firestore limit); otherwise
+    // full scan only when actually requested.
     const byProduct = new Map<string, InventoryTransaction[]>();
-    for (const d of txSnap.docs) {
-      const t = { id: d.id, ...(d.data() as object) } as InventoryTransaction;
-      if (!t.product_id) continue;
-      if (!byProduct.has(t.product_id)) byProduct.set(t.product_id, []);
-      byProduct.get(t.product_id)!.push(t);
+    const targetIds = products.map((p) => p.id as string).filter(Boolean);
+    if (targetIds.length === 1) {
+      const snap = await getDocs(query(collection(db, "inventory_transactions"), where("product_id", "==", targetIds[0])));
+      byProduct.set(targetIds[0]!, snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) }) as InventoryTransaction));
+    } else if (targetIds.length > 1 && targetIds.length <= 60) {
+      for (let i = 0; i < targetIds.length; i += 30) {
+        const chunk = targetIds.slice(i, i + 30);
+        const snap = await getDocs(query(collection(db, "inventory_transactions"), where("product_id", "in", chunk)));
+        for (const d of snap.docs) {
+          const t = { id: d.id, ...(d.data() as object) } as InventoryTransaction;
+          if (!t.product_id) continue;
+          if (!byProduct.has(t.product_id)) byProduct.set(t.product_id, []);
+          byProduct.get(t.product_id)!.push(t);
+        }
+      }
+    } else {
+      const txSnap = await getDocs(query(collection(db, "inventory_transactions")));
+      for (const d of txSnap.docs) {
+        const t = { id: d.id, ...(d.data() as object) } as InventoryTransaction;
+        if (!t.product_id) continue;
+        if (productIds?.length && !productIds.includes(t.product_id)) continue;
+        if (!byProduct.has(t.product_id)) byProduct.set(t.product_id, []);
+        byProduct.get(t.product_id)!.push(t);
+      }
+    }
+    // Optional date-range filter (client-side on the scoped set).
+    if (dateFrom || dateTo) {
+      const from = dateFrom?.getTime() ?? Number.NEGATIVE_INFINITY;
+      const to = dateTo?.getTime() ?? Number.POSITIVE_INFINITY;
+      for (const [pid, list] of byProduct) {
+        byProduct.set(pid, list.filter((t) => {
+          const ms = toDateSafe(t.created_at)?.getTime();
+          return ms !== undefined && ms !== null && !Number.isNaN(ms) && ms >= from && ms <= to;
+        }));
+      }
     }
     // Strict chronological order (missing timestamp = unordered = invalid).
     for (const list of byProduct.values()) {
@@ -156,7 +205,7 @@ export const useInventoryCostRepair = defineStore("inventoryCostRepair", () => {
       });
     }
 
-    const rows: RepairRow[] = [];
+    let rows: RepairRow[] = [];
     let done = 0;
     for (const p of products) {
       if (!p.id) continue;
@@ -164,8 +213,17 @@ export const useInventoryCostRepair = defineStore("inventoryCostRepair", () => {
       done += 1;
       if (done % 20 === 0) onProgress?.(done, products.length);
     }
+    if (onlySuspicious) rows = rows.filter((r) => r.status !== "OK");
     onProgress?.(products.length, products.length);
     return rows;
+  }
+
+  /** Analyze all products: replay full movement history, compare, classify.
+   *  Kept for explicit full-database runs; prefer analyzeScoped() otherwise. */
+  async function analyze(
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<RepairRow[]> {
+    return analyzeScoped({}, onProgress);
   }
 
   function analyzeOne(p: Product, txns: InventoryTransaction[]): RepairRow {
@@ -418,5 +476,5 @@ export const useInventoryCostRepair = defineStore("inventoryCostRepair", () => {
     return (authStore.currentUserKey as string) || null;
   }
 
-  return { analyze, applyOne, applyMany };
+  return { analyze, analyzeScoped, applyOne, applyMany };
 });

@@ -9,6 +9,7 @@ export interface PurchaseInput {
   unit_cost: number;
   pricing: PriceDecision;
   paidNow?: number | null;
+  supplier_id?: string | null;
   supplier_name?: string | null;
   supplier_ref?: string | null;
   idempotencyKey?: string | null;
@@ -62,6 +63,7 @@ export const useInventory = defineStore("inventory", () => {
         : `${Date.now()}-${Math.floor(Math.random() * 1e9)}`);
     const res = await usePurchasing().executePurchase({
       idempotencyKey: key,
+      supplier_id: input.supplier_id ?? null,
       supplier_name: input.supplier_name ?? null,
       supplier_ref: input.supplier_ref ?? null,
       items: [
@@ -82,18 +84,24 @@ export const useInventory = defineStore("inventory", () => {
     return res;
   }
 
-  /** Atomic manual stock adjustment (no cash movement). Requires reason. */
+  /** Atomic manual stock adjustment (no cash movement). Requires reason.
+   *  Cost semantics: outbound leaves cost untouched; inbound restocks at the
+   *  CURRENT average cost (carried over) so the repair replay keeps a trusted
+   *  cost basis instead of creating costless inventory. True cost corrections
+   *  belong to purchase flows or the audited cost-repair tool. */
   async function adjustStock(input: AdjustInput): Promise<{ ok: true } | { ok: false; error: string }> {
     if (!input.product_id) return { ok: false, error: "حدد المنتج أولاً." };
     if (!input.note?.trim()) return { ok: false, error: "سبب التعديل مطلوب." };
     const target = round2(input.new_count);
     if (!Number.isFinite(target) || target < 0) return { ok: false, error: "الكمية الجديدة غير صالحة." };
+    if (!Number.isInteger(target)) return { ok: false, error: "الكمية يجب أن تكون رقمًا صحيحًا." };
     try {
       await runTx(async (tx) => {
         const pRef = doc(db, "products", input.product_id);
         const pSnap = await tx.get(pRef);
         if (!pSnap.exists()) throw new Error("PRODUCT_MISSING");
         const cur = round2(toNum(pSnap.data().stock_quantity));
+        const currentCost = toNum(pSnap.data().cost_price);
         const delta = round2(target - cur);
         if (Math.abs(delta) < EPS) return;
         const movementRef = doc(collection(db, "inventory_transactions"));
@@ -107,8 +115,14 @@ export const useInventory = defineStore("inventory", () => {
           product_id: input.product_id,
           product_name: String(pSnap.data().name || ""),
           quantity: Math.abs(delta),
+          base_quantity: Math.abs(delta),
+          unit_factor: 1,
           direction: delta > 0 ? "in" : "out",
-          note: input.note.trim(),
+          // Inbound carries current average so cost history stays trusted;
+          // outbound has no cost effect (null = take only).
+          unit_cost: delta > 0 ? currentCost : null,
+          reason: "manual_correction",
+          note: `تعديل يدوي (${input.note.trim()}) — ${delta > 0 ? "دخول بتكلفة المتوسط الحالية" : "خروج بدون أثر على التكلفة"}`,
           seq: 0,
           created_by: creator(),
           created_at: serverTimestamp(),

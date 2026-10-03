@@ -1,6 +1,6 @@
 import { doc, serverTimestamp, type Firestore, type Transaction } from "firebase/firestore";
 import type { Invoice } from "~/types";
-import { grossProfitOf, invoiceTotals, outstandingDebtOf } from "./finance";
+import { getInvoiceBreakdown, grossProfitOf, invoiceTotals, outstandingDebtOf } from "./finance";
 
 /** Minimal debt summary per invoice — the ONLY invoice data the debt book loads.
  *  Full invoice documents (with product lines) are never preloaded (strict). */
@@ -11,6 +11,8 @@ export interface InvoiceDebtSummary {
   customer_phone?: string | number | null;
   date?: unknown;
   total: number;
+  /** Current-sale portion of total (previous debt excluded). */
+  sales?: number;
   paid: number;
   remaining: number;
   profit: number;
@@ -33,10 +35,15 @@ type SummarySource = Pick<
   | "remaining"
 >;
 
-/** Derive summary numbers from invoice data (same formulas everywhere). */
-export function summarizeInvoice(inv: SummarySource): { total: number; paid: number; remaining: number; profit: number } {
+/** Derive summary numbers from invoice data (same formulas everywhere).
+ *  - total: full payable (current sale + extras + previous balance - discount).
+ *    Kept for the debt book (amount the customer owes).
+ *  - sales: current sale only (previous debt excluded, discount allocated).
+ *    Use for sales/revenue statistics and customer total_sales. */
+export function summarizeInvoice(inv: SummarySource): { total: number; sales: number; paid: number; remaining: number; profit: number } {
   const t = invoiceTotals(inv);
-  return { total: t.net, paid: t.paid, remaining: outstandingDebtOf(inv), profit: grossProfitOf(inv.products) };
+  const breakdown = getInvoiceBreakdown(inv);
+  return { total: t.net, sales: breakdown.salesNet, paid: t.paid, remaining: outstandingDebtOf(inv), profit: grossProfitOf(inv.products) };
 }
 
 /** Upsert the summary inside the caller's transaction (atomic with the op). */
