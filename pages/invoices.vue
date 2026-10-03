@@ -14,41 +14,14 @@
           >سداد جميع الفواتير المعروضة</UButton
         >
         <UButton
-          v-if="isAdmin"
-          :icon="hideTotal ? 'i-lucide-eye-off' : 'i-lucide-eye'"
-          color="error"
-          variant="soft"
-          :disabled="loading"
-          @click="!hideTotal ? (hideTotal = true) : (startViewTotal = true)"
-          >عرض الأموال</UButton
-        >
-        <FormsAuthScreen
-          @close="() => (startViewTotal = false)"
-          @success="
-            (val) =>
-              val ? ((hideTotal = !hideTotal), (startViewTotal = false)) : false
-          "
-          v-if="startViewTotal && isAdmin"
-          success-text="تم التحقق من الهوية بنجاح... تم عرض إجماليات الفواتير المعروضة بنجاح"
-          title="برجاء تأكيد هويتك لتتمكن من عرض إجماليات الفواتير المعروضة"
-        />
-        <UButton
           icon="i-lucide-download"
           color="info"
           variant="soft"
-          v-if="isAdmin"
           :loading="exporting"
           :disabled="loading"
-          @click="startExport = true"
+          @click="() => handleSuccess(true)"
           >تصدير البيانات</UButton
         >
-        <FormsAuthScreen
-          @close="() => (startExport = false)"
-          @success="handleSuccess"
-          v-if="startExport && isAdmin"
-          success-text="تم التحقق من الهوية بنجاح... جاري تصدير الفواتير"
-          title="برجاء تأكيد هويتك لتتمكن من تصدير الفواتير"
-        />
       </div>
     </div>
     <div class="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -85,14 +58,14 @@
         />
       </div>
     </div>
-    <USkeleton v-if="statsLoading" class="mb-3 h-24 w-full" />
+    <UiAppStatsSkeleton v-if="statsLoading" />
     <UAlert v-else-if="!statsReady" color="warning" variant="soft" class="mb-3" title="إجماليات الفواتير تحتاج تهيئة من أدوات المدير في صفحة الخزنة." />
     <div v-else class="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-5">
       <UCard variant="outline">
         <div class="flex items-center justify-between gap-2">
           <div class="min-w-0">
             <div class="truncate text-base font-bold sm:text-lg">
-              {{ hideTotal ? "***********" : formatePrice(invoiceStats.total_sales) }}
+              {{ formatePrice(invoiceStats.total_sales) }}
             </div>
             <div class="text-xs text-gray-500">إجمالي المبيعات{{ selectedDate ? " في اليوم المحدد" : "" }}</div>
           </div>
@@ -106,7 +79,7 @@
         <div class="flex items-center justify-between gap-2">
           <div class="min-w-0">
             <div class="truncate text-base font-bold sm:text-lg">
-              {{ hideTotal ? "***********" : formatePrice(invoiceStats.total_profit) }}
+              {{ formatePrice(invoiceStats.total_profit) }}
             </div>
             <div class="text-xs text-gray-500">إجمالي الأرباح <span class="text-gray-400">(شامل الديون)</span></div>
           </div>
@@ -120,7 +93,7 @@
         <div class="flex items-center justify-between gap-2">
           <div class="min-w-0">
             <div class="truncate text-base font-bold sm:text-lg">
-              {{ hideTotal ? "***********" : formatePrice(invoiceStats.outstanding_customer_debt) }}
+              {{ formatePrice(invoiceStats.outstanding_customer_debt) }}
             </div>
             <div class="text-xs text-gray-500">إجمالي المديونية</div>
           </div>
@@ -148,7 +121,7 @@
         <div class="flex items-center justify-between gap-2">
           <div class="min-w-0">
             <div class="truncate text-base font-bold sm:text-lg">
-              {{ hideTotal ? "***********" : formatePrice(invoiceStats.total_paid) }}
+              {{ formatePrice(invoiceStats.total_paid) }}
             </div>
             <div class="text-xs text-gray-500">إجمالي المدفوع</div>
           </div>
@@ -156,17 +129,7 @@
         </div>
       </UCard>
     </div>
-    <FormsAuthScreen
-      @close="() => (startViewTotal = false)"
-      @success="
-        (val) =>
-          val ? ((hideTotal = !hideTotal), (startViewTotal = false)) : false
-      "
-      v-if="startViewTotal && isAdmin"
-      success-text="تم التحقق من الهوية بنجاح... تم عرض إجماليات الفواتير بنجاح"
-      title="برجاء تأكيد هويتك لتتمكن من عرض إجماليات الفواتير"
-    />
-    <USkeleton v-if="loading" class="h-24 w-full" />
+    <UiAppTableSkeleton v-if="loading" />
     <template v-else>
       <!-- Desktop table -->
       <div class="hidden overflow-x-auto md:block">
@@ -198,7 +161,7 @@
               <td class="p-2 font-semibold">{{ row.total }}</td>
               <td class="p-2 text-red-600">{{ formatePrice(row.debt) }}</td>
               <td class="p-2 font-semibold text-emerald-600">
-                {{ hideTotal ? "****" : row.profit }}
+                {{ row.profit }}
               </td>
               <td class="p-2 text-gray-600">{{ row.created_at }}</td>
               <td class="p-2">
@@ -257,7 +220,7 @@
                       @click="openReturn(row.invoice)"
                       class="flex items-center justify-center"
                     /></UTooltip>
-                  <UTooltip v-if="isAdmin" text="حذف"
+                  <UTooltip text="حذف"
                     ><UButton
                       icon="i-lucide-trash-2"
                       color="error"
@@ -302,7 +265,7 @@
                 المتبقي: {{ formatePrice(row.debt) }}
               </div>
               <div class="mt-0.5 text-xs font-semibold text-emerald-600">
-                الربح: {{ hideTotal ? "****" : row.profit }}
+                الربح: {{ row.profit }}
               </div>
             </div>
             <div class="flex shrink-0 gap-1.5" @click.stop>
@@ -344,7 +307,6 @@
                 class="flex items-center justify-center"
               />
               <UButton
-                v-if="isAdmin"
                 icon="i-lucide-trash-2"
                 color="error"
                 variant="soft"
@@ -419,7 +381,7 @@
         </p>
         <div v-for="r in returnRows" :key="r.key" class="rounded-lg border border-gray-200 p-2.5">
           <div class="mb-1.5 flex items-center justify-between gap-2">
-            <div class="min-w-0 text-sm font-bold">{{ r.product_name }}</div>
+            <div class="min-w-0 text-sm font-bold">{{ formatInvoiceLineName(r.product_name, r.unit_name) }}</div>
             <div class="shrink-0 text-xs text-gray-500">{{ r.unit_name }} • سعر البيع: {{ formatePrice(r.unit_price) }} • المتاح: {{ r.maxQty }}</div>
           </div>
           <UInputNumber v-model="r.qty" :min="0" :max="r.maxQty" :step="0.01" size="lg" class="w-full" />
@@ -452,7 +414,6 @@ import { invoiceDayKey } from "~/composables/invoiceStats";
 
 definePageMeta({ title: "الفواتير" });
 const route = useRoute();
-const hideTotal = ref(true);
 const authStore = useAuth();
 const { db } = useFirebase();
 // HOME delta: debts filter replaces the creator filter.
@@ -463,15 +424,13 @@ const debtsFilterOptions = [
 ];
 const isPayingFull = ref(false);
 const payingFullInvoiceId = ref<string | null>(null);
-const startExport = ref(false);
 const selectedDate = ref<Date | null>(null);
-const startViewTotal = ref(false);
 const searchText = ref<string>("");
 const currentPage = ref(1);
 const currentPerPage = ref(25);
 const invoiceCursors = ref<(QueryDocumentSnapshot | null)[]>([null]);
 const hasMoreInvoices = ref(false);
-const loading = ref(false);
+const loading = ref(true);
 const exporting = ref(false);
 const deleting = ref(false);
 const statsLoading = ref(true);
@@ -593,7 +552,7 @@ function formatTimestamp(
   });
   return `${formattedDate} ${formattedTime}`;
 }
-const { formatePrice, calcTotal } = useHelpers();
+const { formatePrice, calcTotal, formatInvoiceLineName } = useHelpers();
 const { round2, lineRefundValue, netRatioOf, splitRefund, outstandingDebtOf, lineBaseQuantity, grossProfitOf } = useFinance();
 const invoicesStore = useInvoicesStore();
 const customerStore = useCustomersStore();
@@ -751,7 +710,6 @@ async function deleteConfirmed() {
 }
 async function handleSuccess(isSuccess: boolean) {
   if (!isSuccess) {
-    startExport.value = false;
     return;
   }
   exporting.value = true;
@@ -767,7 +725,6 @@ async function handleSuccess(isSuccess: boolean) {
     authStore.snackBarColor = "error";
   } finally {
     exporting.value = false;
-    startExport.value = false;
   }
 }
 // Return dialog state (F11).
@@ -841,6 +798,13 @@ async function submitReturn(): Promise<void> {
     returnBusy.value = false;
   }
 }
-void loadInvoices();
-void loadInvoiceStats();
+onMounted(async () => {
+  const authed = await useAuthReady();
+  if (!authed) {
+    loading.value = false;
+    statsLoading.value = false;
+    return; // layout redirects to /login
+  }
+  await Promise.all([loadInvoices(), loadInvoiceStats()]);
+});
 </script>

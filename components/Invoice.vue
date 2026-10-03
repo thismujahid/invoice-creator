@@ -127,7 +127,7 @@ const props = defineProps<{
   viewMode?: boolean;
   isForAdmin?: boolean;
 }>();
-const { formatDate, calcTotal, formatTime12Hour, formatePrice, useDownloadPDF } = useHelpers();
+const { formatDate, calcTotal, formatTime12Hour, formatePrice, useDownloadPDF, formatInvoiceLineName } = useHelpers();
 const { notify } = useAppToast();
 const printing = ref(false);
 const { saveDataTo, updateItem } = useFirebase();
@@ -142,7 +142,7 @@ const mappedProducts = computed(() => {
     else if (prod.product_quantity === 0.75) quantity = "3/4";
     return {
       عدد: quantity,
-      البيان: (prod.product_name || "") + (prod.unit_name ? ` (${prod.unit_name})` : "") + (prod.option ? ` (${prod.option})` : ""),
+      البيان: formatInvoiceLineName(prod.product_name, prod.unit_name, prod.option),
       تصحيح: "",
       "سعر الوحدة": formatePrice(prod.product_price || 0),
       الإجمالي: formatePrice(calcTotalOfForm(prod)),
@@ -184,7 +184,7 @@ async function startPrint(saveOnly?: boolean) {
   }
   const _time = resolveTime(props.invoiceData.date, props.invoiceData.time);
   void _time;
-  if (isAdmin.value && !costConfirmed.value) {
+  if (!costConfirmed.value) {
     const belowCost = lines.some(
       (element) => Number(element.product_price) < Number(element.product_cost_price)
     );

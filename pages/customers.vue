@@ -22,7 +22,7 @@
       size="lg"
       class="mb-3 w-full sm:max-w-xs"
       />
-    <USkeleton v-if="loading" class="h-24 w-full" />
+    <UiAppTableSkeleton v-if="loading" />
     <template v-else>
       <!-- Desktop table -->
       <div class="hidden overflow-x-auto md:block">
@@ -58,7 +58,6 @@
                     class="flex items-center justify-center"
                     />
                   <UButton
-                    v-if="isAdmin"
                     icon="i-lucide-trash-2"
                     color="error"
                     variant="soft"
@@ -102,7 +101,6 @@
                 class="flex items-center justify-center"
                 />
               <UButton
-                v-if="isAdmin"
                 icon="i-lucide-trash-2"
                 color="error"
                 variant="soft"
@@ -177,7 +175,7 @@ const customerForm = ref<Customer>({ name: "", phone: null });
 const currentPage = ref(1);
 const currentPerPage = ref(10);
 const saving = ref(false);
-const loading = ref(false);
+const loading = ref(true);
 const deleting = ref(false);
 const summaries = ref<Record<string, { invoiceCount: number; debt: number; initialized: boolean }>>({});
 const { formatePrice } = useHelpers();
@@ -283,5 +281,12 @@ async function deleteConfirmed(): Promise<void> {
     confirmDelete.value = null;
   }
 }
-void loadCustomers();
+onMounted(async () => {
+  const authed = await useAuthReady();
+  if (!authed) {
+    loading.value = false;
+    return; // layout redirects to /login
+  }
+  await loadCustomers();
+});
 </script>

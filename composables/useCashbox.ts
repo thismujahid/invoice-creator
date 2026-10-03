@@ -21,9 +21,11 @@ export const useCashbox = defineStore("cashbox", () => {
 
   const balance = ref(0);
   const initialized = ref(false);
-  const loading = ref(false);
+  // Start true so pages render skeletons (not empty content) while auth
+  // resolves and the first fetch runs; fetchers reset them afterwards.
+  const loading = ref(true);
   const transactions = ref<CashTransaction[]>([]);
-  const loadingTxns = ref(false);
+  const loadingTxns = ref(true);
   const transactionsPage = ref(1);
   const transactionsHasMore = ref(false);
   const transactionCursors = ref<(QueryDocumentSnapshot | null)[]>([null]);

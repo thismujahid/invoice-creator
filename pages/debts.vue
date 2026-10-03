@@ -16,7 +16,10 @@
       size="lg"
       class="mb-3 w-full sm:max-w-xs"
     />
-    <USkeleton v-if="loading" class="h-24 w-full" />
+    <template v-if="loading">
+      <UiAppStatsSkeleton :count="4" />
+      <UiAppTableSkeleton />
+    </template>
     <template v-else>
       <!-- Totals of the currently displayed (filtered) debts -->
       <div class="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-4">
@@ -643,7 +646,7 @@ const customers = useCustomersStore();
 const { notify } = useAppToast();
 const { db, getDoc } = useFirebase();
 
-const loading = ref(false);
+const loading = ref(true);
 const book = ref<CustomerDebt[]>([]);
 const searchText = ref(String(route.query.customer_name ?? ""));
 const currentPage = ref(1);
@@ -1057,6 +1060,8 @@ async function reload(): Promise<void> {
 }
 
 onMounted(async () => {
+  const authed = await useAuthReady();
+  if (!authed) return; // layout redirects to /login
   await Promise.all([reload(), customers.fetchCustomers()]);
 });
 </script>

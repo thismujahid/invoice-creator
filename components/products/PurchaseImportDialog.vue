@@ -116,7 +116,22 @@
             <UFormField label="المدفوع الآن" :error="paidError || undefined"><UInputNumber v-model="paidNow" :min="0" :max="Math.min(total, cashBalance)" :step="0.01" class="w-full" /></UFormField>
           </div>
           <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <UFormField label="المورد"><USelectMenu v-model="supplier" :items="supplierStore.list" label-key="name" by="id" placeholder="اختر المورد" class="w-full" /></UFormField>
+            <UFormField label="المورد">
+              <USelectMenu
+                :model-value="(supplier ?? null) as Supplier | undefined"
+                :items="supplierMenuItems"
+                label-key="name"
+                by="id"
+                placeholder="اختر المورد"
+                class="w-full"
+                @update:model-value="(s) => onPickSupplier(s)"
+              />
+              <FormsSupplier
+                v-model="showSupplierModal"
+                :refresher="reloadSuppliers"
+                @done="onSupplierCreated"
+              />
+            </UFormField>
             <UFormField label="مرجع فاتورة المورد (اختياري)"><UInput v-model="supplierRef" dir="ltr" class="w-full" /></UFormField>
           </div>
           <UFormField label="ملاحظة (اختياري)"><UInput v-model="note" class="w-full" /></UFormField>
@@ -145,7 +160,6 @@
 </template>
 
 <script setup lang="ts">
-import * as XLSX from "xlsx/dist/xlsx.full.min.js";
 import type { Product } from "~/types";
 import type { ProductUnit } from "~/types";
 import type { Supplier } from "~/types/finance";
@@ -183,6 +197,32 @@ const productsStore = useProductsStore();
 const cashbox = useCashbox();
 const supplierStore = useSuppliersStore();
 const supplier = ref<Supplier | undefined>();
+const CREATE_SUPPLIER_ID = "__create__";
+const showSupplierModal = ref(false);
+const supplierMenuItems = computed<Supplier[]>(() => [
+  { id: CREATE_SUPPLIER_ID, name: "+ إضافة مورد جديد" } as Supplier,
+  ...supplierStore.list,
+]);
+function onPickSupplier(s: Supplier | null | undefined): void {
+  if (!s) {
+    supplier.value = undefined;
+    return;
+  }
+  if (s.id === CREATE_SUPPLIER_ID) {
+    showSupplierModal.value = true;
+    return;
+  }
+  supplier.value = suppliersReal(s);
+}
+function suppliersReal(s: Supplier): Supplier {
+  return supplierStore.list.find((item) => item.id === s.id) ?? s;
+}
+async function reloadSuppliers(): Promise<void> {
+  await supplierStore.fetchSuppliers(true);
+}
+function onSupplierCreated(s: Supplier | null | undefined): void {
+  if (s?.id) supplier.value = suppliersReal(s);
+}
 const rows = ref<ImportRow[]>([]);
 const fileInput = ref<HTMLInputElement | null>(null);
 const selectedFileName = ref("");
@@ -296,6 +336,7 @@ async function onFile(event: Event): Promise<void> {
   }
   try {
     const buffer = await file.arrayBuffer();
+    const XLSX = await import("xlsx/dist/xlsx.full.min.js");
     const workbook = XLSX.read(buffer, { type: "array", cellDates: false });
     const sheet = workbook.Sheets[workbook.SheetNames[0] ?? ""];
     if (!sheet) throw new Error("الملف لا يحتوي على ورقة عمل.");

@@ -15,15 +15,24 @@ export const useCustomersStore = defineStore("customers", () => {
     return true;
   };
 
+  // Phones are always stored as trimmed strings: Firestore `==` is
+  // type-strict, so numeric phones break customer invoice filters and
+  // summary matching (leading zeros are lost in numeric storage).
+  function normalizePhoneField(phone: unknown): string | null {
+    const s = String(phone ?? "").trim();
+    return s === "" ? null : s;
+  }
+
   const addCustomer = async (customer: Omit<Customer, "id">) => {
+    const normalized: Omit<Customer, "id"> = { ...customer, phone: normalizePhoneField(customer.phone) };
     const ref = doc(collection(db, "customers"));
     await runTx(async (tx) => {
-      tx.set(ref, customer as Record<string, unknown>);
+      tx.set(ref, normalized as Record<string, unknown>);
       tx.set(doc(db, "store_stats", "current"), { customer_count: increment(1), updated_at: serverTimestamp() }, { merge: true });
       tx.set(doc(db, "customer_summaries", ref.id), {
         customer_id: ref.id,
-        customer_name: customer.name,
-        customer_phone: customer.phone ?? null,
+        customer_name: normalized.name,
+        customer_phone: normalized.phone,
         invoice_count: 0,
         total_sales: 0,
         outstanding_debt: 0,
@@ -31,13 +40,17 @@ export const useCustomersStore = defineStore("customers", () => {
         updated_at: serverTimestamp(),
       });
     });
-    list.value.push({ ...customer, id: ref.id });
+    list.value.push({ ...normalized, id: ref.id });
     return ref;
   };
 
   const updateCustomer = async (id: string, updatedFields: Partial<Customer>) => {
-    const result = await updateItem("customers", id, updatedFields as Record<string, unknown>);
-    if (result !== null) list.value = list.value.map((customer) => customer.id === id ? { ...customer, ...updatedFields } : customer);
+    const normalized: Partial<Customer> =
+      "phone" in updatedFields
+        ? { ...updatedFields, phone: normalizePhoneField(updatedFields.phone) }
+        : updatedFields;
+    const result = await updateItem("customers", id, normalized as Record<string, unknown>);
+    if (result !== null) list.value = list.value.map((customer) => customer.id === id ? { ...customer, ...normalized } : customer);
     return result;
   };
 

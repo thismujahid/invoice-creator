@@ -13,12 +13,19 @@ import { invoiceDayKey, invoiceMonthKey, invoiceStatsOf, sumInvoiceStats } from 
 const CHUNK = 100;
 const MIN_PHONE_DIGITS = 7;
 
-function matchKey(phone: unknown, name: unknown): string | null {
-  const p = normalizePhone(phone);
-  if (p.length < MIN_PHONE_DIGITS) return null;
+/** Customer/invoice link keys: normalized phone + name, with Egypt
+ *  mobile country-code variants (01… ↔ 201…). Matching always requires
+ *  exactly one unambiguous customer across all variants. */
+function matchKeys(phone: unknown, name: unknown): string[] {
+  const digits = normalizePhone(phone);
+  if (digits.length < MIN_PHONE_DIGITS) return [];
   const n = normalizeName(name);
-  if (!n) return null;
-  return `${p}|${n}`;
+  if (!n) return [];
+  const variants = new Set<string>([digits]);
+  if (digits.length === 12 && digits.startsWith("20")) variants.add(`0${digits.slice(2)}`);
+  if (digits.length === 14 && digits.startsWith("0020")) variants.add(`0${digits.slice(4)}`);
+  if (digits.length === 11 && digits.startsWith("01")) variants.add(`20${digits.slice(1)}`);
+  return [...variants].map((p) => `${p}|${n}`);
 }
 
 /** One-time, idempotent, chunked migration tools (F22). No replay of cash. */
@@ -32,9 +39,9 @@ export const useMigration = defineStore("migration", () => {
     return snapshot.docs.map((item) => ({ id: item.id, ...(item.data() as object) }) as T);
   }
 
-  /** Backfill invoice.customer_id ONLY on unambiguous exact matches:
-   *  normalized phone (≥7 digits) + normalized name, exactly one customer.
-   *  Ambiguous or unreliable → left null. Never guesses. */
+  /** Backfill invoice.customer_id ONLY on unambiguous matches:
+   *  normalized phone (≥7 digits, country-code variants tolerated) +
+   *  normalized name, exactly one customer. Ambiguous → left null. */
   async function backfillCustomerIds(
     onProgress?: (done: number, total: number) => void,
   ): Promise<{ total: number; matched: number; skipped: number }> {
@@ -47,18 +54,23 @@ export const useMigration = defineStore("migration", () => {
     const index = new Map<string, string[]>();
     for (const c of customers) {
       if (!c.id) continue;
-      const k = matchKey(c.phone, c.name);
-      if (!k) continue;
-      if (!index.has(k)) index.set(k, []);
-      index.get(k)!.push(c.id);
+      for (const k of matchKeys(c.phone, c.name)) {
+        if (!index.has(k)) index.set(k, []);
+        const bucket = index.get(k)!;
+        if (!bucket.includes(c.id)) bucket.push(c.id);
+      }
     }
     const targets: { id: string; customer_id: string }[] = [];
     for (const inv of invoices) {
       if (!inv.id || inv.customer_id) continue;
-      const k = matchKey(inv.customer_phone, inv.customer_name);
-      if (!k) continue;
-      const hits = index.get(k) ?? [];
-      if (hits.length === 1 && hits[0]) targets.push({ id: inv.id, customer_id: hits[0] });
+      const hits = new Set<string>();
+      for (const k of matchKeys(inv.customer_phone, inv.customer_name)) {
+        for (const id of index.get(k) ?? []) hits.add(id);
+      }
+      if (hits.size === 1) {
+        const only = [...hits][0];
+        if (only) targets.push({ id: inv.id, customer_id: only });
+      }
     }
     let done = 0;
     for (let i = 0; i < targets.length; i += CHUNK) {
@@ -101,9 +113,12 @@ export const useMigration = defineStore("migration", () => {
     let done = 0;
     for (const inv of linked) {
       const c = await getCustomer(inv.customer_id as string);
-      const invKey = matchKey(inv.customer_phone, inv.customer_name);
-      const cusKey = c ? matchKey(c.phone, c.name) : null;
-      if (!c || !invKey || !cusKey || invKey !== cusKey) {
+      // Same tolerant rule as the backfill (country-code variants share a
+      // key): a link is valid if invoice and customer share at least one.
+      const invKeys = new Set(matchKeys(inv.customer_phone, inv.customer_name));
+      const cusKeys = c ? matchKeys(c.phone, c.name) : [];
+      const overlap = cusKeys.some((k) => invKeys.has(k));
+      if (!c || invKeys.size === 0 || !overlap) {
         toClear.push(inv.id as string);
       }
       done += 1;
@@ -119,6 +134,44 @@ export const useMigration = defineStore("migration", () => {
     }
     onProgress?.(linked.length, linked.length);
     return { reviewed: linked.length, kept: linked.length - toClear.length, cleared: toClear.length };
+  }
+
+  /** Normalize phone storage to strings (invoices.customer_phone +
+   *  customers.phone). Firestore `==` is type-strict and numeric storage
+   *  loses leading zeros, silently breaking customer invoice filters and
+   *  summary matching. Idempotent: only non-string phones are touched. */
+  async function normalizeCustomerPhones(
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ invoices: number; customers: number }> {
+    const [invoices, customers] = await Promise.all([
+      readAll<Invoice>("invoices"),
+      readAll<Customer>("customers"),
+    ]);
+    const invoiceTargets = invoices.filter(
+      (inv) => inv.id && inv.customer_phone !== null && inv.customer_phone !== undefined && typeof inv.customer_phone !== "string",
+    );
+    const customerTargets = customers.filter(
+      (c) => c.id && c.phone !== null && c.phone !== undefined && typeof c.phone !== "string",
+    );
+    const writes: { collectionName: string; id: string; phone: string }[] = [];
+    for (const inv of invoiceTargets) {
+      if (inv.id) writes.push({ collectionName: "invoices", id: inv.id, phone: String(inv.customer_phone ?? "").trim() });
+    }
+    for (const c of customerTargets) {
+      if (c.id) writes.push({ collectionName: "customers", id: c.id, phone: String(c.phone ?? "").trim() });
+    }
+    for (let i = 0; i < writes.length; i += CHUNK) {
+      const batch = writeBatch(db);
+      for (const w of writes.slice(i, i + CHUNK)) {
+        batch.update(doc(db, w.collectionName, w.id), {
+          [w.collectionName === "invoices" ? "customer_phone" : "phone"]: w.phone,
+        });
+      }
+      await batch.commit();
+      onProgress?.(Math.min(i + CHUNK, writes.length), writes.length);
+    }
+    onProgress?.(writes.length, writes.length);
+    return { invoices: invoiceTargets.length, customers: customerTargets.length };
   }
 
   /** Explicit opening-stock entry (R4): sets stock_quantity only for products
@@ -408,5 +461,5 @@ export const useMigration = defineStore("migration", () => {
     return { total: invoices.length, updated: targets.length, skipped: invoices.length - targets.length };
   }
 
-  return { backfillCustomerIds, repairCustomerLinks, setOpeningStocks, backfillDebtSummaries, backfillPerformanceSummaries, backfillSupplierInvoiceStatuses };
+  return { backfillCustomerIds, repairCustomerLinks, normalizeCustomerPhones, setOpeningStocks, backfillDebtSummaries, backfillPerformanceSummaries, backfillSupplierInvoiceStatuses };
 });

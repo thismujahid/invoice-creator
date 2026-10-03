@@ -19,7 +19,6 @@
         >
         <!-- HOME delta: no products export (as in home branch). -->
         <FormsProduct
-          :hide-cost="!viewCost"
           @close="productForm = undefined"
           :refresher="loadProds"
           v-model="productFormState"
@@ -28,37 +27,13 @@
           <UButton icon="i-lucide-plus" color="success"
             >إضافة منتج جديد</UButton
           >
-          <template #cost-input-place>
-            <UButton
-              size="xs"
-              color="neutral"
-              variant="soft"
-              :icon="viewCost ? 'i-lucide-eye-off' : 'i-lucide-eye'"
-              @click="handleViewCostClick"
-              >{{ viewCost ? "إخفاء القيمة" : "عرض القيمة" }}</UButton
-            >
-          </template>
         </FormsProduct>
-        <UButton
-          color="success"
-          variant="soft"
-          :icon="viewCost ? 'i-lucide-eye-off' : 'i-lucide-eye'"
-          @click="handleViewCostClick"
-          >{{ viewCost ? "إخفاء القيمة" : "عرض القيمة" }}</UButton
-        >
-        <FormsAuthScreen
-          @close="() => (startView = false)"
-          @success="(value) => (viewCost = value)"
-          v-if="startView"
-          success-text="تم التحقق من الهوية بنجاح... تم عرض القيمة بنجاح"
-          title="برجاء تأكيد هويتك لتتمكن من عرض القيمة"
-        />
       </div>
     </div>
     <ProductsLowStockDialog
       v-model:open="shortagesOpen"
       :products="productsStore.list"
-      :show-cost="viewCost"
+      :show-cost="true"
     />
     <ProductsPurchaseImportDialog
       v-model:open="importOpen"
@@ -113,7 +88,7 @@
         </UiAppDialog>
       </div>
     </div>
-    <USkeleton v-if="loading" class="h-24 w-full" />
+    <UiAppTableSkeleton v-if="loading" />
     <template v-else>
       <!-- Desktop table -->
       <div class="hidden overflow-x-auto md:block">
@@ -123,7 +98,7 @@
               <th class="w-10 p-2"></th>
               <th class="p-2 text-start font-medium">الاسم</th>
               <th class="p-2 text-start font-medium">سعر البيع</th>
-              <th v-if="viewCost" class="p-2 text-start font-medium">
+              <th class="p-2 text-start font-medium">
                 سعر التكلفة
               </th>
               <th class="p-2 text-start font-medium">العدد</th>
@@ -147,7 +122,7 @@
               </td>
               <td class="p-2 font-medium">{{ p.name }}</td>
               <td class="p-2">{{ p.price }}</td>
-              <td v-if="viewCost" class="p-2 text-gray-600">
+              <td class="p-2 text-gray-600">
                 {{ p.cost_price }}
               </td>
               <td class="p-2">{{ p.count }}</td>
@@ -228,7 +203,7 @@
                 <div class="truncate font-bold">{{ p.name }}</div>
                 <div class="text-sm text-gray-500">
                   بيع: {{ p.price }}
-                  <span v-if="viewCost">| تكلفة: {{ p.cost_price }}</span>
+                  <span>| تكلفة: {{ p.cost_price }}</span>
                 </div>
                 <div
                   class="text-xs"
@@ -608,16 +583,14 @@ import type { Invoice, Product } from "~/types";
 import type { ProductUnit } from "~/types";
 import { toDateSafe } from "~/types";
 
-definePageMeta({ title: "المنتجات", middleware: "admin-only" });
+definePageMeta({ title: "المنتجات" });
 const searchText = ref<string>("");
 const { formatePrice } = useHelpers();
 const { round2, round4, toNum, movingAverageCost, proposedSellingPrice, isLowStock, unitsForProduct, purchasableUnitsForProduct, convertUnitPrice } =
   useFinance();
 const productFormState = ref(false);
 const productsStore = useProductsStore();
-const startView = ref(false);
-const viewCost = ref(false);
-const loading = ref(false);
+const loading = ref(true);
 const deleting = ref(false);
 const currentPage = ref(1);
 const currentPerPage = ref(10);
@@ -704,14 +677,6 @@ const paginateArray = computed(() => {
 });
 function isSelected(item: { id?: string }): boolean {
   return !!item.id && selectProducts.value.includes(item.id);
-}
-function handleViewCostClick() {
-  if (viewCost.value) {
-    startView.value = false;
-    viewCost.value = false;
-  } else {
-    startView.value = true;
-  }
 }
 function toggleSelect(item: { id?: string }): void {
   if (!item.id) return;
@@ -1083,5 +1048,12 @@ function createInvoiceFromSelectedProducts(): void {
   } as Invoice;
   void navigateTo("/");
 }
-void loadProds();
+onMounted(async () => {
+  const authed = await useAuthReady();
+  if (!authed) {
+    loading.value = false;
+    return; // layout redirects to /login
+  }
+  await loadProds();
+});
 </script>

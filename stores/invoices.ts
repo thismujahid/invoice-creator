@@ -1,10 +1,10 @@
-import * as XLSX from "xlsx/dist/xlsx.full.min.js";
 import { and, collection, doc, getDocs, limit as fsLimit, orderBy, or, query, startAfter, Timestamp, where, type Query, type QueryDocumentSnapshot } from "firebase/firestore";
 import type { Invoice } from "~/types";
 import { toDateSafe } from "~/types";
 import { applyStockGroup, invoiceEditCashOutflowError, invoiceEditCustomerChangeError, invoiceEditPaymentError, invoiceEditStockChanges, invoiceHasReturnHistory, invoiceTotals, lineBaseQuantity, lineUnitFactor, round2, round4, toNum } from "~/composables/finance";
 import { summarizeInvoice, writeDebtSummary } from "~/composables/debtSummaries";
 import { customerSummaryId, writeCustomerSummaryDelta, writeInvoiceStatsDelta } from "~/composables/performanceSummaries";
+import { formatInvoiceLineName } from "~/composables/helpers";
 
 const STOCK_EPS = 1e-9;
 const INVOICE_PAGE_SIZE = 25;
@@ -27,10 +27,25 @@ export const useInvoicesStore = defineStore("invoices", () => {
     const customerId = String(filters.customer_id ?? "");
     const customerName = String(filters.customer_name ?? "");
     const customerPhone = filters.customer_phone;
-    if (customerId && customerName && customerPhone !== undefined && customerPhone !== "") {
-      q = query(q, or(where("customer_id", "==", customerId), and(where("customer_name", "==", customerName), where("customer_phone", "==", customerPhone))));
+    // Phones are historically mixed string|number in Firestore and `==` is
+    // type-strict: a string param never matches a numeric field (leading
+    // zeros are also lost in numeric storage). Query both spellings so old
+    // invoices link regardless of how the phone was stored.
+    const phoneStr = String(customerPhone ?? "");
+    const phoneDigits = phoneStr.replace(/\D/g, "");
+    const phoneNum = phoneDigits.length >= 7 ? Number(phoneDigits) : NaN;
+    const namePhoneBranches = [
+      and(where("customer_name", "==", customerName), where("customer_phone", "==", customerPhone)),
+    ];
+    if (Number.isFinite(phoneNum)) {
+      namePhoneBranches.push(
+        and(where("customer_name", "==", customerName), where("customer_phone", "==", phoneNum)),
+      );
+    }
+    if (customerId && customerName && phoneStr !== "") {
+      q = query(q, or(where("customer_id", "==", customerId), ...namePhoneBranches));
     } else if (customerId) q = query(q, where("customer_id", "==", customerId));
-    else if (customerName && customerPhone !== undefined && customerPhone !== "") q = query(q, and(where("customer_name", "==", customerName), where("customer_phone", "==", customerPhone)));
+    else if (customerName && phoneStr !== "") q = query(q, or(...namePhoneBranches));
     return q;
   }
 
@@ -557,6 +572,9 @@ export const useInvoicesStore = defineStore("invoices", () => {
   const exportInvoicesToExcel = async (invoices: Invoice[] = []): Promise<string> => {
     try {
       if (!invoices.length) return "⚠️ لا توجد فواتير للتصدير.";
+      // Lazy-load xlsx (~851KB) only when the user actually exports,
+      // so it never blocks initial page load.
+      const XLSX = await import("xlsx/dist/xlsx.full.min.js");
 
       const formatted = invoices.map((inv) => {
         const products = Array.isArray(inv.products) ? inv.products : [];
@@ -575,7 +593,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
         const profit = netTotal - totalCost;
         const productsList = products
           .map((p, i) => {
-            const name = p.product_name || "غير محدد";
+            const name = formatInvoiceLineName(p.product_name || "غير محدد", p.unit_name, p.option);
             const qty = Number(p.product_quantity) || 0;
             const baseQty = Number(p.base_quantity ?? qty) || 0;
             const price = Number(p.product_price) || 0;

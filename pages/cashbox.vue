@@ -19,7 +19,7 @@
       </div>
     </div>
 
-    <USkeleton v-if="cashbox.loading" class="h-24 w-full" />
+    <UiAppStatsSkeleton v-if="cashbox.loading" />
     <!-- Onboarding: opening balance once -->
     <UCard
       v-else-if="!cashbox.initialized"
@@ -106,7 +106,7 @@
 
       <!-- Store-wide totals from the same source + formulas as /invoices -->
       <p class="mb-2 mt-4 text-xs font-bold text-gray-400">إجماليات المحل</p>
-      <USkeleton v-if="statsLoading" class="mb-3 h-24 w-full" />
+      <UiAppStatsSkeleton v-if="statsLoading" />
       <UAlert
         v-else-if="!statsReady"
         color="warning"
@@ -156,7 +156,7 @@
           class="w-48"
         />
       </div>
-      <USkeleton v-if="cashbox.loadingTxns" class="h-24 w-full" />
+      <UiAppTableSkeleton v-if="cashbox.loadingTxns" />
       <template v-else>
         <div class="hidden overflow-x-auto md:block">
           <table class="w-full text-sm">
@@ -303,7 +303,7 @@
     </template>
 
     <!-- Admin migration tools (F22): idempotent, chunked, no cash replay -->
-    <div v-if="isAdmin" class="mt-4 border-t border-gray-100 pt-3">
+    <div class="mt-4 border-t border-gray-100 pt-3">
       <p class="mb-2 text-xs font-bold text-gray-400">
         أدوات التهيئة والترحيل (لمرة واحدة، آمنة التكرار)
       </p>
@@ -313,7 +313,7 @@
             ربط العملاء بالفواتير القديمة
           </div>
           <p class="mb-2 text-xs text-gray-500">
-            مطابقة دقيقة (هاتف + اسم) فقط، وتخطي الغامض. {{ migCustomerMsg }}
+            مطابقة (هاتف + اسم) مع تحمّل بادئة الدولة، وتخطي الغامض. {{ migCustomerMsg }}
           </p>
           <UProgress
             v-if="migCustomerBusy"
@@ -328,6 +328,23 @@
             icon="i-lucide-link"
             @click="runCustomerBackfill"
             >بدء الربط</UButton
+          >
+        </UCard>
+        <UCard variant="outline">
+          <div class="mb-1 text-sm font-bold">توحيد صيغة الهواتف</div>
+          <p class="mb-2 text-xs text-gray-500">
+            يحوّل الهواتف المخزنة كأرقام إلى نصوص (الأرقام تفقد الصفر الأول
+            وتكسر فلترة الفواتير). {{ migPhoneMsg }}
+          </p>
+          <UProgress v-if="migPhoneBusy" :value="migPhonePct" class="mb-2" />
+          <UButton
+            color="neutral"
+            variant="soft"
+            size="sm"
+            :loading="migPhoneBusy"
+            icon="i-lucide-phone"
+            @click="runNormalizePhones"
+            >بدء التوحيد</UButton
           >
         </UCard>
         <UCard variant="outline">
@@ -745,7 +762,7 @@ const repairApi = useInventoryCostRepair();
 const { notify } = useAppToast();
 const { db } = useFirebase();
 const referenceOpen = ref(false);
-const referenceLoading = ref(false);
+const referenceLoading = ref(true);
 const referenceError = ref("");
 const referenceTitle = ref("");
 const referenceInvoice = ref<Invoice | null>(null);
@@ -866,6 +883,9 @@ const migCustomerMsg = ref("");
 const migRepairBusy = ref(false);
 const migRepairPct = ref(0);
 const migRepairMsg = ref("");
+const migPhoneBusy = ref(false);
+const migPhonePct = ref(0);
+const migPhoneMsg = ref("");
 const migStockBusy = ref(false);
 const migStockPct = ref(0);
 const migStockMsg = ref("");
@@ -919,6 +939,23 @@ async function runCustomerBackfill(): Promise<void> {
     notify(migCustomerMsg.value, "error");
   } finally {
     migCustomerBusy.value = false;
+  }
+}
+async function runNormalizePhones(): Promise<void> {
+  migPhoneBusy.value = true;
+  migPhoneMsg.value = "";
+  try {
+    const res = await migration.normalizeCustomerPhones((d, t) => {
+      migPhonePct.value = t ? Math.round((d / t) * 100) : 100;
+    });
+    migPhoneMsg.value = `تم: توحيد ${res.invoices} هاتف فواتير و${res.customers} هاتف عملاء.`;
+    notify("اكتمل توحيد الهواتف.", "success");
+  } catch (error) {
+    console.error("Phone normalization failed:", error);
+    migPhoneMsg.value = `فشل التوحيد: ${migrationErrorDetail(error)}`;
+    notify(migPhoneMsg.value, "error");
+  } finally {
+    migPhoneBusy.value = false;
   }
 }
 async function runRepairLinks(): Promise<void> {
@@ -1067,7 +1104,7 @@ const agg = computed(() => inventoryAggregates(products.list));
 // Store totals from the SAME source + formulas as /invoices (full docs),
 // so the numbers always match. Counts stay server-side (cheap).
 // Loaded in onMounted (never top-level await) so navigation never blocks.
-const statsLoading = ref(false);
+const statsLoading = ref(true);
 const statsReady = ref(false);
 const stats = ref({
   sales: 0,
@@ -1300,8 +1337,16 @@ async function doOpening(): Promise<void> {
   }
 }
 
-onMounted(() => {
-  Promise.all([
+onMounted(async () => {
+  const authed = await useAuthReady();
+  if (!authed) {
+    cashbox.loading = false;
+    cashbox.loadingTxns = false;
+    statsLoading.value = false;
+    referenceLoading.value = false;
+    return; // layout redirects to /login
+  }
+  void Promise.all([
     cashbox.fetchCashbox(),
     cashbox.fetchTransactions(),
     products.fetchProducts(),

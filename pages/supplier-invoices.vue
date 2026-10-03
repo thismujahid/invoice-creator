@@ -7,7 +7,7 @@
     <UAlert v-if="loadError" color="error" variant="soft" :title="loadError"><template #actions><UButton size="xs" color="error" variant="soft" :loading="loading" @click="reload(true)">إعادة المحاولة</UButton></template></UAlert>
     <div class="grid gap-3 sm:grid-cols-3"><UCard variant="outline"><p class="text-xs text-gray-500">فواتير الصفحة</p><b class="text-xl">{{ pageInvoices.length }}</b></UCard><UCard variant="outline"><p class="text-xs text-gray-500">مشتريات الصفحة</p><b class="text-xl">{{ formatePrice(totalPurchases) }} ج</b></UCard><UCard variant="outline"><p class="text-xs text-gray-500">مستحق الصفحة</p><b class="text-xl text-red-600">{{ formatePrice(totalPayable) }} ج</b></UCard></div>
     <div class="flex flex-wrap gap-2"><UInput v-model="search" icon="i-lucide-search" placeholder="بحث بالمورد أو رقم الفاتورة" class="w-full sm:max-w-sm" /><USelect v-model="statusFilter" :items="[{ label: 'كل الحالات', value: 'all' }, { label: 'غير مسددة', value: 'unpaid' }, { label: 'مسددة جزئيًا', value: 'partial' }, { label: 'مسددة', value: 'paid' }]" value-key="value" label-key="label" class="w-full sm:w-44" /></div>
-    <USkeleton v-if="loading" class="h-24 w-full" />
+    <UiAppCardsSkeleton v-if="loading" layout="list" :count="4" />
     <div v-else class="space-y-3">
       <UCard v-for="invoice in visibleInvoices" :key="invoice.id" variant="outline">
         <div class="flex flex-wrap items-start justify-between gap-3">
@@ -21,7 +21,10 @@
 
     <UiAppDialog v-model:open="draftOpen" :title="draftSource ? 'مسودة فاتورة جديدة من فاتورة سابقة' : 'فاتورة مورد جديدة'">
       <div class="max-h-[65vh] space-y-4 overflow-y-auto pe-1">
-        <UFormField label="المورد" required><USelectMenu v-model="draftSupplier" :items="suppliers.list" label-key="name" by="id" placeholder="اختر المورد" class="w-full" /></UFormField>
+        <UFormField label="المورد" required>
+          <USelectMenu :model-value="(draftSupplier ?? null) as Supplier | undefined" :items="supplierMenuItems" label-key="name" by="id" placeholder="اختر المورد" class="w-full" @update:model-value="(s) => onPickDraftSupplier(s)" />
+          <FormsSupplier v-model="showSupplierModal" :refresher="reloadSuppliers" @done="onDraftSupplierCreated" />
+        </UFormField>
         <UFormField v-if="draftSource && !draftSupplier" label="اسم المورد في الفاتورة السابقة" required><UInput v-model="supplierName" placeholder="اسم المورد" class="w-full" /></UFormField>
         <UFormField label="رقم فاتورة المورد"><UInput v-model="supplierRef" dir="ltr" class="w-full" /></UFormField>
         <div v-for="(line, index) in draftLines" :key="line.key" class="space-y-2 rounded-xl border border-gray-200 p-3">
@@ -89,6 +92,29 @@ const draftOpen = ref(false);
 const draftSource = ref<PurchaseInvoice | null>(null);
 const draftLines = ref<DraftLine[]>([]);
 const draftSupplier = ref<Supplier | undefined>();
+const CREATE_SUPPLIER_ID = "__create__";
+const showSupplierModal = ref(false);
+const supplierMenuItems = computed<Supplier[]>(() => [
+  { id: CREATE_SUPPLIER_ID, name: "+ إضافة مورد جديد" } as Supplier,
+  ...suppliers.list,
+]);
+function onPickDraftSupplier(s: Supplier | null | undefined): void {
+  if (!s) {
+    draftSupplier.value = undefined;
+    return;
+  }
+  if (s.id === CREATE_SUPPLIER_ID) {
+    showSupplierModal.value = true;
+    return;
+  }
+  draftSupplier.value = suppliers.list.find((item) => item.id === s.id) ?? s;
+}
+async function reloadSuppliers(): Promise<void> {
+  await suppliers.fetchSuppliers(true);
+}
+function onDraftSupplierCreated(s: Supplier | null | undefined): void {
+  if (s?.id) draftSupplier.value = suppliers.list.find((item) => item.id === s.id) ?? s;
+}
 const supplierName = ref("");
 const supplierRef = ref("");
 const paidNow = ref<number | undefined>(0);
@@ -236,6 +262,8 @@ async function previousPage(): Promise<void> { if (pageNumber.value <= 1 || load
 watch(statusFilter, () => { void reload(true); });
 watch(() => route.query.supplier, () => { void reload(true); });
 onMounted(async () => {
+  const authed = await useAuthReady();
+  if (!authed) return; // layout redirects to /login
   await Promise.all([reload(true), productsStore.fetchProducts(), suppliers.fetchSuppliers(), cashbox.fetchCashbox()]);
   if (route.query.new === "1") startDraft();
   else if (route.query.invoice) {

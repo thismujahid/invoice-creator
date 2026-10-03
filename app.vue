@@ -1,6 +1,7 @@
 <template>
   <UApp>
     <UToaster />
+    <NuxtLoadingIndicator color="#10b981" />
     <NuxtLayout>
       <NuxtRouteAnnouncer />
       <NuxtPage />
@@ -11,11 +12,25 @@
 useSeoMeta({ title: "قريتي" });
 useHead({
   htmlAttrs: { dir: "rtl", lang: "ar" },
-  link: [{ rel: "manifest", href: "/site.webmanifest" }],
+  link: [
+    { rel: "manifest", href: "/site.webmanifest" },
+    { rel: "preconnect", href: "https://fonts.googleapis.com" },
+    {
+      rel: "preconnect",
+      href: "https://fonts.gstatic.com",
+      crossorigin: "",
+    },
+    {
+      rel: "stylesheet",
+      href: "https://fonts.googleapis.com/css2?family=Baloo+Bhaijaan+2:wght@400..800&display=swap",
+      media: "all",
+    },
+  ],
 });
 </script>
 <style>
-@import url("https://fonts.googleapis.com/css2?family=Baloo+Bhaijaan+2:wght@400..800&display=swap");
+/* Font loaded via <link> in useHead above (non render-blocking @import
+   removed): preconnect + display=swap avoids blocking first paint. */
 *::-webkit-scrollbar {
   width: 8px;
   height: 8px;

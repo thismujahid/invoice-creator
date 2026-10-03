@@ -90,6 +90,23 @@ export function calcLineTotal(form: Pick<InvoiceProductLine, "product_price" | "
   return price * qty;
 }
 
+/** Display name for an invoice line: unit as prefix, option as suffix.
+ *  e.g. unit "مكعب" + product "مرقة دجاج" → "مكعب مرقة دجاج",
+ *  with option → "مكعب مرقة دجاج (حار)". */
+export function formatInvoiceLineName(
+  product_name: unknown,
+  unit_name?: unknown,
+  option?: unknown,
+): string {
+  const product = String(product_name ?? "").trim();
+  const unit = String(unit_name ?? "").trim();
+  const opt = String(option ?? "").trim();
+  let base = product;
+  if (unit) base = product ? `${unit} ${product}` : unit;
+  if (opt) base = base ? `${base} (${opt})` : `(${opt})`;
+  return base;
+}
+
 export function discountAmountFor(invoice: Pick<Invoice, "discount" | "discount_percentage"> & { products?: InvoiceProductLine[] } & Record<string, unknown>): number {
   if (invoice.discount && invoice.discount_percentage) {
     return (calcTotal(invoice as unknown as Invoice) * Number(invoice.discount)) / 100;
@@ -132,4 +149,5 @@ export const useHelpers = () => ({
   calcTotal,
   calcLineTotal,
   discountAmountFor,
+  formatInvoiceLineName,
 });

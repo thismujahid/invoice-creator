@@ -1,5 +1,8 @@
 <template>
-  <div v-if="!initFirebase && isAuthed">
+  <!-- The page outlet below is intentionally unconditional: pages mount
+    immediately and render their own skeletons while auth/data load, so the
+    router integration never sees a missing <NuxtPage /> (NUXT_E4011). -->
+  <div>
     <div id="printableArea" class="printable-area"></div>
     <div id="app-shell" class="flex min-h-dvh flex-col bg-gray-50" dir="rtl">
       <!-- Top bar -->
@@ -18,7 +21,7 @@
           <span class="hidden shrink-0 text-xs text-gray-400 md:block">{{
             todayLine
           }}</span>
-          <UDropdownMenu :items="userMenu">
+          <UDropdownMenu v-if="!isLoginRoute" :items="userMenu">
             <div
               class="flex shrink-0 cursor-pointer items-center gap-2 rounded-full py-1 pe-1 ps-1"
             >
@@ -43,6 +46,7 @@
         class="mx-auto flex w-full max-w-6xl min-w-0 flex-1 items-start gap-3 px-3 py-4 md:px-4"
       >
         <aside
+          v-if="!isLoginRoute"
           class="sticky top-18 bottom-none z-20 hidden w-38 shrink-0 flex-col items-center rounded-lg border border-gray-200 bg-white py-3 md:py-0 shadow-sm sm:flex"
           aria-label="التنقل الرئيسي"
         >
@@ -103,6 +107,7 @@
 
       <!-- Mobile bottom bar: exactly 4 primary items; المزيد opens the rest -->
       <nav
+        v-if="!isLoginRoute"
         class="fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur sm:hidden"
         aria-label="التنقل السريع"
       >
@@ -156,24 +161,11 @@
       </nav>
       <!-- Spacer so the fixed bar never covers footer content on mobile -->
       <div
+        v-if="!isLoginRoute"
         aria-hidden="true"
         class="h-[calc(3.5rem+env(safe-area-inset-bottom))] sm:hidden"
       />
     </div>
-  </div>
-  <div
-    v-else-if="!initFirebase && !isAuthed"
-    class="flex min-h-dvh items-center justify-center bg-gray-50 p-4"
-    dir="rtl"
-  >
-    <FormsAuthScreen
-      :is-in-login="true"
-      @success="(v) => (isAuthed = v)"
-    />
-  </div>
-  <div v-else class="flex h-screen w-full items-center justify-center gap-3">
-    جاري التحميل...
-    <UIcon name="i-lucide-loader-circle" class="size-5 animate-spin" />
   </div>
 </template>
 
@@ -203,9 +195,7 @@ const tabItems = computed(() => [
   { label: "دفتر الديون", icon: "i-lucide-notebook-text", to: "/debts" },
   { label: "الفواتير", icon: "i-lucide-files", to: "/invoices" },
   { label: "الخزنة", icon: "i-lucide-vault", to: "/cashbox" },
-  ...(isAdmin.value
-    ? [{ label: "المنتجات", icon: "i-lucide-layout-grid", to: "/products" }]
-    : []),
+  { label: "المنتجات", icon: "i-lucide-layout-grid", to: "/products" },
   { label: "العملاء", icon: "i-lucide-users", to: "/customers" },
   { label: "الموردون", icon: "i-lucide-truck", to: "/suppliers" },
   {
@@ -259,14 +249,74 @@ async function logout(): Promise<void> {
     authStore.clearSession();
     logoutConfirm.value = false;
     notify("لقد تم إغلاق التطبيق بنجاح، إلى اللقاء", "success");
+    await navigateTo("/login", { replace: true });
   } finally {
     loggingOut.value = false;
   }
 }
 const toast = useToast();
 auth.languageCode = "ar";
-const initFirebase = ref(true);
+// The page outlet above is always mounted (pages show skeletons while
+// auth/data resolve), so auth only drives redirects + user data here.
 const isAuthed = ref<boolean>(!!auth.currentUser);
+const isLoginRoute = computed(() => route.path === "/login");
+let authSettled = false;
+let authTimer: ReturnType<typeof setTimeout> | undefined;
+const AUTH_TIMEOUT_MS = 8000;
+
+function redirectForAuth(authed: boolean): void {
+  if (!authed && route.path !== "/login") {
+    void navigateTo("/login", { replace: true });
+  } else if (authed && route.path === "/login") {
+    void navigateTo("/", { replace: true });
+  }
+}
+
+function applyAuthUser(user: User | null): void {
+  const authed = !!user;
+  isAuthed.value = authed;
+  reportAuthState(authed); // unblocks pages awaiting useAuthReady()
+  if (user) {
+    authStore.userData = {
+      name: user.displayName,
+      email: user.email,
+      phone: user.phoneNumber,
+      avatar: user.photoURL,
+      id: user.uid,
+    };
+  } else {
+    authStore.userData = null;
+  }
+  if (!authSettled) {
+    authSettled = true;
+    if (authTimer) clearTimeout(authTimer);
+    redirectForAuth(authed);
+  }
+}
+
+if (import.meta.client) {
+  // Watchdog: if the first callback never fires (offline/blocked storage),
+  // unblock waiting pages so they fall through to /login instead of
+  // skeleton-forever. The listener stays alive and corrects late.
+  authTimer = setTimeout(() => {
+    if (!authSettled) {
+      authSettled = true;
+      const authed = !!auth.currentUser;
+      isAuthed.value = authed;
+      reportAuthState(authed);
+      redirectForAuth(authed);
+    }
+  }, AUTH_TIMEOUT_MS);
+}
+const stopAuthListener = auth.onAuthStateChanged(applyAuthUser);
+onUnmounted(() => {
+  stopAuthListener();
+  if (authTimer) clearTimeout(authTimer);
+});
+// Later auth changes (sign-out, revoked token): keep the route in sync.
+watch(isAuthed, (v) => {
+  if (authSettled) redirectForAuth(v);
+});
 // Single toast render path: writers set snackBarText, we show + consume.
 watch(
   () => authStore.snackBarText,
@@ -282,30 +332,6 @@ watch(
             : "success",
     });
     authStore.snackBarText = "";
-  },
-);
-auth.onAuthStateChanged(
-  (user: User | null) => {
-    setTimeout(() => {
-      isAuthed.value = !!user;
-      initFirebase.value = false;
-      if (user) {
-        authStore.userData = {
-          name: user.displayName,
-          email: user.email,
-          phone: user.phoneNumber,
-          avatar: user.photoURL,
-          id: user.uid,
-        };
-      } else {
-        authStore.userData = null;
-      }
-    }, 100);
-  },
-  (err: unknown) => {
-    isAuthed.value = false;
-    initFirebase.value = false;
-    console.error(err);
   },
 );
 </script>

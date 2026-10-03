@@ -5,7 +5,7 @@
       <UButton color="success" icon="i-lucide-plus" @click="openEditor()">إضافة مورد</UButton>
     </header>
     <UInput v-model="search" icon="i-lucide-search" placeholder="ابحث عن مورد" class="w-full sm:max-w-sm" />
-    <USkeleton v-if="loading" class="h-24 w-full" />
+    <UiAppCardsSkeleton v-if="loading" />
     <div v-else class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
       <UCard v-for="supplier in filtered" :key="supplier.id" variant="outline">
         <div class="flex items-start justify-between gap-3">
@@ -80,6 +80,8 @@ async function removeSupplier(supplier: Supplier): Promise<void> {
   } finally { deleting.value = ""; }
 }
 onMounted(async () => {
+  const authed = await useAuthReady();
+  if (!authed) return; // layout redirects to /login
   loading.value = true;
   try {
     const { db } = useFirebase();

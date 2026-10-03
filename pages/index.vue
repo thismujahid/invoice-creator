@@ -13,27 +13,12 @@
             تحديث الفاتورة
           </UButton>
           <UButton
-            v-if="isAdmin"
-            color="success"
-            variant="soft"
-            :icon="viewCost ? 'i-lucide-eye-off' : 'i-lucide-eye'"
-            @click="handleViewCostClick"
-            >{{ viewCost ? "إخفاء القيمة" : "عرض القيمة" }}</UButton
-          >
-          <UButton
             color="neutral"
             variant="soft"
             icon="i-lucide-refresh-cw"
             @click="invoiceData.time = new Date()"
             >تحديث الوقت</UButton
           >
-          <FormsAuthScreen
-            @close="() => (startView = false)"
-            @success="(value) => (viewCost = value)"
-            v-if="startView && isAdmin"
-            success-text="تم عرض القيمة"
-            title="برجاء تأكيد هويتك لتتمكن من عرض القيمة"
-          />
         </div>
         <UAlert
           v-if="lowStockCount > 0"
@@ -255,10 +240,7 @@
             >
               <div class="min-w-0">
                 <div class="truncate text-sm font-bold text-gray-900">
-                  {{ form.product_name || "—" }}
-                  <span v-if="form.option" class="font-normal text-gray-500"
-                    >({{ form.option }})</span
-                  >
+                  {{ form.product_name ? formatInvoiceLineName(form.product_name, form.unit_name, form.option) : "—" }}
                 </div>
                 <div class="mt-0.5 text-[11px] text-gray-400">
                   المتاح بالمخزون: {{ stockOf(form) }}
@@ -335,7 +317,7 @@
             <div v-else>
               <div class="mb-2 flex items-center justify-between">
                 <span class="text-xs font-bold text-gray-400">
-                  {{ form.product_name || `منتج #${index + 1}` }}
+                  {{ form.product_name ? formatInvoiceLineName(form.product_name, form.unit_name, form.option) : `منتج #${index + 1}` }}
                 </span>
                 <div class="flex shrink-0 gap-1.5">
                   <UButton
@@ -452,7 +434,7 @@
                     class="w-full"
                     :color="isCostGreaterThanPrice(form) ? 'error' : undefined"
                   />
-                  <template v-if="form.product_cost_price && viewCost" #hint>
+                  <template v-if="form.product_cost_price" #hint>
                     <span class="text-xs text-gray-500"
                       >التكلفة ({{ form.product_cost_price }})</span
                     >
@@ -483,8 +465,39 @@
             </div>
           </div>
         </div>
-        <div v-else class="my-3 text-center text-gray-500">
-          جاري تحميل المنتجات... الرجاء الإنتظار
+        <div v-else class="space-y-3" aria-hidden="true">
+          <div class="mb-3 flex flex-wrap justify-end gap-2">
+            <USkeleton class="h-9 w-32 rounded-md" />
+            <USkeleton class="h-9 w-28 rounded-md" />
+          </div>
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div v-for="i in 9" :key="i">
+              <USkeleton class="h-4 w-1/3" />
+              <USkeleton class="mt-1.5 h-11 w-full rounded-md" />
+            </div>
+          </div>
+          <div
+            class="mb-2 mt-4 flex items-center justify-between border-t border-gray-100 pt-3"
+          >
+            <USkeleton class="h-4 w-24" />
+            <USkeleton class="h-7 w-28 rounded-md" />
+          </div>
+          <div class="space-y-3">
+            <div
+              v-for="i in 2"
+              :key="i"
+              class="rounded-lg border border-gray-200 p-3"
+            >
+              <USkeleton class="h-5 w-1/2" />
+              <USkeleton class="mt-1.5 h-3 w-1/4" />
+              <div class="mt-2 flex items-center gap-1.5">
+                <USkeleton class="h-7 w-7 rounded-md" />
+                <USkeleton class="h-7 w-20 rounded-md" />
+                <USkeleton class="h-7 w-7 rounded-md" />
+                <USkeleton class="h-4 w-24" />
+              </div>
+            </div>
+          </div>
         </div>
       </UCard>
 
@@ -496,8 +509,37 @@
           @reset="resetInvoice"
           @saved="(id) => (invoiceData.id = id)"
         />
-        <div v-else class="my-3 text-center text-gray-500">
-          جاري تحميل المنتجات... الرجاء الإنتظار
+        <div
+          v-else
+          class="overflow-hidden rounded-xl border border-gray-200 bg-white"
+          aria-hidden="true"
+        >
+          <div
+            class="flex items-center justify-between gap-3 border-b border-gray-100 p-4"
+          >
+            <USkeleton class="h-12 w-28" />
+            <div class="min-w-0 flex-1">
+              <USkeleton class="h-5 w-1/2" />
+              <USkeleton class="mt-1.5 h-3 w-1/3" />
+            </div>
+          </div>
+          <div class="space-y-2 p-4">
+            <USkeleton class="h-4 w-2/3" />
+            <USkeleton class="h-4 w-1/2" />
+            <USkeleton class="h-4 w-3/5" />
+          </div>
+          <div class="mx-4 overflow-hidden rounded-lg border border-gray-100">
+            <USkeleton class="h-8 w-full rounded-none" />
+            <USkeleton class="h-10 w-full rounded-none" />
+            <USkeleton class="h-10 w-full rounded-none" />
+          </div>
+          <div class="flex justify-end p-4">
+            <USkeleton class="h-6 w-32" />
+          </div>
+          <div class="flex gap-2 border-t border-gray-100 p-4">
+            <USkeleton class="h-10 flex-1 rounded-md" />
+            <USkeleton class="h-10 flex-1 rounded-md" />
+          </div>
         </div>
       </div>
     </div>
@@ -509,7 +551,7 @@ import { toDateSafe } from "~/types";
 import type { ProductUnit } from "~/types";
 
 definePageMeta({ title: "إنشاء فاتورة" });
-const { formatDate, formatTime12Hour, formatePrice, calcTotal } = useHelpers();
+const { formatDate, formatTime12Hour, formatePrice, calcTotal, formatInvoiceLineName } = useHelpers();
 const { isLowStock, unitsForProduct, sellableUnitsForProduct, unitSellingPrice, lineBaseQuantity } = useFinance();
 const products = useProductsStore();
 const lowStockCount = computed(() => products.list.filter((p) => isLowStock(p)).length);
@@ -518,11 +560,9 @@ const customers = useCustomersStore();
 const authStore = useAuth();
 const { notify } = useAppToast();
 const updating = ref(false);
-const loadingCustomers = ref(false);
-const loadingProds = ref(false);
+const loadingCustomers = ref(true);
+const loadingProds = ref(true);
 const containerRef = ref<HTMLElement | null>(null);
-const startView = ref(false);
-const viewCost = ref(false);
 
 function emptyLine(): InvoiceProductLine {
   return {
@@ -593,7 +633,6 @@ function isCostGreaterThanPrice(
   product: Pick<InvoiceProductLine, "product_price" | "product_cost_price">,
 ): boolean {
   return (
-    isAdmin.value &&
     Number(product.product_price) < Number(product.product_cost_price)
   );
 }
@@ -652,7 +691,10 @@ function onPickCustomer(cus: Customer | null | undefined): void {
   // Re-resolve against the store so display/model always use the canonical
   // object (never a stale dropdown copy).
   const real = customers.list.find((c) => c.id === cus.id) ?? cus;
-  invoiceData.value.customer_phone = real?.phone ?? null;
+  // Phones must stay strings: Firestore `==` is type-strict and numeric
+  // storage loses leading zeros, breaking customer invoice filters.
+  const pickedPhone = String(real?.phone ?? "").trim();
+  invoiceData.value.customer_phone = pickedPhone === "" ? null : pickedPhone;
   invoiceData.value.customer_name = real?.name ?? null;
   // F16: reliable link for debt aggregation (snapshots preserved).
   invoiceData.value.customer_id = real?.id ?? null;
@@ -991,14 +1033,6 @@ function updateProdsPrices(preserveHistoricalCosts = false): void {
     }
   });
 }
-function handleViewCostClick(): void {
-  if (viewCost.value) {
-    startView.value = false;
-    viewCost.value = false;
-  } else {
-    startView.value = true;
-  }
-}
 async function updateInvoiceData(): Promise<void> {
   updating.value = true;
   try {
@@ -1012,6 +1046,12 @@ async function updateInvoiceData(): Promise<void> {
   }
 }
 onMounted(async () => {
+  const authed = await useAuthReady();
+  if (!authed) {
+    loadingCustomers.value = false;
+    loadingProds.value = false;
+    return; // layout redirects to /login
+  }
   if (invoices.invoiceToEdit) {
     // HOME delta: don't let the autosync overwrite a stored paid_amount.
     blockUpdatePaidAmount.value = true;

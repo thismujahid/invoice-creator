@@ -37,7 +37,6 @@
 </template>
 
 <script setup lang="ts">
-import * as XLSX from "xlsx/dist/xlsx.full.min.js";
 import type { Product } from "~/types";
 
 const props = defineProps<{ products: Product[]; showCost: boolean }>();
@@ -53,7 +52,8 @@ const rows = computed(() => {
     .sort((a, b) => toNum(a.stock_quantity) - toNum(b.stock_quantity) || a.name.localeCompare(b.name));
 });
 
-function exportOrder(): void {
+async function exportOrder(): Promise<void> {
+  const XLSX = await import("xlsx/dist/xlsx.full.min.js");
   const data = [
     ["رقم المنتج", "اسم المنتج", "الكمية المطلوبة", "تكلفة شراء الوحدة"],
     ...rows.value.map((p) => [p.id ?? "", p.name, "", toNum(p.cost_price)]),
