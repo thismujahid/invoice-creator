@@ -1,6 +1,17 @@
-import { collection, doc, getDocs, limit as fsLimit, orderBy, query, startAfter, where, type QueryDocumentSnapshot } from "firebase/firestore";
+import { collection, doc, getDocs, limit as fsLimit, onSnapshot, orderBy, query, startAfter, where, type QueryDocumentSnapshot, type Unsubscribe } from "firebase/firestore";
 import type { CashDirection, CashTransaction, CashTransactionType, Cashbox } from "~/types/finance";
 import { round2 } from "./finance";
+
+let cashboxUnsub: Unsubscribe | null = null;
+let cashboxSession = 0;
+let cashboxUid: string | null = null;
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    cashboxUnsub?.();
+    cashboxUnsub = null;
+  });
+}
 
 export interface CashAdjustInput {
   type: CashTransactionType;
@@ -30,10 +41,56 @@ export const useCashbox = defineStore("cashbox", () => {
   const transactionsHasMore = ref(false);
   const transactionCursors = ref<(QueryDocumentSnapshot | null)[]>([null]);
   const transactionFilter = ref<string | null>(null);
+  const revision = ref(0);
 
   const CASHBOX_REF = () => doc(db, "cashbox", "current");
 
+  function ensureCashboxSubscription(): void {
+    if (!import.meta.client) return;
+    const uid = useFirebase().auth.currentUser?.uid ?? null;
+    if (!uid) return;
+    if (cashboxUnsub) {
+      if (cashboxUid === uid) return;
+      stopCashboxSubscription();
+    }
+    cashboxUid = uid;
+    const session = ++cashboxSession;
+    cashboxUnsub = onSnapshot(
+      CASHBOX_REF(),
+      { includeMetadataChanges: true },
+      (snap) => {
+        if (session !== cashboxSession || !cashboxUnsub) return;
+        if ((useFirebase().auth.currentUser?.uid ?? null) !== uid) return;
+        initialized.value = snap.exists();
+        balance.value = snap.exists() ? round2(Number(snap.data().balance || 0)) : 0;
+        loading.value = false;
+        revision.value += 1;
+      },
+      (error) => {
+        if (session !== cashboxSession) return;
+        if ((error as { code?: string }).code === "permission-denied") stopCashboxSubscription();
+        loading.value = false;
+      },
+    );
+  }
+
+  function stopCashboxSubscription(): void {
+    cashboxSession += 1;
+    cashboxUnsub?.();
+    cashboxUnsub = null;
+  }
+
+  function clearCashbox(): void {
+    stopCashboxSubscription();
+    cashboxUid = null;
+    balance.value = 0;
+    initialized.value = false;
+    loading.value = true;
+    transactions.value = [];
+  }
+
   async function fetchCashbox(): Promise<void> {
+    if (cashboxUnsub) return;
     loading.value = true;
     try {
       const snap = await getDoc(CASHBOX_REF());
@@ -90,7 +147,8 @@ export const useCashbox = defineStore("cashbox", () => {
    *  transactionally (not via client flag) so concurrent tabs can't double-apply. */
   async function adjustCash(input: CashAdjustInput): Promise<{ ok: true } | { ok: false; error: string }> {
     const amount = round2(input.amount);
-    if (!Number.isFinite(amount) || amount <= 0) {
+    const opening = input.type === "opening_balance";
+    if (!Number.isFinite(amount) || amount < 0 || (!opening && amount <= 0)) {
       return { ok: false, error: "المبلغ يجب أن يكون أكبر من صفر." };
     }
     try {
@@ -117,23 +175,25 @@ export const useCashbox = defineStore("cashbox", () => {
           },
           { merge: true },
         );
-        const logRef = doc(collection(db, "cash_transactions"));
-        tx.set(logRef, {
-          type: input.type,
-          direction: input.direction,
-          amount,
-          customer_id: input.customer_id ?? null,
-          invoice_id: input.invoice_id ?? null,
-          return_id: input.return_id ?? null,
-          loan_id: input.loan_id ?? null,
-          product_id: input.product_id ?? null,
-          reference_type: input.invoice_id ? "invoice" : input.loan_id ? "loan" : input.return_id ? "return" : input.product_id ? "product" : "manual",
-          reference_id: input.invoice_id ?? input.loan_id ?? input.return_id ?? input.product_id ?? null,
-          reference_label: input.invoice_id ? "فاتورة بيع لـ عميل" : input.loan_id ? "سلفة عميل" : input.return_id ? "مرتجع فاتورة" : input.product_id ? "تسوية مخزون" : input.direction === "in" ? "إيداع نقدي" : "سحب نقدي",
-          note: input.note ?? null,
-          created_by: (authStore.currentUserKey as string) || null,
-          created_at: now,
-        });
+        if (amount > 0) {
+          const logRef = doc(collection(db, "cash_transactions"));
+          tx.set(logRef, {
+            type: input.type,
+            direction: input.direction,
+            amount,
+            customer_id: input.customer_id ?? null,
+            invoice_id: input.invoice_id ?? null,
+            return_id: input.return_id ?? null,
+            loan_id: input.loan_id ?? null,
+            product_id: input.product_id ?? null,
+            reference_type: input.invoice_id ? "invoice" : input.loan_id ? "loan" : input.return_id ? "return" : input.product_id ? "product" : "manual",
+            reference_id: input.invoice_id ?? input.loan_id ?? input.return_id ?? input.product_id ?? null,
+            reference_label: input.invoice_id ? "فاتورة بيع لـ عميل" : input.loan_id ? "سلفة عميل" : input.return_id ? "مرتجع فاتورة" : input.product_id ? "تسوية مخزون" : input.direction === "in" ? "إيداع نقدي" : "سحب نقدي",
+            note: input.note ?? null,
+            created_by: (authStore.currentUserKey as string) || null,
+            created_at: now,
+          });
+        }
       });
       balance.value = resultingBalance;
       initialized.value = true;
@@ -160,5 +220,5 @@ export const useCashbox = defineStore("cashbox", () => {
     return adjustCash({ type: "opening_balance", direction: "in", amount, note: note || "رصيد افتتاحي" });
   }
 
-  return { balance, initialized, loading, transactions, loadingTxns, transactionsPage, transactionsHasMore, fetchCashbox, fetchTransactions, nextTransactionsPage, previousTransactionsPage, adjustCash, ensureOpeningBalance };
+  return { balance, initialized, loading, transactions, loadingTxns, transactionsPage, transactionsHasMore, revision, transactionFilter, ensureCashboxSubscription, stopCashboxSubscription, clearCashbox, fetchCashbox, fetchTransactions, nextTransactionsPage, previousTransactionsPage, adjustCash, ensureOpeningBalance };
 });

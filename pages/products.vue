@@ -664,7 +664,7 @@ const purchaseCountText = computed(() =>
 const shortagesOpen = ref(false);
 const importOpen = ref(false);
 const lowStockCount = computed(
-  () => productsStore.list.filter((p) => isLowStock(p)).length,
+  () => productsStore.lowStockCount + productsStore.outOfStockProducts.length,
 );
 async function refreshAfterPurchase(): Promise<void> {
   await Promise.all([productsStore.fetchProducts(), cashbox.fetchCashbox()]);
@@ -1083,6 +1083,7 @@ onMounted(async () => {
     loading.value = false;
     return; // layout redirects to /login
   }
+  productsStore.ensureInventorySubscription();
   await loadProds();
 });
 </script>

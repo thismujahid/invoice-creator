@@ -368,13 +368,14 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
           date: (fresh.date as unknown) ?? null,
           ...summarizeInvoice({ ...fresh, remaining: round2(remainingDebt - debtReduction) }),
         });
+        const returnedCost = round2(retItems.reduce((s, i) => s + toNum(i.original_unit_cost) * toNum(i.base_quantity ?? i.quantity), 0));
         writeInvoiceStatsDelta(tx, db, fresh, {
           ...fresh,
           remaining: updatedRemaining,
           returned: mergedReturned,
           returned_base_quantity: returnedBaseQuantity,
           return_status: updatedReturnStatus,
-        }, { count: 1, total: totalRefund }, returnDate);
+        }, { count: 1, total: totalRefund, profit: round2(totalRefund - returnedCost) }, returnDate);
         writeCustomerSummaryDelta(tx, db, fresh, { outstanding_debt: -debtReduction });
         if (cashRefund > 0) {
           const cRef = doc(db, "cashbox", "current");

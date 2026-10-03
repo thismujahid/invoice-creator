@@ -306,6 +306,7 @@ watch(() => route.query.supplier, () => { void reload(true); });
 onMounted(async () => {
   const authed = await useAuthReady();
   if (!authed) return; // layout redirects to /login
+  productsStore.ensureInventorySubscription();
   await Promise.all([reload(true), productsStore.fetchProducts(), suppliers.fetchSuppliers(), cashbox.fetchCashbox()]);
   if (route.query.new === "1") startDraft();
   else if (route.query.invoice) {

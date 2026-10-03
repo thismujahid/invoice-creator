@@ -172,8 +172,11 @@ import type { DropdownMenuItem } from "#ui/types";
 import type { User } from "firebase/auth";
 const route = useRoute();
 const authStore = useAuth();
+const productsStore = useProductsStore();
+const cashboxStore = useCashbox();
 const { auth } = useFirebase();
 const { notify } = useAppToast();
+useLowStockAlerts();
 
 const logoutConfirm = ref(false);
 const loggingOut = ref(false);
@@ -245,6 +248,9 @@ async function logout(): Promise<void> {
     await auth.signOut();
     // FLAG [S9]: clear role cookie on logout (was surviving before).
     authStore.clearSession();
+    productsStore.clearInventory();
+    cashboxStore.clearCashbox();
+    resetLowStockAlerts();
     logoutConfirm.value = false;
     notify("لقد تم إغلاق التطبيق بنجاح، إلى اللقاء", "success");
     await navigateTo("/login", { replace: true });
@@ -314,6 +320,14 @@ onUnmounted(() => {
 // Later auth changes (sign-out, revoked token): keep the route in sync.
 watch(isAuthed, (v) => {
   if (authSettled) redirectForAuth(v);
+  if (v) {
+    productsStore.ensureInventorySubscription();
+    cashboxStore.ensureCashboxSubscription();
+  } else {
+    productsStore.clearInventory();
+    cashboxStore.clearCashbox();
+    resetLowStockAlerts();
+  }
 });
 // Single toast render path: writers set snackBarText, we show + consume.
 watch(

@@ -165,7 +165,7 @@
                   v-if="qtyExceeds(form)"
                   class="mt-0.5 text-xs font-bold text-red-600"
                 >
-                  تتجاوز المتاح بالمخزون ({{ stockOf(form) }} {{ form.unit_name || "وحدة أساسية" }}) — لن تُحفظ
+                  {{ exceedText(form) }} — لن تُحفظ
                 </div>
               </div>
               <div class="flex shrink-0 gap-1.5">
@@ -297,7 +297,7 @@
                       v-if="form.product_id && qtyExceeds(form)"
                       class="block text-xs font-bold text-red-600"
                     >
-                      الكمية تتجاوز المتاح بالمخزون!
+                      {{ exceedText(form) }}
                     </span>
                   </template>
                 </UFormField>
@@ -309,10 +309,14 @@
                     class="w-full"
                     :color="isCostGreaterThanPrice(form) ? 'error' : undefined"
                   />
-                  <template v-if="form.product_cost_price" #hint>
-                    <span class="text-xs text-gray-500"
+                  <template v-if="form.product_cost_price || priceHintOf(form) !== null" #hint>
+                    <span v-if="form.product_cost_price" class="block text-xs text-gray-500"
                       >متوسط التكلفة: {{ formatePrice(Number(form.product_cost_price ?? 0) * Number(form.unit_factor || 1)) }} ج / {{ form.unit_name || "وحدة" }}</span
                     >
+                    <span v-if="priceHintOf(form) !== null" class="flex items-center justify-between gap-2 text-xs text-amber-700">
+                      <span>سعر البيع الحالي: {{ formatePrice(priceHintOf(form)) }}</span>
+                      <UButton size="xs" color="warning" variant="soft" @click="applyCurrentPrice(form)">تطبيق</UButton>
+                    </span>
                   </template>
                 </UFormField>
                 <UFormField label="الإجمالي">
@@ -552,9 +556,9 @@ import type { ProductUnit } from "~/types";
 
 definePageMeta({ title: "إنشاء فاتورة" });
 const { formatePrice, calcTotal, formatInvoiceLineName } = useHelpers();
-const { isLowStock, unitsForProduct, unitSellingPrice, lineBaseQuantity, normalizePhone, round2 } = useFinance();
+const { unitsForProduct, unitSellingPrice, lineBaseQuantity, normalizePhone, round2 } = useFinance();
 const products = useProductsStore();
-const lowStockCount = computed(() => products.list.filter((p) => isLowStock(p)).length);
+const lowStockCount = computed(() => products.lowStockCount + products.outOfStockProducts.length);
 const invoices = useInvoicesStore();
 const customers = useCustomersStore();
 const authStore = useAuth();
@@ -658,6 +662,7 @@ function isCostGreaterThanPrice(
 }
 function resetInvoice(): void {
   invoiceData.value = emptyInvoice();
+  originalReserved.clear();
 }
 // Adopt the saved id; when save+new requested, start a fresh invoice.
 function onInvoiceSaved(id: unknown): void {
@@ -891,9 +896,15 @@ function onPickProduct(
     notify("لا توجد وحدات لهذا المنتج. راجع إعدادات وحداته.", "error");
     return;
   }
-  if (wanted * Number(baseUnit?.factor || 1) - available > 1e-9) {
+  let need = round2(wanted * Number(baseUnit?.factor || 1));
+  for (const line of invoiceData.value.products) {
+    if (line === form || line.product_id !== real.id) continue;
+    need = round2(need + lineBaseQuantity(line));
+  }
+  const allowed = availableOf(real.id ?? "");
+  if (need - allowed > 1e-9) {
     notify(
-      `الكمية المطلوبة (${wanted}) تتجاوز المتاح بالمخزون (${available}). خفّض الكمية أولاً.`,
+      `إجمالي المطلوب (${need}) يتجاوز المتاح بالمخزون (${allowed}). خفّض الكمية أولاً.`,
       "error",
     );
     return;
@@ -941,6 +952,7 @@ function setQtyText(form: InvoiceProductLine, v: string): void {
 }
 // Expanded/collapsed state by object identity (never persisted to Firestore).
 const expandedLines = reactive(new Set<InvoiceProductLine>());
+const originalReserved = reactive(new Map<string, number>());
 function isExpanded(form: InvoiceProductLine): boolean {
   return expandedLines.has(form) || !form.product_id;
 }
@@ -954,8 +966,46 @@ function stockOf(form: InvoiceProductLine): number {
     (products.list.find((p) => p.id === form.product_id)?.stock_quantity ?? 0) / Number(form.unit_factor || 1)
   );
 }
+const needByProduct = computed(() => {
+  const need = new Map<string, number>();
+  for (const line of invoiceData.value.products) {
+    if (!line.product_id) continue;
+    need.set(line.product_id, round2((need.get(line.product_id) ?? 0) + lineBaseQuantity(line)));
+  }
+  return need;
+});
+function availableOf(productId: string): number {
+  const stock = Number(products.list.find((p) => p.id === productId)?.stock_quantity ?? 0);
+  return round2(stock + (originalReserved.get(productId) ?? 0));
+}
+function exceedsByProduct(productId: string): { need: number; available: number } | null {
+  if (!productId) return null;
+  const need = needByProduct.value.get(productId) ?? 0;
+  const available = availableOf(productId);
+  return need - available > 1e-9 ? { need, available } : null;
+}
 function qtyExceeds(form: InvoiceProductLine): boolean {
-  return lineBaseQuantity(form) - Number(products.list.find((p) => p.id === form.product_id)?.stock_quantity ?? 0) > 1e-9;
+  return form.product_id ? exceedsByProduct(form.product_id) !== null : false;
+}
+function exceedText(form: InvoiceProductLine): string {
+  const info = form.product_id ? exceedsByProduct(form.product_id) : null;
+  if (!info) return "";
+  return `المتاح تغيّر إلى ${info.available} — الكمية المطلوبة ${info.need} تتجاوز المخزون`;
+}
+function priceHintOf(form: InvoiceProductLine): number | null {
+  const product = form.product_id ? products.list.find((p) => p.id === form.product_id) : undefined;
+  if (!product) return null;
+  const options = unitsForProduct(product);
+  const unit = options.find((candidate) => candidate.id === form.unit_id) ?? options.find((candidate) => candidate.is_base) ?? options[0];
+  if (!unit) return null;
+  const current = unitSellingPrice(product, unit);
+  if (current === null || Number(form.product_price) - current === 0) return null;
+  return current;
+}
+function applyCurrentPrice(form: InvoiceProductLine): void {
+  const current = priceHintOf(form);
+  if (current === null) return;
+  form.product_price = current;
 }
 // Quick +/- steppers (integer quantities only, floor at 0).
 function changeQty(form: InvoiceProductLine, delta: number): void {
@@ -994,11 +1044,15 @@ function collapseLine(form: InvoiceProductLine): void {
     Number(form.product_quantity || 0) +
     Number(duplicateLine?.product_quantity || 0);
 
-  const prod = products.list.find((p) => p.id === form.product_id);
-  const available = prod?.stock_quantity ?? 0;
-  if (mergedQuantity * Number(form.unit_factor || 1) - available > 1e-9) {
+  let need = round2(mergedQuantity * Number(form.unit_factor || 1));
+  for (const line of invoiceData.value.products) {
+    if (line === form || line === duplicateLine || line.product_id !== form.product_id) continue;
+    need = round2(need + lineBaseQuantity(line));
+  }
+  const allowed = availableOf(form.product_id ?? "");
+  if (need - allowed > 1e-9) {
     notify(
-      `الكمية المطلوبة (${mergedQuantity}) تتجاوز المتاح بالمخزون (${available}) لمنتج ${form.product_name}.`,
+      `إجمالي المطلوب (${need}) يتجاوز المتاح بالمخزون (${allowed}) لمنتج ${form.product_name}.`,
       "error",
     );
     return;
@@ -1136,10 +1190,17 @@ onMounted(async () => {
     loadingProds.value = false;
     return; // layout redirects to /login
   }
+  products.ensureInventorySubscription();
   if (invoices.invoiceToEdit) {
     // HOME delta: don't let the autosync overwrite a stored paid_amount.
     blockUpdatePaidAmount.value = true;
     const src = invoices.invoiceToEdit;
+    if (src.id && (src as { inventory_applied?: boolean }).inventory_applied === true) {
+      for (const line of src.products ?? []) {
+        if (!line.product_id) continue;
+        originalReserved.set(line.product_id, round2((originalReserved.get(line.product_id) ?? 0) + lineBaseQuantity(line)));
+      }
+    }
     const d = toDateSafe(src.date) ?? new Date();
     invoiceData.value = {
       ...emptyInvoice(),

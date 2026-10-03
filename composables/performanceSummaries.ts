@@ -7,12 +7,13 @@ export function writeInvoiceStatsDelta(
   db: Firestore,
   oldInvoice: Invoice | null,
   newInvoice: Invoice | null,
-  returnDelta: { count: number; total: number } = { count: 0, total: 0 },
+  returnDelta: { count: number; total: number; profit?: number } = { count: 0, total: 0 },
   returnDate?: unknown,
 ): void {
   const globalDelta = sumInvoiceStats(invoiceStatsDelta(oldInvoice, newInvoice), {
     return_count: returnDelta.count,
     returns_total: returnDelta.total,
+    total_profit: -(returnDelta.profit ?? 0),
   });
   writeStatsDocumentDelta(tx, db, "store_stats", "current", globalDelta);
 
@@ -32,7 +33,7 @@ export function writeInvoiceStatsDelta(
     applyPeriod(invoiceMonthKey(newInvoice), newContribution);
   }
   if (returnDelta.count || returnDelta.total) {
-    const delta = { return_count: returnDelta.count, returns_total: returnDelta.total };
+    const delta = { return_count: returnDelta.count, returns_total: returnDelta.total, total_profit: -(returnDelta.profit ?? 0) };
     const periodInvoice = returnDate === undefined ? newInvoice ?? oldInvoice : { date: returnDate } as Invoice;
     applyPeriod(periodInvoice ? invoiceDayKey(periodInvoice) : null, delta);
     applyPeriod(periodInvoice ? invoiceMonthKey(periodInvoice) : null, delta);
@@ -64,6 +65,21 @@ export function legacyCustomerSummaryId(name: unknown, phone: unknown): string |
 export function customerSummaryId(invoice: Pick<Invoice, "customer_id" | "customer_name" | "customer_phone">): string | null {
   if (invoice.customer_id) return invoice.customer_id;
   return legacyCustomerSummaryId(invoice.customer_name, invoice.customer_phone);
+}
+
+export function writeStatsPaidDelta(
+  tx: Transaction,
+  db: Firestore,
+  amount: number,
+): void {
+  if (!(amount > 0)) return;
+  const delta = { total_paid: amount };
+  writeStatsDocumentDelta(tx, db, "store_stats", "current", delta);
+  const now = new Date();
+  const day = invoiceDayKey({ date: now });
+  const month = invoiceMonthKey({ date: now });
+  if (day) writeStatsDocumentDelta(tx, db, "invoice_stats_daily", day, delta);
+  if (month) writeStatsDocumentDelta(tx, db, "invoice_stats_monthly", month, delta);
 }
 
 export function writeCustomerSummaryDelta(

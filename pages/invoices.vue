@@ -81,7 +81,7 @@
             <div class="truncate text-base font-bold sm:text-lg">
               {{ formatePrice(invoiceStats.total_profit) }}
             </div>
-            <div class="text-xs text-gray-500">إجمالي الأرباح <span class="text-gray-400">(شامل الديون)</span></div>
+            <div class="text-xs text-gray-500">مجمل ربح البضاعة</div>
           </div>
           <UIcon
             name="i-lucide-trending-up"
@@ -181,6 +181,7 @@
               <td class="p-2 font-medium">
                 {{ row.name }}
                 <UBadge v-if="row.returnBadge" color="warning" variant="soft" size="xs" class="ms-1">{{ row.returnBadge }}</UBadge>
+                <UBadge v-if="row.hasPreviousBalance" color="info" variant="soft" size="xs" class="ms-1">يشمل رصيدًا سابقًا</UBadge>
               </td>
               <td class="p-2 text-gray-600" dir="ltr">{{ row.phone }}</td>
               <td class="p-2">{{ row.products_count }}</td>
@@ -279,6 +280,7 @@
             <div class="min-w-0">
               <div class="truncate font-bold">{{ row.name }}</div>
               <UBadge v-if="row.returnBadge" color="warning" variant="soft" size="xs" class="mt-0.5">{{ row.returnBadge }}</UBadge>
+              <UBadge v-if="row.hasPreviousBalance" color="info" variant="soft" size="xs" class="mt-0.5">{{ "يشمل رصيدًا سابقًا" }}</UBadge>
               <div class="text-xs text-gray-500" dir="ltr">{{ row.phone }}</div>
               <div class="mt-1 text-xs text-gray-500">
                 {{ row.created_at }} • {{ row.products_count }} منتجات
@@ -626,7 +628,7 @@ function formatTimestamp(
   return `${formattedDate} ${formattedTime}`;
 }
 const { formatePrice, calcTotal, formatInvoiceLineName } = useHelpers();
-const { round2, lineRefundValue, netRatioOf, splitRefund, outstandingDebtOf, lineBaseQuantity, grossProfitOf } = useFinance();
+const { round2, lineRefundValue, netRatioOf, splitRefund, outstandingDebtOf, lineBaseQuantity, merchandiseProfitOf } = useFinance();
 const invoicesStore = useInvoicesStore();
 const customerStore = useCustomersStore();
 const returnsApi = useInvoiceReturns();
@@ -637,7 +639,7 @@ const { notify: notifyToast } = useAppToast();
 const toNum = (num: unknown): number => {
   return num && typeof num !== "number" ? Number(num) : (num as number) || 0;
 };
-const calcInvTotal = (inv: Invoice): number => grossProfitOf(inv.products);
+const calcInvTotal = (inv: Invoice): number => merchandiseProfitOf(inv);
 const isFilteredInvoicesContainsDebts = computed<Invoice[] | null>(() => {
   if (searchText.value) {
     return filteredInvoices.value.some((i) => outstandingDebtOf(i) > 0)
@@ -670,6 +672,7 @@ const paginateArray = computed(() => {
       debt: outstandingDebtOf(invoice),
       profit: formatePrice(calcInvTotal(invoice)),
       returnBadge: returnBadgeFor(invoice),
+      hasPreviousBalance: Number(invoice.debt ?? 0) > 0,
       created_at: formatTimestamp(
         (invoice.date as { seconds?: number })?.seconds,
       ),
@@ -743,6 +746,7 @@ type InvoiceRow = {
   debt: string | number | null;
   profit: string;
   returnBadge: string;
+  hasPreviousBalance: boolean;
   created_at: string;
   invoice: Invoice;
   created_at_object: Date;
@@ -882,6 +886,7 @@ onMounted(async () => {
   // Consume a customer deep-link once, then clean the URL.
   customerFilter.value = readCustomerQuery();
   stripCustomerQuery();
+  productsStore.ensureInventorySubscription();
   await Promise.all([loadInvoices(), loadInvoiceStats()]);
 });
 </script>

@@ -203,6 +203,22 @@ export function getLineRevenue(line: Pick<InvoiceProductLine, "product_price" | 
   return round2(toNum(line.product_price) * toNum(line.product_quantity));
 }
 
+export function discountShareOf(inv: Parameters<typeof invoiceTotals>[0]): number {
+  const t = invoiceTotals(inv);
+  if (!(t.gross > 1e-9)) return 0;
+  return t.discountValue / t.gross;
+}
+
+export function lineNetRevenue(line: Pick<InvoiceProductLine, "product_price" | "product_quantity">, share: number): number {
+  return round2(getLineRevenue(line) * (1 - share));
+}
+
+export function merchandiseProfitOf(inv: Parameters<typeof getInvoiceBreakdown>[0]): number {
+  const share = discountShareOf(inv);
+  const lines = Array.isArray(inv.products) ? inv.products : [];
+  return round2(lines.reduce((s, l) => s + getLineRevenue(l) * (1 - share) - getLineCost(l), 0));
+}
+
 export function getLineCost(line: Pick<InvoiceProductLine, "product_cost_price" | "product_quantity" | "base_quantity" | "cost_groups">): number {
   if (Array.isArray(line.cost_groups) && line.cost_groups.length) {
     return round2(line.cost_groups.reduce((sum, group) => sum + toNum(group.base_quantity) * toNum(group.unit_cost), 0));
@@ -770,8 +786,19 @@ export function lowStockThresholdOf(p: Pick<Product, "low_stock_threshold">): nu
 }
 
 /** Unified shortage rule (S3): stock < threshold. Never uses `count`. */
-export function isLowStock(p: Pick<Product, "stock_quantity" | "low_stock_threshold">): boolean {
+export function isLowStock(p: Pick<Product, "stock_quantity" | "low_stock_threshold" | "is_active">): boolean {
+  if ((p as { is_active?: unknown }).is_active === false) return false;
   return toNum(p.stock_quantity) - lowStockThresholdOf(p) < -1e-9;
+}
+
+export function isOutOfStock(p: Pick<Product, "stock_quantity" | "is_active">): boolean {
+  if ((p as { is_active?: unknown }).is_active === false) return false;
+  return toNum(p.stock_quantity) <= 0;
+}
+
+export function isNegativeStock(p: Pick<Product, "stock_quantity" | "is_active">): boolean {
+  if ((p as { is_active?: unknown }).is_active === false) return false;
+  return toNum(p.stock_quantity) < -1e-9;
 }
 
 /** Human display of the threshold in its chosen unit's denomination
@@ -822,6 +849,8 @@ export const useFinance = () => ({
   lowStockThresholdOf,
   thresholdDisplayOf,
   isLowStock,
+  isOutOfStock,
+  isNegativeStock,
   lineBaseQuantity,
   lineUnitFactor,
   unitsForProduct,
@@ -841,6 +870,9 @@ export const useFinance = () => ({
   getLineRevenue,
   getLineCost,
   getLineProfit,
+  discountShareOf,
+  lineNetRevenue,
+  merchandiseProfitOf,
   getInvoiceBreakdown,
   getInvoiceSalesTotal,
   getInvoicePayableTotal,

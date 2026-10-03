@@ -1,7 +1,7 @@
 import { and, collection, doc, getDocs, limit as fsLimit, orderBy, or, query, startAfter, Timestamp, where, type Query, type QueryDocumentSnapshot } from "firebase/firestore";
 import type { Invoice } from "~/types";
 import { toDateSafe } from "~/types";
-import { applyStockGroup, invoiceEditCashOutflowError, invoiceEditCustomerChangeError, invoiceEditPaymentError, invoiceEditStockChanges, invoiceHasReturnHistory, invoiceTotals, lineBaseQuantity, lineUnitFactor, round2, round4, toNum } from "~/composables/finance";
+import { applyStockGroup, invoiceEditCashOutflowError, invoiceEditCustomerChangeError, invoiceEditPaymentError, invoiceEditStockChanges, invoiceHasReturnHistory, invoiceTotals, lineBaseQuantity, lineUnitFactor, merchandiseProfitOf, round2, round4, toNum } from "~/composables/finance";
 import { summarizeInvoice, writeDebtSummary } from "~/composables/debtSummaries";
 import { customerSummaryId, writeCustomerSummaryDelta, writeInvoiceStatsDelta } from "~/composables/performanceSummaries";
 import { formatInvoiceLineName } from "~/composables/helpers";
@@ -804,7 +804,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
           ? (netTotal * (Number(inv.discount) || 0)) / 100
           : Number(inv.discount) || 0;
         const totalAfterDiscount = netTotal - discountValue + (Number(inv.delivery_price) || 0);
-        const profit = netTotal - totalCost;
+        const profit = merchandiseProfitOf(inv);
         const productsList = products
           .map((p, i) => {
             const name = formatInvoiceLineName(p.product_name || "غير محدد", p.unit_name, p.option);

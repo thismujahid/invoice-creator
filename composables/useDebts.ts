@@ -4,7 +4,7 @@ import type { Customer, Invoice } from "~/types";
 import { loanStatusOf, normalizePhone, normalizeName, round2, toNum, outstandingDebtOf } from "./finance";
 import { summarizeInvoice, writeDebtSummary } from "./debtSummaries";
 import { toDateSafe } from "~/types";
-import { writeCustomerSummaryDelta, writeInvoiceStatsDelta } from "./performanceSummaries";
+import { writeCustomerSummaryDelta, writeInvoiceStatsDelta, writeStatsPaidDelta } from "./performanceSummaries";
 
 export interface Obligation {
   kind: "invoice" | "loan";
@@ -329,6 +329,7 @@ export const useDebts = defineStore("debts", () => {
             tx.update(doc(db, "customer_loans", s.a.reference_id), {
               remaining: left, paid_amount: paid, status: loanStatusOf(paid, left),
             });
+            writeStatsPaidDelta(tx, db, s.a.amount);
             tx.set(doc(collection(db, "cash_transactions")), {
               type: "loan_payment", direction: "in", amount: s.a.amount,
               customer_id: input.customer_id, loan_id: s.a.reference_id,

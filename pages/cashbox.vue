@@ -2,38 +2,27 @@
   <div class="rounded-xl bg-white p-3 shadow-sm sm:p-4">
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
       <h2 class="text-lg font-bold text-gray-900">الخزنة</h2>
-      <div v-if="cashbox.initialized" class="flex flex-wrap gap-2">
-        <UButton
-          icon="i-lucide-wrench"
-          color="neutral"
-          variant="soft"
-          :loading="fixAccountsBusy"
-          @click="runFixAccounts"
-          >تصحيح الحسابات</UButton
-        >
-        <UButton
-          icon="i-lucide-plus"
-          color="success"
-          @click="depositOpen = true"
-          >إضافة أموال</UButton
-        >
-        <UButton
-          icon="i-lucide-minus"
-          color="error"
-          variant="soft"
-          @click="withdrawOpen = true"
-          >سحب أموال</UButton
-        >
+      <div class="flex flex-wrap items-center gap-2">
+        <span v-if="cashbox.initialized && !cashbox.loading" class="flex items-center gap-1 text-xs text-gray-400">
+          <span class="inline-block size-2 rounded-full bg-emerald-500"></span>مباشر
+        </span>
+        <div v-if="cashbox.initialized" class="flex flex-wrap gap-2">
+          <UButton
+            icon="i-lucide-plus"
+            color="success"
+            @click="depositOpen = true"
+            >إضافة أموال</UButton
+          >
+          <UButton
+            icon="i-lucide-minus"
+            color="error"
+            variant="soft"
+            @click="withdrawOpen = true"
+            >سحب أموال</UButton
+          >
+        </div>
       </div>
     </div>
-
-    <UAlert
-      v-if="fixAccountsMsg"
-      :color="fixAccountsOk ? 'success' : fixAccountsBusy ? 'info' : 'error'"
-      variant="soft"
-      class="mb-3"
-      :title="fixAccountsMsg"
-    />
 
     <UiAppStatsSkeleton v-if="cashbox.loading" />
     <!-- Onboarding: opening balance once -->
@@ -46,8 +35,9 @@
         <div class="font-bold">تهيئة الخزنة لأول مرة</div>
       </template>
       <p class="mb-3 text-sm text-gray-500">
-        أدخل النقدية الفعلية الموجودة حالياً بالمحل. تُسجل كرصيد افتتاحي ولا
-        يمكن تكرارها.
+        أدخل النقدية الفعلية الموجودة حالياً بالمحل. الصفر مسموح به ويعني خزنة
+        مهيأة بدون نقدية — وهو مختلف عن عدم التهيئة. تُسجل مرة واحدة ولا يمكن
+        تكرارها.
       </p>
       <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
         <UFormField label="الرصيد الافتتاحي" required>
@@ -83,128 +73,174 @@
     </UCard>
 
     <template v-else>
-      <!-- Dashboard -->
-      <div class="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-3">
+      <div class="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-4">
         <UCard variant="outline">
-          <div class="mb-1 text-xs text-gray-500">النقدية والأصول</div>
-          <div class="space-y-1 text-sm">
-            <div class="flex justify-between gap-2">
-              <span class="text-gray-500">النقدية الحالية</span>
-              <b class="text-emerald-700">{{ formatePrice(cashbox.balance) }}</b>
-            </div>
-            <div class="flex justify-between gap-2">
-              <span class="text-gray-500">المخزون بالتكلفة</span>
-              <b>{{ formatePrice(agg.costValue) }}</b>
-            </div>
-            <div class="flex justify-between gap-2 border-t border-gray-100 pt-1">
-              <span class="text-gray-500">إجمالي الأصول</span>
-              <b class="text-emerald-700">{{ formatePrice(cashbox.balance + agg.costValue) }}</b>
-            </div>
+          <div class="text-lg font-bold text-emerald-700 sm:text-xl">
+            {{ formatePrice(cashbox.balance) }}
+          </div>
+          <div class="text-xs text-gray-500">النقدية الحالية</div>
+          <div v-if="cashbox.initialized && cashbox.balance <= 0" class="mt-1 text-xs text-gray-400">مهيأة بصفر — ليست غير مهيأة</div>
+        </UCard>
+        <UCard variant="outline">
+          <div class="text-lg font-bold text-red-600 sm:text-xl">
+            {{ summariesReady ? formatePrice(receivablesTotal) : "…" }}
+          </div>
+          <div class="text-xs text-gray-500">المستحق لنا</div>
+          <div v-if="summariesReady" class="mt-1 space-y-0.5 border-t border-gray-100 pt-1 text-xs text-gray-500">
+            <div class="flex justify-between gap-2"><span>مستحقات فواتير</span><b>{{ formatePrice(receivablesInvoices) }}</b></div>
+            <div class="flex justify-between gap-2"><span>سلف مستحقة</span><b>{{ formatePrice(receivablesLoans) }}</b></div>
           </div>
         </UCard>
         <UCard variant="outline">
           <div class="text-lg font-bold text-red-600 sm:text-xl">
-            {{ formatePrice(supplierPayable) }}
+            {{ summariesReady ? formatePrice(payablesTotal) : "…" }}
           </div>
-          <div class="text-xs text-gray-500">الديون اللي علينا (موردين)</div>
-          <div class="mt-1 border-t border-gray-100 pt-1 text-xs text-gray-500">
-            النقد + المخزون بعد السداد:
-            <b>{{ formatePrice(cashbox.balance + agg.costValue - supplierPayable) }}</b>
+          <div class="text-xs text-gray-500">المستحق علينا (موردين)</div>
+          <div v-if="summariesReady && unlinkedPayables > 0" class="mt-1 border-t border-gray-100 pt-1 text-xs text-amber-700">
+            منها غير مرتبطة بمورد: {{ formatePrice(unlinkedPayables) }} — للمراجعة
           </div>
+        </UCard>
+        <UCard variant="outline">
+          <div class="text-lg font-bold sm:text-xl">
+            {{ formatePrice(agg.costValue) }}
+          </div>
+          <div class="text-xs text-gray-500">المخزون بالتكلفة</div>
+          <div v-if="inventoryValuationNote" class="mt-1 text-xs text-amber-700">{{ inventoryValuationNote }}</div>
+        </UCard>
+      </div>
+
+      <UAlert
+        v-if="shortageAlert"
+        color="warning"
+        variant="soft"
+        class="mb-3"
+        :title="shortageAlert"
+        :actions="[{ label: 'عرض المنتجات', color: 'warning', variant: 'soft', onClick: () => (shortagesOpen = true) }]"
+      />
+      <ProductsLowStockDialog
+        v-model:open="shortagesOpen"
+        :products="products.list"
+        :show-cost="true"
+      />
+
+      <p class="mb-2 mt-4 text-xs font-bold text-gray-400">حسابات افتراضية وتحليلات</p>
+      <div class="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-3">
+        <UCard variant="outline">
+          <div class="text-lg font-bold sm:text-xl">
+            {{ summariesReady ? formatePrice(round2(cashbox.balance + receivablesTotal)) : "…" }}
+          </div>
+          <div class="text-xs text-gray-500">رصيدنا بعد التحصيل الكامل</div>
+          <div class="mt-1 text-xs text-gray-400">افتراضي — بفرض تحصيل كل المستحقات</div>
+        </UCard>
+        <UCard variant="outline">
+          <div class="text-lg font-bold sm:text-xl">
+            {{ summariesReady ? formatePrice(hypotheticalSettlement) : "…" }}
+          </div>
+          <div class="text-xs text-gray-500">رصيد افتراضي بعد تحصيل وسداد جميع المستحقات</div>
+          <div class="mt-1 text-xs text-gray-400">تقدير نظري — لا يعني توفر السيولة الآن</div>
+        </UCard>
+        <UCard variant="outline">
+          <div class="text-lg font-bold sm:text-xl">
+            {{ summariesReady ? formatePrice(registeredNetAssets) : "…" }}
+          </div>
+          <div class="text-xs text-gray-500">صافي الأصول المسجلة</div>
+          <div class="mt-1 text-xs text-gray-400">نقد + مخزون + مستحق لنا − مستحق علينا — بنود التطبيق فقط</div>
+        </UCard>
+        <UCard variant="outline">
+          <div class="text-lg font-bold sm:text-xl">{{ payablesCoverage }}</div>
+          <div class="text-xs text-gray-500">تغطية المستحق علينا من النقدية الحالية</div>
+        </UCard>
+        <UCard variant="outline">
+          <div class="text-lg font-bold text-emerald-700 sm:text-xl">
+            {{ statsReady ? formatePrice(stats.sales) : "…" }}
+          </div>
+          <div class="text-xs text-gray-500">إجمالي المبيعات</div>
+        </UCard>
+        <UCard variant="outline">
+          <div class="text-lg font-bold text-emerald-600 sm:text-xl">
+            {{ statsReady ? formatePrice(stats.profits) : "…" }}
+          </div>
+          <div class="text-xs text-gray-500">مجمل ربح البضاعة</div>
         </UCard>
         <UCard variant="outline">
           <div class="text-lg font-bold text-blue-600 sm:text-xl">
             {{ formatePrice(agg.expectedProfit) }}
           </div>
-          <div class="text-xs text-gray-500">
-            الربح المتوقع من المخزون
-            <span class="text-gray-400">(غير محقق — توقع بسعر الأساس فقط)</span>
-          </div>
+          <div class="text-xs text-gray-500">الربح المتوقع من المخزون <span class="text-gray-400">(غير محقق — يتأثر بالوحدات والأسعار والخصومات)</span></div>
         </UCard>
       </div>
 
-      <!-- Store-wide totals from the same source + formulas as /invoices -->
-      <p class="mb-2 mt-4 text-xs font-bold text-gray-400">إجماليات المحل</p>
-      <UiAppStatsSkeleton v-if="statsLoading" />
-      <UAlert
-        v-else-if="!statsReady"
-        color="warning"
-        variant="soft"
-        class="mb-3"
-        title="إجماليات المبيعات تحتاج تهيئة لمرة واحدة من أدوات المدير أدناه."
-      />
-      <div v-else class="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-3">
-        <UCard variant="outline">
-          <div class="text-lg font-bold text-emerald-700 sm:text-xl">
-            {{ formatePrice(stats.sales) }}
-          </div>
-          <div class="text-xs text-gray-500">إجمالي المبيعات</div>
-        </UCard>
-        <UCard variant="outline">
-          <div class="text-lg font-bold text-red-600 sm:text-xl">
-            {{ formatePrice(stats.debts) }}
-          </div>
-          <div class="text-xs text-gray-500">إجمالي الديون اللي لينا</div>
-          <div class="mt-1 border-t border-gray-100 pt-1 text-xs text-gray-500">
-            رصيدنا بعد التحصيل:
-            <b>{{ formatePrice(cashbox.balance + stats.debts) }}</b>
-          </div>
-        </UCard>
-        <UCard variant="outline" :class="netCashAfterSettlement < 0 ? '!border-red-300' : ''">
-          <div class="mb-1 text-xs text-gray-500">وضعنا الحالي</div>
-          <div class="space-y-1 text-sm">
-            <div class="flex justify-between gap-2">
-              <span class="text-gray-500">اللي لينا</span>
-              <b>{{ formatePrice(stats.debts) }}</b>
-            </div>
-            <div class="flex justify-between gap-2">
-              <span class="text-gray-500">اللي علينا</span>
-              <b class="text-red-600">{{ formatePrice(supplierPayable) }}</b>
-            </div>
-            <div class="flex justify-between gap-2 border-t border-gray-100 pt-1">
-              <span class="text-gray-500">صافي النقد بعد التسوية</span>
-              <b :class="netCashAfterSettlement < 0 ? 'text-red-600' : 'text-emerald-700'">{{
-                formatePrice(netCashAfterSettlement)
-              }}</b>
-            </div>
-          </div>
-          <div
-            class="mt-1 text-xs font-bold"
-            :class="netCashAfterSettlement < 0 ? 'text-red-600' : 'text-emerald-700'"
-          >
-            {{ settlementStatusText }}
-          </div>
-        </UCard>
-        <UCard variant="outline">
-          <div class="text-lg font-bold text-emerald-600 sm:text-xl">
-            {{ formatePrice(stats.profits) }}
-          </div>
-          <div class="text-xs text-gray-500">
-            إجمالي الأرباح <span class="text-gray-400">(شامل الديون)</span>
-          </div>
-        </UCard>
-        <UCard variant="outline">
-          <div class="text-lg font-bold sm:text-xl">{{ stats.invoices }}</div>
-          <div class="text-xs text-gray-500">إجمالي الفواتير</div>
-        </UCard>
-        <UCard variant="outline">
-          <div class="text-lg font-bold sm:text-xl">{{ stats.customers }}</div>
-          <div class="text-xs text-gray-500">إجمالي العملاء</div>
-        </UCard>
-      </div>
-
-      <!-- History filter -->
-      <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <div class="mb-2 mt-4 flex flex-wrap items-center justify-between gap-2">
         <p class="text-xs font-bold text-gray-400">سجل العمليات</p>
-        <USelect
-          v-model="typeFilter"
-          :items="typeOptions"
-          value-key="value"
-          size="sm"
-          class="w-48"
-        />
+        <div class="flex flex-wrap items-center gap-2">
+          <USelect
+            v-model="periodPreset"
+            :items="periodPresets"
+            value-key="value"
+            label-key="label"
+            size="sm"
+            class="w-36"
+          />
+          <UiAppDateField
+            v-if="periodPreset === 'custom'"
+            v-model="customFrom"
+            label="من تاريخ"
+            class="w-44"
+          />
+          <USelect
+            v-model="typeFilter"
+            :items="typeOptions"
+            value-key="value"
+            size="sm"
+            class="w-48"
+          />
+          <UButton
+            size="sm"
+            color="neutral"
+            variant="soft"
+            icon="i-lucide-download"
+            :loading="exporting"
+            :disabled="!periodTxns.length"
+            @click="exportPeriod"
+            >تصدير الفترة</UButton
+          >
+        </div>
       </div>
-      <UiAppTableSkeleton v-if="cashbox.loadingTxns" />
+      <div v-if="periodStart" class="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-5">
+        <UCard variant="outline">
+          <div class="text-base font-bold sm:text-lg">{{ formatePrice(periodOpening) }}</div>
+          <div class="text-xs text-gray-500">رصيد بداية الفترة</div>
+        </UCard>
+        <UCard variant="outline">
+          <div class="text-base font-bold text-emerald-700 sm:text-lg">+{{ formatePrice(periodIn) }}</div>
+          <div class="text-xs text-gray-500">إجمالي المقبوضات</div>
+        </UCard>
+        <UCard variant="outline">
+          <div class="text-base font-bold text-red-600 sm:text-lg">−{{ formatePrice(periodOut) }}</div>
+          <div class="text-xs text-gray-500">إجمالي المدفوعات</div>
+        </UCard>
+        <UCard variant="outline">
+          <div class="text-base font-bold sm:text-lg" :class="periodNet >= 0 ? 'text-emerald-700' : 'text-red-600'">
+            {{ periodNet >= 0 ? "+" : "−" }}{{ formatePrice(Math.abs(periodNet)) }}
+          </div>
+          <div class="text-xs text-gray-500">صافي الحركة</div>
+        </UCard>
+        <UCard variant="outline">
+          <div class="text-base font-bold sm:text-lg">{{ formatePrice(cashbox.balance) }}</div>
+          <div class="text-xs text-gray-500">رصيد نهاية الفترة (الحالي)</div>
+        </UCard>
+      </div>
+      <p v-if="periodIsFiltered" class="mb-2 text-xs text-gray-400">الملخص أعلاه لنتائج الفلتر فقط — رصيد الخزنة شامل كل الحركات.</p>
+      <p v-if="periodTruncated" class="mb-2 text-xs text-amber-700">الفترة كبيرة — الملخص والتصدير لأحدث 2000 حركة فقط.</p>
+      <UAlert
+        v-if="newOpsAvailable"
+        color="info"
+        variant="soft"
+        class="mb-2"
+        title="توجد عمليات جديدة"
+        :actions="[{ label: 'عرض الأحدث', color: 'info', variant: 'soft', onClick: backToLatest }]"
+      />
+      <UiAppTableSkeleton v-if="txnLoading && !txnList.length" />
       <template v-else>
         <div class="hidden overflow-x-auto md:block">
           <table class="w-full text-sm">
@@ -327,7 +363,7 @@
       </template>
       <div class="mt-3 flex items-center justify-between gap-2">
         <span class="text-xs text-gray-500"
-          >صفحة {{ cashbox.transactionsPage }} · 25 عملية</span
+          >صفحة {{ txnPage }} · 25 عملية</span
         >
         <div class="flex gap-2" dir="ltr">
           <UButton
@@ -336,8 +372,8 @@
             variant="outline"
             icon="i-lucide-chevron-left"
             aria-label="الصفحة التالية"
-            :disabled="cashbox.loadingTxns || !cashbox.transactionsHasMore"
-            @click="cashbox.nextTransactionsPage(25)"
+            :disabled="txnLoading || !txnHasMore"
+            @click="goTxnPage(txnPage + 1)"
           />
           <UButton
             size="sm"
@@ -345,29 +381,65 @@
             variant="outline"
             icon="i-lucide-chevron-right"
             aria-label="الصفحة السابقة"
-            :disabled="cashbox.loadingTxns || cashbox.transactionsPage <= 1"
-            @click="cashbox.previousTransactionsPage(25)"
+            :disabled="txnLoading || txnPage <= 1"
+            @click="goTxnPage(txnPage - 1)"
           />
         </div>
       </div>
     </template>
 
     <div class="mt-4 border-t border-gray-100 pt-3">
-      <UCard variant="outline" class="border-red-200 sm:col-span-2">
-        <div class="mb-1 text-sm font-bold text-red-700">إعادة ضبط المصنع</div>
-        <p class="mb-2 text-xs text-gray-500">
-          مسح كل بيانات النظام من كل المجموعات بلا استثناء (الفواتير، العملاء،
-          المنتجات، الخزنة، الموردون، الملخصات والإحصائيات). لا يمكن التراجع.
-          يتطلب كلمة مرور المدير.
-        </p>
-        <UButton
-          color="error"
-          size="sm"
-          icon="i-lucide-trash-2"
-          @click="openFactoryReset"
-          >إعادة ضبط المصنع</UButton
-        >
-      </UCard>
+      <UButton
+        color="neutral"
+        variant="soft"
+        size="sm"
+        :icon="adminOpen ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+        @click="adminOpen = !adminOpen"
+        >أدوات الإدارة</UButton
+      >
+      <div v-if="adminOpen" class="mt-2 space-y-2">
+        <UAlert
+          v-if="fixAccountsMsg"
+          :color="fixAccountsOk ? 'success' : fixAccountsBusy ? 'info' : 'error'"
+          variant="soft"
+          :title="fixAccountsMsg"
+        />
+        <div class="flex flex-wrap gap-2">
+          <UButton
+            icon="i-lucide-wrench"
+            color="neutral"
+            variant="soft"
+            size="sm"
+            :loading="fixAccountsBusy"
+            @click="runFixAccounts"
+            >تصحيح الحسابات</UButton
+          >
+          <UButton
+            icon="i-lucide-scale"
+            color="neutral"
+            variant="soft"
+            size="sm"
+            :loading="repairBusy"
+            @click="runRepairAnalyze"
+            >مراجعة متوسط التكلفة</UButton
+          >
+        </div>
+        <UCard variant="outline" class="border-red-200">
+          <div class="mb-1 text-sm font-bold text-red-700">إعادة ضبط المصنع</div>
+          <p class="mb-2 text-xs text-gray-500">
+            مسح كل بيانات النظام من كل المجموعات بلا استثناء (الفواتير، العملاء،
+            المنتجات، الخزنة، الموردون، الملخصات والإحصائيات). لا يمكن التراجع.
+            يتطلب كلمة مرور المدير.
+          </p>
+          <UButton
+            color="error"
+            size="sm"
+            icon="i-lucide-trash-2"
+            @click="openFactoryReset"
+            >إعادة ضبط المصنع</UButton
+          >
+        </UCard>
+      </div>
     </div>
 
     <!-- Factory reset: password gate + double confirm + wipe -->
@@ -727,13 +799,20 @@ import { REPAIR_STATUS_LABELS } from "~/composables/useInventoryCostRepair";
 import { toDateSafe } from "~/types";
 import { ADMIN_EMAIL } from "~/constants/auth";
 import {
+  Timestamp,
   collection,
   doc,
   documentId,
   getDoc,
   getDocs,
+  onSnapshot,
+  orderBy,
   query,
+  startAfter,
   where,
+  limit as fsLimit,
+  type QueryDocumentSnapshot,
+  type Unsubscribe,
 } from "firebase/firestore";
 import type { Invoice } from "~/types";
 import type { CashTransaction, PurchaseInvoice } from "~/types/finance";
@@ -862,6 +941,7 @@ async function refreshRepairRows(): Promise<void> {
   repairRows.value = await repairApi.analyze();
 }
 
+const adminOpen = ref(false);
 // One-button account repair state
 const fixAccountsBusy = ref(false);
 const fixAccountsMsg = ref("");
@@ -980,7 +1060,6 @@ async function runFixAccounts(): Promise<void> {
     const linked = await migration.backfillCustomerIds();
     fixAccountsMsg.value = "جاري العمل: إعادة بناء الملخصات والإجماليات…";
     await migration.backfillPerformanceSummaries();
-    await fetchStats();
     fixAccountsOk.value = true;
     fixAccountsMsg.value = `تم تصحيح الحسابات: توحيد ${phones.invoices + phones.customers} هاتف، مراجعة ${repair.reviewed} رابط، ربط ${linked.matched} فاتورة، وأُعيد بناء الملخصات.`;
     notify("تم تصحيح الحسابات بنجاح.", "success");
@@ -1114,73 +1193,263 @@ const typeOptions = computed(() => [
     value,
   })),
 ]);
-const currentPerPage = 25;
-watch(typeFilter, (value) => {
-  void cashbox.fetchTransactions(currentPerPage, true, value);
-});
-
 const agg = computed(() => inventoryAggregates(products.list));
 
-// Store totals from the SAME source + formulas as /invoices (full docs),
-// so the numbers always match. Counts stay server-side (cheap).
-// Loaded in onMounted (never top-level await) so navigation never blocks.
 const statsLoading = ref(true);
 const statsReady = ref(false);
 const stats = ref({
   sales: 0,
-  debts: 0,
   profits: 0,
   invoices: 0,
   customers: 0,
 });
-async function fetchStats(): Promise<void> {
-  statsLoading.value = true;
+const receivablesInvoices = ref(0);
+const receivablesLoans = ref(0);
+const payablesTotal = ref(0);
+const unlinkedPayables = ref(0);
+const liveReady = reactive({ debts: false, loans: false, payables: false });
+const summariesReady = computed(() => liveReady.debts && liveReady.loans && liveReady.payables);
+const receivablesTotal = computed(() => round2(receivablesInvoices.value + receivablesLoans.value));
+const hypotheticalSettlement = computed(() => round2(cashbox.balance + receivablesTotal.value - payablesTotal.value));
+const registeredNetAssets = computed(() => round2(cashbox.balance + agg.value.costValue + receivablesTotal.value - payablesTotal.value));
+const payablesCoverage = computed(() => {
+  if (!(payablesTotal.value > 0)) return "—";
+  if (!(cashbox.balance > 0)) return "0%";
+  return `${Math.round((cashbox.balance / payablesTotal.value) * 100)}%`;
+});
+const inventoryValuationNote = computed(() => {
+  const missing = products.list.filter((p) => p.stock_quantity === null || p.stock_quantity === undefined || p.cost_price === null || p.cost_price === undefined).length;
+  return missing > 0 ? `${missing} صنف ببيانات ناقصة — التقييم غير مكتمل` : "";
+});
+const shortagesOpen = ref(false);
+const shortageAlert = computed(() => {
+  const out = products.outOfStockProducts.length;
+  const low = products.lowStockCount;
+  if (out + low <= 0) return "";
+  return out > 0 ? `تنبيه مخزون: ${out + low} منتج (${out} نافد) يحتاج مراجعة` : `تنبيه مخزون: ${low} منتج قليل الكمية`;
+});
+
+let unsubStats: Unsubscribe | null = null;
+let unsubDebts: Unsubscribe | null = null;
+let unsubLoans: Unsubscribe | null = null;
+let unsubPayables: Unsubscribe | null = null;
+function unsubscribeSummaries(): void {
+  unsubStats?.(); unsubStats = null;
+  unsubDebts?.(); unsubDebts = null;
+  unsubLoans?.(); unsubLoans = null;
+  unsubPayables?.(); unsubPayables = null;
+}
+function subscribeSummaries(): void {
+  if (!import.meta.client) return;
+  unsubscribeSummaries();
+  unsubStats = onSnapshot(doc(db, "store_stats", "current"),
+    (snap) => {
+      const data = snap.exists() ? snap.data() : null;
+      statsReady.value = data?.initialized === true;
+      if (statsReady.value && data) {
+        stats.value = {
+          sales: round2(toNum(data.total_sales)),
+          profits: round2(toNum(data.total_profit)),
+          invoices: Math.max(0, Math.floor(toNum(data.invoice_count))),
+          customers: Math.max(0, Math.floor(toNum(data.customer_count))),
+        };
+      }
+      statsLoading.value = false;
+    },
+    () => { statsLoading.value = false; });
+  unsubDebts = onSnapshot(query(collection(db, "invoice_debt_summaries"), where("remaining", ">", 0)),
+    (snap) => {
+      let sum = 0;
+      for (const d of snap.docs) sum = round2(sum + toNum(d.data().remaining));
+      receivablesInvoices.value = sum;
+      liveReady.debts = true;
+    },
+    () => { liveReady.debts = true; });
+  unsubLoans = onSnapshot(query(collection(db, "customer_loans"), where("remaining", ">", 0)),
+    (snap) => {
+      let sum = 0;
+      for (const d of snap.docs) sum = round2(sum + toNum(d.data().remaining));
+      receivablesLoans.value = sum;
+      liveReady.loans = true;
+    },
+    () => { liveReady.loans = true; });
+  unsubPayables = onSnapshot(query(collection(db, "purchase_invoices"), where("remaining_amount", ">", 0)),
+    (snap) => {
+      let sum = 0;
+      let unlinked = 0;
+      for (const d of snap.docs) {
+        const data = d.data();
+        const rem = round2(toNum(data.remaining_amount));
+        sum = round2(sum + rem);
+        if (!data.supplier_id) unlinked = round2(unlinked + rem);
+      }
+      payablesTotal.value = sum;
+      unlinkedPayables.value = unlinked;
+      liveReady.payables = true;
+    },
+    () => { liveReady.payables = true; });
+}
+
+function cairoOffsetMs(at: Date): number {
+  const dtf = new Intl.DateTimeFormat("en-US", { timeZone: "Africa/Cairo", hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const parts = Object.fromEntries(dtf.formatToParts(at).map((p) => [p.type, p.value]));
+  const asUTC = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour) % 24, Number(parts.minute), Number(parts.second));
+  return asUTC - at.getTime();
+}
+function cairoDayStart(at: Date): Date {
+  const off = cairoOffsetMs(at);
+  const wall = new Date(at.getTime() + off);
+  wall.setUTCHours(0, 0, 0, 0);
+  return new Date(wall.getTime() - off);
+}
+
+type PeriodPreset = "today" | "7d" | "30d" | "custom";
+const periodPreset = ref<PeriodPreset>("today");
+const customFrom = ref<Date | null>(null);
+const periodPresets: { label: string; value: PeriodPreset }[] = [
+  { label: "اليوم", value: "today" },
+  { label: "آخر 7 أيام", value: "7d" },
+  { label: "آخر 30 يومًا", value: "30d" },
+  { label: "مخصص", value: "custom" },
+];
+const periodStart = computed<Date | null>(() => {
+  const now = new Date();
+  if (periodPreset.value === "today") return cairoDayStart(now);
+  if (periodPreset.value === "7d") return new Date(now.getTime() - 7 * 86400000);
+  if (periodPreset.value === "30d") return new Date(now.getTime() - 30 * 86400000);
+  return customFrom.value ? cairoDayStart(customFrom.value) : null;
+});
+const periodLoading = ref(false);
+const periodTxns = ref<CashTransaction[]>([]);
+const periodTruncated = ref(false);
+async function reloadPeriodSummary(): Promise<void> {
+  const start = periodStart.value;
+  periodTxns.value = [];
+  periodTruncated.value = false;
+  if (!start) return;
+  periodLoading.value = true;
   try {
-    const snapshot = await getDoc(doc(db, "store_stats", "current"));
-    const data = snapshot.exists() ? snapshot.data() : null;
-    statsReady.value = data?.initialized === true;
-    if (!statsReady.value || !data) return;
-    stats.value = {
-      sales: round2(toNum(data.total_sales)),
-      debts: round2(toNum(data.outstanding_customer_debt)),
-      profits: round2(toNum(data.total_profit)),
-      invoices: Math.max(0, Math.floor(toNum(data.invoice_count))),
-      customers: Math.max(0, Math.floor(toNum(data.customer_count))),
-    };
+    let q = query(collection(db, "cash_transactions"), where("created_at", ">=", Timestamp.fromDate(start)));
+    if (typeFilter.value) q = query(q, where("type", "==", typeFilter.value));
+    const snap = await getDocs(query(q, orderBy("created_at", "desc"), fsLimit(2000)));
+    periodTxns.value = snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) }) as CashTransaction);
+    periodTruncated.value = snap.size >= 2000;
   } catch (e) {
     console.error(e);
   } finally {
-    statsLoading.value = false;
+    periodLoading.value = false;
   }
 }
-
-// إجمالي المستحق للموردين (الديون اللي علينا) من ملخصات الموردين.
-const supplierPayable = ref(0);
-async function fetchSupplierPayable(): Promise<void> {
+const periodIsFiltered = computed(() => typeFilter.value !== null && typeFilter.value !== undefined);
+const periodIn = computed(() => round2(periodTxns.value.filter((t) => t.direction === "in").reduce((s, t) => s + toNum(t.amount), 0)));
+const periodOut = computed(() => round2(periodTxns.value.filter((t) => t.direction === "out").reduce((s, t) => s + toNum(t.amount), 0)));
+const periodNet = computed(() => round2(periodIn.value - periodOut.value));
+const periodOpening = computed(() => round2(cashbox.balance - periodNet.value));
+const exporting = ref(false);
+async function exportPeriod(): Promise<void> {
+  if (!periodTxns.value.length || exporting.value) return;
+  exporting.value = true;
   try {
-    const snapshot = await getDocs(collection(db, "supplier_summaries"));
-    let sum = 0;
-    for (const d of snapshot.docs) sum = round2(sum + toNum(d.data().outstanding_payable));
-    supplierPayable.value = sum;
+    const XLSX = await import("xlsx/dist/xlsx.full.min.js");
+    const rows = periodTxns.value.map((t) => ({
+      التاريخ: toDateSafe(t.created_at)?.toLocaleString("ar-EG", { timeZone: "Africa/Cairo" }) ?? "",
+      النوع: CASH_TYPE_LABELS[t.type] || t.type,
+      الوصف: t.note || "",
+      المبلغ: toNum(t.amount),
+      الاتجاه: t.direction === "in" ? "وارد" : "صادر",
+      المرجع: refLabel(t),
+    }));
+    const sheet = XLSX.utils.json_to_sheet(rows);
+    sheet["!cols"] = [{ wch: 22 }, { wch: 20 }, { wch: 36 }, { wch: 14 }, { wch: 10 }, { wch: 30 }];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, sheet, "حركات الخزنة");
+    XLSX.writeFile(workbook, `حركات_الخزنة_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    notify(`تم تصدير ${rows.length} حركة.`, "success");
   } catch (e) {
     console.error(e);
+    notify("تعذر التصدير.", "error");
+  } finally {
+    exporting.value = false;
   }
 }
 
-// صافي النقد بعد التسوية: الخزنة + اللي لينا (ديون العملاء) − اللي علينا
-// (مستحق الموردين). الحكم على أساس تغطية الكاش للديون، مش الفرق بين
-// الدينين فقط — خزنة 430 وعلينا 400 ولينا 0 = تمام والمتبقي 30.
-const netCashAfterSettlement = computed(() =>
-  round2(cashbox.balance + stats.value.debts - supplierPayable.value),
-);
-const settlementStatusText = computed(() => {
-  if (supplierPayable.value <= 0 && stats.value.debts <= 0) return "تمام";
-  const net = netCashAfterSettlement.value;
-  if (net > 0) return "تمام";
-  if (net < 0) return "عجز";
-  return "متعادل";
+const TXN_PAGE_SIZE = 25;
+const txnList = ref<CashTransaction[]>([]);
+const txnLoading = ref(true);
+const txnPage = ref(1);
+const txnHasMore = ref(false);
+const txnCursors = ref<(QueryDocumentSnapshot | null)[]>([null]);
+const newOpsAvailable = ref(false);
+let liveTxnUnsub: Unsubscribe | null = null;
+function stopLiveTxns(): void {
+  liveTxnUnsub?.();
+  liveTxnUnsub = null;
+}
+function txnBaseQuery() {
+  let q = query(collection(db, "cash_transactions"));
+  if (typeFilter.value) q = query(q, where("type", "==", typeFilter.value));
+  if (periodStart.value) q = query(q, where("created_at", ">=", Timestamp.fromDate(periodStart.value)));
+  return query(q, orderBy("created_at", "desc"));
+}
+function startLiveTxns(): void {
+  if (!import.meta.client) return;
+  stopLiveTxns();
+  txnLoading.value = true;
+  liveTxnUnsub = onSnapshot(query(txnBaseQuery(), fsLimit(TXN_PAGE_SIZE + 1)),
+    (snap) => {
+      const docs = snap.docs.slice(0, TXN_PAGE_SIZE);
+      txnList.value = docs.map((d) => ({ id: d.id, ...(d.data() as object) }) as CashTransaction);
+      txnHasMore.value = snap.docs.length > TXN_PAGE_SIZE;
+      if (docs.length && txnHasMore.value) txnCursors.value[txnPage.value] = docs.at(-1) ?? null;
+      txnLoading.value = false;
+    },
+    () => { txnLoading.value = false; });
+}
+async function loadTxnPage(): Promise<void> {
+  txnLoading.value = true;
+  try {
+    let q = txnBaseQuery();
+    const cursor = txnCursors.value[txnPage.value - 1];
+    if (cursor) q = query(q, startAfter(cursor));
+    const snap = await getDocs(query(q, fsLimit(TXN_PAGE_SIZE + 1)));
+    const docs = snap.docs.slice(0, TXN_PAGE_SIZE);
+    txnList.value = docs.map((d) => ({ id: d.id, ...(d.data() as object) }) as CashTransaction);
+    txnHasMore.value = snap.docs.length > TXN_PAGE_SIZE;
+    if (docs.length && txnHasMore.value) txnCursors.value[txnPage.value] = docs.at(-1) ?? null;
+  } catch (e) {
+    console.error(e);
+  } finally {
+    txnLoading.value = false;
+  }
+}
+function goTxnPage(n: number): void {
+  if (n < 1 || txnLoading.value) return;
+  txnPage.value = n;
+  newOpsAvailable.value = false;
+  if (n === 1) startLiveTxns();
+  else {
+    stopLiveTxns();
+    void loadTxnPage();
+  }
+}
+function backToLatest(): void {
+  txnPage.value = 1;
+  txnCursors.value = [null];
+  newOpsAvailable.value = false;
+  startLiveTxns();
+}
+watch([typeFilter, periodStart], () => {
+  txnPage.value = 1;
+  txnCursors.value = [null];
+  newOpsAvailable.value = false;
+  startLiveTxns();
+  void reloadPeriodSummary();
 });
-const paged = computed(() => cashbox.transactions);
+watch(() => cashbox.revision, () => {
+  if (txnPage.value !== 1) newOpsAvailable.value = true;
+});
+
+const paged = computed(() => txnList.value);
 let referenceLookupVersion = 0;
 watch(
   paged,
@@ -1193,7 +1462,7 @@ watch(
 function formatDateTime(v: unknown): string {
   const d = toDateSafe(v);
   if (!d) return "-";
-  return `${d.toLocaleDateString("ar-EG")} ${d.toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit" })}`;
+  return `${d.toLocaleDateString("ar-EG", { timeZone: "Africa/Cairo" })} ${d.toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit", timeZone: "Africa/Cairo" })}`;
 }
 
 function descriptionWords(value: string | null | undefined): string[] {
@@ -1420,11 +1689,12 @@ async function doAdjust(
 }
 
 async function doOpening(): Promise<void> {
-  const v = round2(openingAmount.value);
-  if (!v || v <= 0) {
-    notify("أدخل الرصيد الافتتاحي (أكبر من صفر).", "error");
+  const raw = openingAmount.value;
+  if (raw === undefined || raw === null || !Number.isFinite(Number(raw)) || Number(raw) < 0) {
+    notify("أدخل الرصيد الافتتاحي (صفر مسموح به).", "error");
     return;
   }
+  const v = round2(raw);
   openingBusy.value = true;
   try {
     const res = await cashbox.ensureOpeningBalance(
@@ -1441,21 +1711,24 @@ async function doOpening(): Promise<void> {
   }
 }
 
+onUnmounted(() => {
+  stopLiveTxns();
+  unsubscribeSummaries();
+});
 onMounted(async () => {
   const authed = await useAuthReady();
   if (!authed) {
     cashbox.loading = false;
-    cashbox.loadingTxns = false;
+    txnLoading.value = false;
     statsLoading.value = false;
     referenceLoading.value = false;
     return; // layout redirects to /login
   }
-  void Promise.all([
-    cashbox.fetchCashbox(),
-    cashbox.fetchTransactions(),
-    products.fetchProducts(),
-    fetchStats(),
-    fetchSupplierPayable(),
-  ]);
+  cashbox.ensureCashboxSubscription();
+  products.ensureInventorySubscription();
+  subscribeSummaries();
+  startLiveTxns();
+  void reloadPeriodSummary();
+  void products.fetchProducts();
 });
 </script>

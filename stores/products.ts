@@ -1,6 +1,19 @@
-import { collection, doc } from "firebase/firestore";
+import { collection, doc, onSnapshot, type Unsubscribe } from "firebase/firestore";
 import type { Product } from "~/types";
-import { round2, toNum } from "~/composables/finance";
+import { isLowStock, isNegativeStock, isOutOfStock, round2, toNum } from "~/composables/finance";
+
+export type InventorySyncState = "idle" | "loading" | "live" | "cache" | "error";
+
+let inventoryUnsub: Unsubscribe | null = null;
+let inventorySession = 0;
+let inventoryUid: string | null = null;
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    inventoryUnsub?.();
+    inventoryUnsub = null;
+  });
+}
 
 export const useProductsStore = defineStore("products", () => {
   const { readFrom, saveDataTo, updateItem, deleteItem, db, serverTimestamp } = useFirebase();
@@ -8,12 +21,105 @@ export const useProductsStore = defineStore("products", () => {
   const list = ref<Product[]>([]);
   const loaded = ref(false);
   const lastFetchedAt = ref(0);
+  const inventoryReady = ref(false);
+  const inventorySyncState = ref<InventorySyncState>("idle");
+  const syncPendingWrites = ref(false);
+  const syncError = ref<string | null>(null);
+
+  const productsById = computed(() => new Map(list.value.filter((p) => p.id).map((p) => [p.id as string, p])));
+  const activeProducts = computed(() => list.value.filter((p) => p.is_active !== false));
+  const lowStockProducts = computed(() => activeProducts.value.filter((p) => isLowStock(p) && !isOutOfStock(p)));
+  const outOfStockProducts = computed(() => activeProducts.value.filter((p) => isOutOfStock(p)));
+  const negativeStockProducts = computed(() => activeProducts.value.filter((p) => isNegativeStock(p)));
+  const lowStockCount = computed(() => lowStockProducts.value.length);
+
+  function applySnapshotItems(items: Product[]): void {
+    const byId = new Map(list.value.filter((p) => p.id).map((p) => [p.id as string, p]));
+    for (const item of items) {
+      if (item.id) byId.set(item.id, item);
+    }
+    list.value = [...byId.values()];
+  }
+
+  function ensureInventorySubscription(): void {
+    if (!import.meta.client) return;
+    const uid = useFirebase().auth.currentUser?.uid ?? null;
+    if (!uid) return;
+    if (inventoryUnsub) {
+      if (inventoryUid === uid) return;
+      stopInventorySubscription();
+      list.value = [];
+      loaded.value = false;
+      inventoryReady.value = false;
+    }
+    inventoryUid = uid;
+    const session = ++inventorySession;
+    inventorySyncState.value = "loading";
+    syncError.value = null;
+    inventoryUnsub = onSnapshot(
+      collection(db, "products"),
+      { includeMetadataChanges: true },
+      (snap) => {
+        if (session !== inventorySession || !inventoryUnsub) return;
+        const nextUid = useFirebase().auth.currentUser?.uid ?? null;
+        if (nextUid !== uid) return;
+        for (const change of snap.docChanges()) {
+          const item = { id: change.doc.id, ...(change.doc.data() as object) } as Product;
+          if (change.type === "removed") {
+            list.value = list.value.filter((p) => p.id !== item.id);
+          } else {
+            const index = list.value.findIndex((p) => p.id === item.id);
+            if (index < 0) list.value = [...list.value, item];
+            else list.value = list.value.map((p) => (p.id === item.id ? item : p));
+          }
+        }
+        loaded.value = true;
+        inventoryReady.value = true;
+        lastFetchedAt.value = Date.now();
+        syncPendingWrites.value = snap.metadata.hasPendingWrites;
+        inventorySyncState.value = snap.metadata.fromCache ? "cache" : "live";
+      },
+      (error) => {
+        if (session !== inventorySession) return;
+        if ((error as { code?: string }).code === "permission-denied") {
+          stopInventorySubscription();
+        }
+        syncError.value = (error as Error).message ?? "sync error";
+        inventorySyncState.value = "error";
+      },
+    );
+  }
+
+  function stopInventorySubscription(): void {
+    inventorySession += 1;
+    inventoryUnsub?.();
+    inventoryUnsub = null;
+    if (inventorySyncState.value !== "idle") inventorySyncState.value = "idle";
+    syncPendingWrites.value = false;
+  }
+
+  function clearInventory(): void {
+    stopInventorySubscription();
+    inventoryUid = null;
+    list.value = [];
+    loaded.value = false;
+    inventoryReady.value = false;
+    lastFetchedAt.value = 0;
+    syncError.value = null;
+  }
 
   const fetchProducts = async (filters?: Record<string, string | number | boolean | Date | null | undefined>, force = false): Promise<boolean> => {
     const filtered = !!filters && Object.values(filters).some((value) => value !== undefined && value !== null && value !== "");
-    if (!filtered && !force && loaded.value && Date.now() - lastFetchedAt.value < 30_000) return true;
-    list.value = await readFrom<Product>("products", filters ?? {});
-    if (!filtered) { loaded.value = true; lastFetchedAt.value = Date.now(); }
+    if (filtered) return true;
+    if (inventoryUnsub) return true;
+    if (!force && loaded.value && Date.now() - lastFetchedAt.value < 30_000) return true;
+    const session = inventorySession;
+    const items = await readFrom<Product>("products", {});
+    if (session !== inventorySession || inventoryUnsub) return true;
+    list.value = items;
+    loaded.value = true;
+    inventoryReady.value = true;
+    lastFetchedAt.value = Date.now();
     return true;
   };
 
@@ -121,5 +227,5 @@ export const useProductsStore = defineStore("products", () => {
     }
   }
 
-  return { list, loaded, lastFetchedAt, fetchProducts, addProduct, updateProduct, patchCached, upsertCached, invalidateCache, deleteProduct, deleteProductWithRecovery, archiveProduct };
+  return { list, loaded, lastFetchedAt, inventoryReady, inventorySyncState, syncPendingWrites, syncError, productsById, activeProducts, lowStockProducts, outOfStockProducts, negativeStockProducts, lowStockCount, ensureInventorySubscription, stopInventorySubscription, clearInventory, fetchProducts, addProduct, updateProduct, patchCached, upsertCached, invalidateCache, deleteProduct, deleteProductWithRecovery, archiveProduct };
 });

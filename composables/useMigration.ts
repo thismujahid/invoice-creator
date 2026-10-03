@@ -349,11 +349,20 @@ export const useMigration = defineStore("migration", () => {
     }
     let returnsTotal = 0;
     for (const returnSnapshot of returnSnapshots.docs) {
-      const returned = returnSnapshot.data() as { invoice_id?: string; total_refund?: number; created_at?: unknown };
+      const returned = returnSnapshot.data() as { invoice_id?: string; total_refund?: number; created_at?: unknown; items?: { refund_amount?: unknown; original_unit_cost?: unknown; base_quantity?: unknown; quantity?: unknown }[] };
       const total = round2(toNum(returned.total_refund));
       returnsTotal = round2(returnsTotal + total);
-      storeStats = sumInvoiceStats(storeStats, { return_count: 1, returns_total: total });
-      const delta = { return_count: 1, returns_total: total };
+      let profit = 0;
+      let profitKnown = Array.isArray(returned.items) && returned.items.length > 0;
+      for (const item of returned.items ?? []) {
+        const cost = Number(item.original_unit_cost);
+        const qty = Number(item.base_quantity ?? item.quantity);
+        if (!Number.isFinite(cost) || !Number.isFinite(qty)) { profitKnown = false; break; }
+        profit = round2(profit + toNum(item.refund_amount) - cost * qty);
+      }
+      const reversal = profitKnown ? profit : 0;
+      storeStats = sumInvoiceStats(storeStats, { return_count: 1, returns_total: total, total_profit: -reversal });
+      const delta = { return_count: 1, returns_total: total, total_profit: -reversal };
       const returnDate = returned.created_at ? { date: returned.created_at } : null;
       const dayKey = returnDate ? invoiceDayKey(returnDate) : null;
       const monthKey = returnDate ? invoiceMonthKey(returnDate) : null;

@@ -1,6 +1,6 @@
 import { doc, serverTimestamp, type Firestore, type Transaction } from "firebase/firestore";
 import type { Invoice } from "~/types";
-import { getInvoiceBreakdown, grossProfitOf, invoiceTotals, outstandingDebtOf } from "./finance";
+import { getInvoiceBreakdown, invoiceTotals, merchandiseProfitOf, outstandingDebtOf } from "./finance";
 
 /** Minimal debt summary per invoice — the ONLY invoice data the debt book loads.
  *  Full invoice documents (with product lines) are never preloaded (strict). */
@@ -43,7 +43,7 @@ type SummarySource = Pick<
 export function summarizeInvoice(inv: SummarySource): { total: number; sales: number; paid: number; remaining: number; profit: number } {
   const t = invoiceTotals(inv);
   const breakdown = getInvoiceBreakdown(inv);
-  return { total: t.net, sales: breakdown.salesNet, paid: t.paid, remaining: outstandingDebtOf(inv), profit: grossProfitOf(inv.products) };
+  return { total: t.net, sales: breakdown.salesNet, paid: t.paid, remaining: outstandingDebtOf(inv), profit: merchandiseProfitOf(inv) };
 }
 
 /** Upsert the summary inside the caller's transaction (atomic with the op). */

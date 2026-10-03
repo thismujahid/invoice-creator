@@ -1,5 +1,5 @@
 import type { Invoice } from "~/types";
-import { getInvoiceBreakdown, grossProfitOf, invoiceTotals, lineBaseQuantity, outstandingDebtOf, round2, toNum } from "./finance.ts";
+import { getInvoiceBreakdown, invoiceTotals, lineBaseQuantity, merchandiseProfitOf, outstandingDebtOf, round2, toNum } from "./finance.ts";
 
 export interface InvoiceStats {
   total_sales: number;
@@ -61,7 +61,7 @@ export function invoiceStatsOf(invoice: Invoice | null | undefined): InvoiceStat
     total_paid: paid,
     outstanding_customer_debt: remaining,
     total_cost: totalCost,
-    total_profit: grossProfitOf(invoice.products),
+    total_profit: merchandiseProfitOf(invoice),
     invoice_count: 1,
     return_count: 0,
     returns_total: 0,
