@@ -1,4 +1,5 @@
 import { createError, defineEventHandler, getHeader, getRouterParam, readBody } from "h3";
+import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -6,12 +7,23 @@ const operations = new Set([
   "getCashierCatalog",
   "getCashierInvoices",
   "getCashierInvoice",
+  "getCashierInvoiceReturns",
+  "getCashierReturnJournal",
   "getCashierCustomers",
+  "getCustomerCredit",
+  "payCustomerCredit",
+  "getCashierCashSummary",
   "getCashierDebts",
+  "getCashierDebtBook",
+  "getCashierPayments",
   "createStaffCustomer",
   "createStaffLoan",
   "createStaffSale",
   "payStaffDebts",
+  "getStaffReturnPreview",
+  "createStaffReturn",
+  "deleteStaffInvoice",
+  "updateStaffInvoice",
 ]);
 
 const statuses = {
@@ -68,10 +80,18 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    const staff = import.meta.dev
-      ? await import(pathToFileURL(resolve(process.cwd(), "functions/staff.cjs")).href)
-      : await import("../../../functions/staff.cjs");
-    const result = await staff.default[name].run({ data, auth: { uid: auth.uid, token: auth } });
+    let staff;
+    if (import.meta.dev) {
+      const require = createRequire(pathToFileURL(resolve(process.cwd(), "package.json")));
+      const staffPath = require.resolve("./functions/staff.cjs");
+      const actionsPath = require.resolve("./functions/staffInvoiceActions.cjs");
+      delete require.cache[staffPath];
+      delete require.cache[actionsPath];
+      staff = require(staffPath);
+    } else {
+      staff = (await import("../../../functions/staff.cjs")).default;
+    }
+    const result = await staff[name].run({ data, auth: { uid: auth.uid, token: auth } });
     return serializeResult(result);
   } catch (error) {
     const code = String(error?.code || "").replace(/^functions\//, "");

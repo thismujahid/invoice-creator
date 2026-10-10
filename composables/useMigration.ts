@@ -352,10 +352,15 @@ export const useMigration = defineStore("migration", () => {
       aggregates.set(id, aggregate);
     }
     let returnsTotal = 0;
+    const invoicesById = new Map(invoices.map((invoice) => [invoice.id, invoice]));
     for (const returnSnapshot of returnSnapshots.docs) {
       const returned = returnSnapshot.data() as { invoice_id?: string; total_refund?: number; created_at?: unknown; items?: { refund_amount?: unknown; original_unit_cost?: unknown; base_quantity?: unknown; quantity?: unknown }[] };
       const total = round2(toNum(returned.total_refund));
       returnsTotal = round2(returnsTotal + total);
+      const originalInvoice = invoicesById.get(returned.invoice_id);
+      const customerId = originalInvoice ? customerSummaryId(originalInvoice) : null;
+      const customerAggregate = customerId ? aggregates.get(customerId) : null;
+      if (customerAggregate) customerAggregate.total_sales = round2(customerAggregate.total_sales - total);
       let profit = 0;
       let profitKnown = Array.isArray(returned.items) && returned.items.length > 0;
       for (const item of returned.items ?? []) {
@@ -392,7 +397,7 @@ export const useMigration = defineStore("migration", () => {
       if (!supplier?.id) continue;
       const aggregate = supplierAggregates.get(supplier.id) ?? { supplier_id: supplier.id, supplier_name: supplier.name, invoice_count: 0, total_purchases: 0, outstanding_payable: 0, advance_receivable: 0 };
       aggregate.invoice_count += 1;
-      aggregate.total_purchases = round2(aggregate.total_purchases + toNum(invoice.total_amount));
+      aggregate.total_purchases = round2(aggregate.total_purchases + toNum(invoice.total_amount) - toNum(invoice.return_total));
       aggregate.outstanding_payable = round2(aggregate.outstanding_payable + toNum(invoice.remaining_amount));
       supplierAggregates.set(supplier.id, aggregate);
     }

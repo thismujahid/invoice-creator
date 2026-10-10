@@ -75,6 +75,9 @@ function classify(t: InventoryTransaction): ReplayStep | { invalid: string } {
         return { stockIn: qty, stockOut: 0, knownCost: Number(t.unit_cost) };
       }
       return { invalid: "unknown sale direction" };
+    case "supplier_return":
+      if (t.direction !== "out") return { invalid: "supplier return must be out" };
+      return { stockIn: 0, stockOut: qty, knownCost: null };
     case "refund":
       if (t.direction !== "in") return { stockIn: 0, stockOut: qty, knownCost: null };
       if (!hasKnownCost(t.unit_cost)) return { invalid: "refund without cost" };
@@ -124,6 +127,9 @@ function isOneAtomicMovementGroup(transactions: InventoryTransaction[]): boolean
   }
   if (first.type === "refund" && first.return_id) {
     return transactions.every((transaction) => transaction.type === "refund" && transaction.return_id === first.return_id);
+  }
+  if (first.type === "supplier_return" && first.return_id) {
+    return transactions.every((transaction) => transaction.type === "supplier_return" && transaction.return_id === first.return_id);
   }
   if (first.type === "sale" && first.invoice_id) {
     return transactions.every((transaction) => transaction.type === "sale" && transaction.invoice_id === first.invoice_id);

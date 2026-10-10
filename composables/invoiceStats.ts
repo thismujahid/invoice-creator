@@ -58,7 +58,7 @@ export function invoiceStatsOf(invoice: Invoice | null | undefined): InvoiceStat
     total_discount: totals.gross > 1e-9 && breakdown.salesGross > 0
       ? round2((totals.discountValue * breakdown.salesGross) / totals.gross)
       : totals.discountValue,
-    total_paid: paid,
+    total_paid: round2(paid - toNum(invoice.credit_used)),
     outstanding_customer_debt: remaining,
     total_cost: totalCost,
     total_profit: merchandiseProfitOf(invoice),
@@ -119,4 +119,24 @@ export function sumInvoiceStats(...values: Partial<InvoiceStats>[]): InvoiceStat
     }
   }
   return result;
+}
+
+export function netSalesOf(stats: Pick<InvoiceStats, "total_sales" | "returns_total">): number {
+  return round2(stats.total_sales - stats.returns_total);
+}
+
+export function netCollectedOf(grossPaid: number, cashRefund: number): number {
+  return round2(grossPaid - cashRefund);
+}
+
+export function cairoDayStart(dayKey: string): Date {
+  const year = Number(dayKey.slice(0, 4));
+  const month = Number(dayKey.slice(5, 7));
+  const day = Number(dayKey.slice(8, 10));
+  const utcNoon = new Date(Date.UTC(year, month - 1, day, 12));
+  const zone = new Intl.DateTimeFormat("en-US", { timeZone: "Africa/Cairo", timeZoneName: "shortOffset" }).formatToParts(utcNoon).find((part) => part.type === "timeZoneName");
+  const match = /^GMT([+-])(\d{1,2})(?::(\d{2}))?$/.exec(zone?.value || "");
+  if (!match) throw new Error("تعذر تحديد توقيت تقرير اليوم.");
+  const offsetMinutes = (match[1] === "+" ? 1 : -1) * (Number(match[2]) * 60 + Number(match[3] || 0));
+  return new Date(Date.UTC(year, month - 1, day) - offsetMinutes * 60_000);
 }

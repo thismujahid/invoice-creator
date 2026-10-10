@@ -15,7 +15,7 @@ export default defineNuxtRouteMiddleware(async (to) => {
   }
   store.role = role;
   if (to.path === "/login") return navigateTo("/", { replace: true });
-  if (role === "cashier" && !["/", "/invoices", "/debts", "/products"].includes(to.path)) {
+  if (role === "cashier" && !["/", "/invoices", "/debts", "/products", "/cashier-cashbox"].includes(to.path)) {
     return navigateTo("/", { replace: true });
   }
 });

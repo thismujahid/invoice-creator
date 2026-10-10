@@ -248,6 +248,18 @@ service cloud.firestore {
       allow create: if isStaff();
       allow update, delete: if isAdmin();
     }
+    match /customer_credits/{id} {
+      allow read, create, update: if isAdmin();
+      allow delete: if false;
+    }
+    match /customer_credit_transactions/{id} {
+      allow read, create: if isAdmin();
+      allow update, delete: if false;
+    }
+    match /supplier_returns/{id} {
+      allow read, create: if isAdmin();
+      allow update, delete: if false;
+    }
     match /customer_loans/{id} {
       allow read: if isStaff();
       allow create, update: if isStaff();

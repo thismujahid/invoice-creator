@@ -3,14 +3,44 @@
     :open="true"
     :dismissible="!!title"
     :title="title || 'تسجيل الدخول'"
-    @update:open="(v) => !v && emit('close')"
+    @update:open="(v: any) => !v && emit('close')"
   >
     <template #body>
       <div class="space-y-4 text-center" dir="rtl">
-        <UFormField label="نوع الحساب" class="text-start">
-          <USelect v-model="selectedRole" :items="[{ label: 'كاشير', value: 'cashier' }, { label: 'مسؤول', value: 'admin' }]" value-key="value" class="w-full" :disabled="loading" />
-        </UFormField>
-        <UFormField label="كلمة المرور" class="text-start">
+        <div class="text-start">
+          <div class="mb-1.5 text-sm font-medium text-gray-700">نوع الحساب</div>
+          <div
+            role="tablist"
+            aria-label="نوع الحساب"
+            class="grid grid-cols-2 rounded-lg bg-gray-100 p-1"
+          >
+            <UButton
+              role="tab"
+              color="neutral"
+              :variant="selectedRole === 'cashier' ? 'solid' : 'ghost'"
+              block
+              :disabled="loading"
+              :aria-selected="selectedRole === 'cashier'"
+              @click="selectedRole = 'cashier'"
+              >كاشير</UButton
+            >
+            <UButton
+              role="tab"
+              color="neutral"
+              :variant="selectedRole === 'admin' ? 'solid' : 'ghost'"
+              block
+              :disabled="loading"
+              :aria-selected="selectedRole === 'admin'"
+              @click="selectedRole = 'admin'"
+              >مسؤول</UButton
+            >
+          </div>
+        </div>
+        <UFormField
+          label="كلمة المرور"
+          :ui="{ label: 'text-center w-full' }"
+          class="text-center"
+        >
           <UPinInput
             v-model="pin"
             :length="6"
@@ -25,7 +55,14 @@
             @complete="login"
           />
         </UFormField>
-        <UButton color="success" block :loading="loading" :disabled="loading" @click="login">تسجيل الدخول</UButton>
+        <UButton
+          color="success"
+          block
+          :loading="loading"
+          :disabled="loading"
+          @click="login"
+          >تسجيل الدخول</UButton
+        >
         <UAlert v-if="error" color="error" variant="soft" :title="error" />
         <div v-if="!title" class="w-full text-center text-sm">
           برمجة وتطوير:
@@ -56,7 +93,10 @@ const props = defineProps<{
   isInLogin?: boolean;
 }>();
 const emit = defineEmits(["success", "close"]);
-watch(selectedRole, () => { pin.value = []; error.value = ""; });
+watch(selectedRole, () => {
+  pin.value = [];
+  error.value = "";
+});
 
 async function login() {
   if (loading.value) return;
@@ -77,7 +117,9 @@ async function login() {
     authStore.role = role;
     authStore.snackBarColor = "success";
     authStore.setUserKey(role === "admin" ? "su" : "cashier");
-    authStore.snackBarText = props.successText || `تم تسجيل الدخول ك${role === "admin" ? "مسؤول" : "كاشير"} بنجاح`;
+    authStore.snackBarText =
+      props.successText ||
+      `تم تسجيل الدخول ك${role === "admin" ? "مسؤول" : "كاشير"} بنجاح`;
     emit("success", true);
     emit("close");
   } catch {

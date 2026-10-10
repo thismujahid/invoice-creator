@@ -521,6 +521,34 @@ export function splitRefund(refundValue: unknown, remainingDebt: unknown): { deb
   return { debtReduction: round2(debtReduction), cashRefund: round2(refund - debtReduction) };
 }
 
+export function splitCustomerReturn(refundValue: number, remainingDebt: number, creditUsed: number, creditRestoredBefore: number, cashRequested: number): { debtReduction: number; creditRestored: number; cashRefund: number; creditIssued: number; settlement: number } {
+  const split = splitRefund(refundValue, remainingDebt);
+  const creditRestored = round2(Math.min(split.cashRefund, Math.max(0, round2(creditUsed - creditRestoredBefore))));
+  const settlement = round2(split.cashRefund - creditRestored);
+  if (!Number.isFinite(cashRequested) || cashRequested < 0 || cashRequested - settlement > 0.005) throw new Error("Invalid cash refund amount.");
+  const cashRefund = round2(cashRequested);
+  return { debtReduction: split.debtReduction, creditRestored, cashRefund, creditIssued: round2(settlement - cashRefund), settlement };
+}
+
+export function allocateCustomerCredit(creditBalance: number, obligations: { id: string; type: "invoice" | "loan"; remaining: number; date: Date | null }[]): { type: "invoice" | "loan"; reference_id: string; amount: number }[] {
+  let available = Math.max(0, round2(creditBalance));
+  const allocations: { type: "invoice" | "loan"; reference_id: string; amount: number }[] = [];
+  for (const item of [...obligations].sort((a, b) => (a.date?.getTime() ?? 0) - (b.date?.getTime() ?? 0))) {
+    if (available <= 0 || allocations.length >= 50) break;
+    const amount = round2(Math.min(available, Math.max(0, round2(item.remaining))));
+    if (amount <= 0) continue;
+    allocations.push({ type: item.type, reference_id: item.id, amount });
+    available = round2(available - amount);
+  }
+  return allocations;
+}
+
+export function splitSupplierReturn(returnValue: unknown, remainingPayable: unknown): { payableReduction: number; receivable: number } {
+  const total = round2(returnValue);
+  const payableReduction = round2(Math.min(Math.max(total, 0), Math.max(0, round2(remainingPayable))));
+  return { payableReduction, receivable: round2(total - payableReduction) };
+}
+
 export interface StockDelta {
   product_id: string;
   product_name: string;
@@ -860,6 +888,7 @@ export const useFinance = () => ({
   collectedProfitOf,
   lineRefundValue,
   splitRefund,
+  splitCustomerReturn,
   stockDeltaForEdit,
   restoreGroupsForEdit,
   loanStatusOf,

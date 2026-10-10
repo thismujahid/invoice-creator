@@ -210,23 +210,15 @@ const allTabItems = [
 ];
 const tabItems = computed(() => authStore.role === "admin"
   ? allTabItems
-  : allTabItems.filter((item) => ["/", "/invoices", "/debts", "/products"].includes(item.to)));
+  : [...allTabItems.filter((item) => ["/", "/invoices", "/debts", "/products"].includes(item.to)), { label: "خزنة الكاشير", icon: "i-lucide-vault", to: "/cashier-cashbox" }]);
 
 function isActiveTab(to: string): boolean {
   return route.path === to;
 }
 
 const PRIMARY_TOS = ["/", "/invoices", "/debts"];
-const primaryItems = computed(() =>
-  authStore.role === "cashier"
-    ? tabItems.value
-    : tabItems.value.filter((t) => PRIMARY_TOS.includes(t.to as string)),
-);
-const secondaryItems = computed(() =>
-  authStore.role === "cashier"
-    ? []
-    : tabItems.value.filter((t) => !PRIMARY_TOS.includes(t.to as string)),
-);
+const primaryItems = computed(() => tabItems.value.filter((t) => PRIMARY_TOS.includes(t.to as string)));
+const secondaryItems = computed(() => tabItems.value.filter((t) => !PRIMARY_TOS.includes(t.to as string)));
 const moreOpen = ref(false);
 const moreActive = computed(() =>
   secondaryItems.value.some((t) => isActiveTab(t.to as string)),
@@ -330,7 +322,7 @@ async function applyAuthUser(user: User | null): Promise<void> {
   } else {
     authStore.userData = null;
   }
-  if (role === "cashier" && !["/", "/login", "/invoices", "/debts", "/products"].includes(route.path)) {
+  if (role === "cashier" && !["/", "/login", "/invoices", "/debts", "/products", "/cashier-cashbox"].includes(route.path)) {
     void navigateTo("/", { replace: true });
   }
   if (!authSettled) {
@@ -374,7 +366,7 @@ watch(isAuthed, (v) => {
   }
 });
 watch(() => route.path, (path) => {
-  if (authStore.role === "cashier" && !["/", "/login", "/invoices", "/debts", "/products"].includes(path)) {
+  if (authStore.role === "cashier" && !["/", "/login", "/invoices", "/debts", "/products", "/cashier-cashbox"].includes(path)) {
     void navigateTo("/", { replace: true });
   }
 });

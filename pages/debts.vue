@@ -56,19 +56,19 @@
           <div class="text-lg font-bold sm:text-xl">
             {{ displayed.debtors }}
           </div>
-          <div class="text-xs text-gray-500">عدد أصحاب الديون المعروضين</div>
+          <div class="text-xs text-gray-500">عدد العملاء المعروضين</div>
         </UCard>
       </div>
       <div class="hidden overflow-x-auto md:block">
         <table class="w-full text-sm">
           <thead>
             <tr class="border-b border-gray-200 text-gray-500">
-              <th class="p-2 text-start font-medium">اسم العميل</th>
-              <th class="p-2 text-start font-medium">الهاتف</th>
-              <th class="p-2 text-start font-medium">فواتير غير مسددة</th>
-              <th class="p-2 text-start font-medium">ديون الفواتير</th>
-              <th class="p-2 text-start font-medium">السلف</th>
-              <th class="p-2 text-start font-medium">إجمالي الدين</th>
+              <th class="p-2 text-start font-medium">العميل</th>
+              <th class="p-2 text-start font-medium" title="إجمالي المتبقي من الفواتير × عددها">الفواتير وقيمتها</th>
+              <th class="p-2 text-start font-medium">سلف</th>
+              <th class="p-2 text-start font-medium">له</th>
+              <th class="p-2 text-start font-medium" title="الصافي المتوقع عند خصم رصيد العميل">بعد التسوية</th>
+              <th class="p-2 text-start font-medium" title="إجمالي الفواتير والسلف قبل التسوية">عام</th>
               <th class="p-2 text-start font-medium">الأدوات</th>
             </tr>
           </thead>
@@ -78,14 +78,12 @@
               :key="c.key"
               class="border-b border-gray-100 last:border-0 hover:bg-gray-50"
             >
-              <td class="p-2 font-medium">{{ c.name }}</td>
-              <td class="p-2 text-gray-600" dir="ltr">{{ c.phone ?? "—" }}</td>
-              <td class="p-2">{{ c.unpaidCount }}</td>
-              <td class="p-2">{{ formatePrice(c.invoiceDebt) }}</td>
+              <td class="p-2 font-medium">{{ c.name }}<span class="mt-0.5 block text-end text-xs font-normal text-gray-500" dir="ltr">{{ c.phone ?? "—" }}</span></td>
+              <td class="p-2 font-semibold" dir="ltr">{{ formatePrice(c.invoiceDebt) }} ج × {{ c.unpaidCount }}</td>
               <td class="p-2">{{ formatePrice(c.loanDebt) }}</td>
-              <td class="p-2 font-bold text-red-600">
-                {{ formatePrice(c.totalDebt) }}
-              </td>
+              <td class="p-2 font-bold text-emerald-700">{{ formatePrice(c.creditBalance) }}</td>
+              <td class="p-2 font-bold" :class="c.totalDebt > c.creditBalance ? 'text-red-600' : c.totalDebt < c.creditBalance ? 'text-emerald-700' : 'text-gray-600'">{{ c.totalDebt > c.creditBalance ? 'عليه' : c.totalDebt < c.creditBalance ? 'له' : 'متوازن' }} {{ formatePrice(Math.abs(round2(c.totalDebt - c.creditBalance))) }}</td>
+              <td class="p-2 font-bold text-red-600">{{ formatePrice(c.totalDebt) }}</td>
               <td class="p-2">
                 <div class="flex gap-1.5">
                   <UTooltip text="عرض التفاصيل"
@@ -108,6 +106,7 @@
                       @click="openPay(c)"
                       class="flex items-center justify-center"
                   /></UTooltip>
+                  <CustomerCreditSettlement :customer-id="c.customer_id" :customer-name="c.name" :credit-balance="c.creditBalance" :total-debt="c.totalDebt" :obligations="[...c.invoices, ...c.loans]" @settled="reload" />
                   <UTooltip text="إضافة سلفة"
                     ><UButton
                       icon="mdi-plus"
@@ -146,7 +145,7 @@
         <UEmpty
           v-if="!paged.length"
           icon="i-lucide-notebook-text"
-          title="لا توجد ديون مستحقة"
+          title="لا توجد ديون أو أرصدة للعملاء"
         />
       </div>
       <div class="grid gap-2 md:hidden">
@@ -159,14 +158,8 @@
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0">
               <div class="truncate font-bold">{{ c.name }}</div>
-              <div class="text-xs text-gray-500" dir="ltr">
+              <div class="text-end text-xs text-gray-500" dir="ltr">
                 {{ c.phone ?? "" }}
-              </div>
-              <div class="mt-1 text-xs text-gray-500">
-                {{ c.unpaidCount }} فواتير • سلف: {{ formatePrice(c.loanDebt) }}
-              </div>
-              <div class="mt-1 font-bold text-red-600">
-                {{ formatePrice(c.totalDebt) }}
               </div>
             </div>
             <div
@@ -191,6 +184,7 @@
                 @click="openPay(c)"
                 class="flex items-center justify-center"
               />
+              <CustomerCreditSettlement :customer-id="c.customer_id" :customer-name="c.name" :credit-balance="c.creditBalance" :total-debt="c.totalDebt" :obligations="[...c.invoices, ...c.loans]" @settled="reload" />
               <UButton
                 icon="i-lucide-plus"
                 color="info"
@@ -220,11 +214,18 @@
               />
             </div>
           </div>
+          <div class="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+            <div>الفواتير: <b dir="ltr">{{ formatePrice(c.invoiceDebt) }} ج × {{ c.unpaidCount }}</b></div>
+            <div>سلف: <b>{{ formatePrice(c.loanDebt) }}</b></div>
+            <div>له: <b class="text-emerald-700">{{ formatePrice(c.creditBalance) }}</b></div>
+            <div>عام: <b class="text-red-600">{{ formatePrice(c.totalDebt) }}</b></div>
+            <div class="col-span-2 font-bold" :class="c.totalDebt > c.creditBalance ? 'text-red-600' : c.totalDebt < c.creditBalance ? 'text-emerald-700' : 'text-gray-600'">بعد التسوية: {{ c.totalDebt > c.creditBalance ? 'عليه' : c.totalDebt < c.creditBalance ? 'له' : 'متوازن' }} {{ formatePrice(Math.abs(round2(c.totalDebt - c.creditBalance))) }} ج</div>
+          </div>
         </UCard>
         <UEmpty
           v-if="!paged.length"
           icon="i-lucide-notebook-text"
-          title="لا توجد ديون مستحقة"
+          title="لا توجد ديون أو أرصدة للعملاء"
         />
       </div>
     </template>
@@ -254,11 +255,13 @@
         <div
           class="flex items-center justify-between rounded-lg bg-gray-50 p-2 text-sm"
         >
-          <span class="text-gray-500">إجمالي الدين</span>
+          <span class="text-gray-500">عليه</span>
           <span class="font-bold text-red-600">{{
             formatePrice(selected.totalDebt)
           }}</span>
         </div>
+        <div class="flex items-center justify-between rounded-lg bg-emerald-50 p-2 text-sm"><span>له رصيد</span><b class="text-emerald-700">{{ formatePrice(selected.creditBalance) }} ج</b></div>
+        <CustomerCreditSettlement :customer-id="selected.customer_id" :customer-name="selected.name" :credit-balance="selected.creditBalance" :total-debt="selected.totalDebt" :obligations="[...selected.invoices, ...selected.loans]" size="sm" label @settled="reload" />
         <div>
           <p class="mb-1.5 text-xs font-bold text-gray-400">
             الفواتير غير المسددة
@@ -341,8 +344,10 @@
     </UiAppDialog>
 
     <!-- Loans modal -->
-    <UiAppDialog v-model:open="loansOpen" title="سلف العميل">
+    <UiAppDialog v-model:open="loansOpen" title="سلف على العميل ورصيده">
       <div v-if="selected" class="max-h-[70vh] space-y-2 overflow-y-auto">
+        <div class="flex justify-between rounded-lg bg-emerald-50 p-2 text-sm"><span>رصيد له من المرتجعات</span><b class="text-emerald-700">{{ formatePrice(selected.creditBalance) }} ج</b></div>
+        <div class="flex justify-between rounded-lg bg-red-50 p-2 text-sm"><span>سلف عليه</span><b class="text-red-600">{{ formatePrice(selected.loanDebt) }} ج</b></div>
         <div v-if="!selected.loans.length" class="text-sm text-gray-400">
           لا يوجد سلف
         </div>
@@ -388,8 +393,8 @@
         >
           <div class="flex items-center justify-between gap-2">
             <div class="font-semibold">{{ formatDateOnly(p.created_at) }}</div>
-            <div class="shrink-0 font-bold text-emerald-600" dir="ltr">
-              +{{ formatePrice(p.amount) }}
+            <div class="shrink-0 font-bold text-emerald-600">
+              {{ p.source === 'credit' ? 'تسوية رصيد' : 'نقدي' }}: {{ formatePrice(p.amount) }} ج
             </div>
           </div>
           <div class="mt-0.5 text-xs text-gray-500">
@@ -639,7 +644,7 @@
     </UiAppDialog>
     <!-- Hidden print source for the debts statement -->
     <div class="hidden" aria-hidden="true">
-      <DebtsStatement :book="book" :invoices-by-key="statementMap" />
+      <DebtsStatement :book="statementBook" :invoices-by-key="statementMap" />
     </div>
   </div>
 </template>
@@ -664,6 +669,7 @@ const { db, getDoc } = useFirebase();
 
 const loading = ref(true);
 const book = ref<CustomerDebt[]>([]);
+const statementBook = computed(() => book.value.filter((customer) => customer.totalDebt > 0));
 const searchText = ref(String(route.query.customer_name ?? ""));
 const currentPage = ref(1);
 const currentPerPage = ref(25);
@@ -1064,6 +1070,7 @@ async function reload(): Promise<void> {
   loading.value = true;
   try {
     book.value = await debts.fetchDebtsBook();
+    if (selected.value) selected.value = book.value.find((customer) => customer.key === selected.value?.key) ?? null;
     const customerId = String(route.query.customer_id ?? "");
     const customerName = String(route.query.customer_name ?? "");
     if (customerId || customerName) {
@@ -1085,12 +1092,13 @@ async function printDebtsStatement(): Promise<void> {
   if (printingStatement.value) return;
   printingStatement.value = true;
   try {
-    const freshBook = await debts.fetchDebtsBook();
+    const freshCustomers = await debts.fetchDebtsBook();
+    const freshBook = freshCustomers.filter((customer) => customer.totalDebt > 0);
     if (!freshBook.length) {
       notify("لا توجد ديون مستحقة للطباعة", "error");
       return;
     }
-    book.value = freshBook;
+    book.value = freshCustomers;
     const invoiceIdToKey = new Map<string, string>();
     for (const c of freshBook) {
       for (const o of c.invoices) invoiceIdToKey.set(o.id, c.key);
