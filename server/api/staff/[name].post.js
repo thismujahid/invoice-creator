@@ -56,7 +56,11 @@ export default defineEventHandler(async (event) => {
     runtime = import.meta.dev
       ? await import(pathToFileURL(resolve(process.cwd(), "functions/runtime.cjs")).href)
       : await import("../../../functions/runtime.cjs");
-  } catch {
+  } catch (error) {
+    console.error("Staff service initialization failed", {
+      type: error?.constructor?.name || typeof error,
+      code: typeof error?.code === "string" ? error.code : undefined,
+    });
     throw createError({ statusCode: 503, statusMessage: "The staff service is unavailable." });
   }
 
