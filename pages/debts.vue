@@ -86,13 +86,13 @@
               <td class="p-2 font-bold text-red-600">{{ formatePrice(c.totalDebt) }}</td>
               <td class="p-2">
                 <div class="flex gap-1.5">
-                  <UTooltip text="عرض التفاصيل"
+                  <UTooltip text="سجل عمليات العميل"
                     ><UButton
-                      icon="i-lucide-eye"
+                      icon="i-lucide-history"
                       color="neutral"
                       variant="soft"
                       size="xs"
-                      aria-label="عرض التفاصيل"
+                      aria-label="سجل عمليات العميل"
                       @click="openDetails(c)"
                       class="flex items-center justify-center"
                   /></UTooltip>
@@ -115,26 +115,6 @@
                       size="xs"
                       aria-label="إضافة سلفة"
                       @click="openLoan(c)"
-                      class="flex items-center justify-center"
-                  /></UTooltip>
-                  <UTooltip text="عرض السلف"
-                    ><UButton
-                      icon="i-lucide-wallet"
-                      color="neutral"
-                      variant="soft"
-                      size="xs"
-                      aria-label="عرض السلف"
-                      @click="openLoansRow(c)"
-                      class="flex items-center justify-center"
-                  /></UTooltip>
-                  <UTooltip text="سجل السداد"
-                    ><UButton
-                      icon="i-lucide-history"
-                      color="neutral"
-                      variant="soft"
-                      size="xs"
-                      aria-label="سجل السداد"
-                      @click="openHistoryRow(c)"
                       class="flex items-center justify-center"
                   /></UTooltip>
                 </div>
@@ -167,11 +147,11 @@
               @click.stop
             >
               <UButton
-                icon="i-lucide-eye"
+                icon="i-lucide-history"
                 color="neutral"
                 variant="soft"
                 size="xs"
-                aria-label="عرض التفاصيل"
+                aria-label="سجل عمليات العميل"
                 @click="openDetails(c)"
                 class="flex items-center justify-center"
               />
@@ -192,24 +172,6 @@
                 size="xs"
                 aria-label="إضافة سلفة"
                 @click="openLoan(c)"
-                class="flex items-center justify-center"
-              />
-              <UButton
-                icon="i-lucide-wallet"
-                color="neutral"
-                variant="soft"
-                size="xs"
-                aria-label="عرض السلف"
-                @click="openLoansRow(c)"
-                class="flex items-center justify-center"
-              />
-              <UButton
-                icon="i-lucide-history"
-                color="neutral"
-                variant="soft"
-                size="xs"
-                aria-label="سجل السداد"
-                @click="openHistoryRow(c)"
                 class="flex items-center justify-center"
               />
             </div>
@@ -246,167 +208,9 @@
       />
     </div>
 
-    <!-- Customer details -->
-    <UiAppDialog
-      v-model:open="detailsOpen"
-      :title="`ديون ${selected?.name || ''}`"
-    >
-      <div v-if="selected" class="max-h-[70vh] space-y-4 overflow-y-auto">
-        <div
-          class="flex items-center justify-between rounded-lg bg-gray-50 p-2 text-sm"
-        >
-          <span class="text-gray-500">عليه</span>
-          <span class="font-bold text-red-600">{{
-            formatePrice(selected.totalDebt)
-          }}</span>
-        </div>
-        <div class="flex items-center justify-between rounded-lg bg-emerald-50 p-2 text-sm"><span>له رصيد</span><b class="text-emerald-700">{{ formatePrice(selected.creditBalance) }} ج</b></div>
-        <CustomerCreditSettlement :customer-id="selected.customer_id" :customer-name="selected.name" :credit-balance="selected.creditBalance" :total-debt="selected.totalDebt" :obligations="[...selected.invoices, ...selected.loans]" size="sm" label @settled="reload" />
-        <div>
-          <p class="mb-1.5 text-xs font-bold text-gray-400">
-            الفواتير غير المسددة
-          </p>
-          <div v-if="!selected.invoices.length" class="text-sm text-gray-400">
-            لا يوجد
-          </div>
-          <div
-            v-for="o in selected.invoices"
-            :key="o.id"
-            class="mb-1.5 flex items-center justify-between gap-2 rounded-lg border border-gray-200 p-2 text-sm"
-          >
-            <div class="min-w-0">
-              <div class="truncate font-semibold">
-                {{ formatDateOnly(o.date) }} • الإجمالي
-                {{ formatePrice(o.total) }}
-              </div>
-              <div class="text-xs text-gray-500">
-                مدفوع: {{ formatePrice(o.paid) }}
-              </div>
-            </div>
-            <div class="flex shrink-0 items-center gap-1.5">
-              <div class="font-bold text-red-600">
-                {{ formatePrice(o.remaining) }}
-              </div>
-              <UTooltip text="عرض الفاتورة">
-                <UButton
-                  icon="i-lucide-eye"
-                  color="neutral"
-                  variant="soft"
-                  size="xs"
-                  aria-label="عرض الفاتورة"
-                  class="flex items-center justify-center"
-                  @click="openViewInvoice(o.id)"
-                />
-              </UTooltip>
-            </div>
-          </div>
-        </div>
-        <div class="grid grid-cols-2 gap-2">
-          <UButton
-            color="info"
-            variant="soft"
-            size="sm"
-            icon="i-lucide-hand-coins"
-            @click="loansOpen = true"
-          >
-            عرض السلف ({{ selected.loans.length }})
-          </UButton>
-          <UButton
-            color="neutral"
-            variant="soft"
-            size="sm"
-            icon="i-lucide-history"
-            @click="openHistory()"
-          >
-            سجل السداد
-          </UButton>
-        </div>
-      </div>
-      <template #footer>
-        <div class="flex w-full gap-2">
-          <UButton
-            color="success"
-            class="min-h-11 flex-1"
-            icon="i-lucide-hand-coins"
-            @click="selected && openPay(selected)"
-            >تسديد دفعة</UButton
-          >
-          <UButton
-            color="info"
-            variant="soft"
-            class="min-h-11 flex-1"
-            icon="i-lucide-plus"
-            @click="selected && openLoan(selected)"
-            >سلفة جديدة</UButton
-          >
-        </div>
-      </template>
-    </UiAppDialog>
-
-    <!-- Loans modal -->
-    <UiAppDialog v-model:open="loansOpen" title="سلف على العميل ورصيده">
-      <div v-if="selected" class="max-h-[70vh] space-y-2 overflow-y-auto">
-        <div class="flex justify-between rounded-lg bg-emerald-50 p-2 text-sm"><span>رصيد له من المرتجعات</span><b class="text-emerald-700">{{ formatePrice(selected.creditBalance) }} ج</b></div>
-        <div class="flex justify-between rounded-lg bg-red-50 p-2 text-sm"><span>سلف عليه</span><b class="text-red-600">{{ formatePrice(selected.loanDebt) }} ج</b></div>
-        <div v-if="!selected.loans.length" class="text-sm text-gray-400">
-          لا يوجد سلف
-        </div>
-        <div
-          v-for="o in selected.loans"
-          :key="o.id"
-          class="rounded-lg border border-gray-200 p-2 text-sm"
-        >
-          <div class="flex items-center justify-between gap-2">
-            <div class="font-semibold">
-              {{ formatDateOnly(o.date) }} • الأصل {{ formatePrice(o.total) }}
-            </div>
-            <div class="shrink-0 font-bold text-red-600">
-              {{ formatePrice(o.remaining) }}
-            </div>
-          </div>
-          <div
-            class="mt-0.5 flex items-center justify-between gap-2 text-xs text-gray-500"
-          >
-            <span
-              >مدفوع: {{ formatePrice(o.paid)
-              }}{{ loanNoteOf(o) ? ` • ${loanNoteOf(o)}` : "" }}</span
-            >
-            <UBadge :color="loanStatusColor(o)" variant="soft" size="xs">{{
-              loanStatusLabel(o)
-            }}</UBadge>
-          </div>
-        </div>
-      </div>
-    </UiAppDialog>
-
-    <!-- Payment history modal -->
-    <UiAppDialog v-model:open="historyOpen" title="سجل السداد">
-      <div class="max-h-[70vh] space-y-2 overflow-y-auto">
-        <USkeleton v-if="paymentsLoading" class="h-12 w-full" />
-        <div v-else-if="!payments.length" class="text-sm text-gray-400">
-          لا يوجد سدادات
-        </div>
-        <div
-          v-for="p in payments"
-          :key="p.id"
-          class="rounded-lg border border-gray-200 p-2 text-sm"
-        >
-          <div class="flex items-center justify-between gap-2">
-            <div class="font-semibold">{{ formatDateOnly(p.created_at) }}</div>
-            <div class="shrink-0 font-bold text-emerald-600">
-              {{ p.source === 'credit' ? 'تسوية رصيد' : 'نقدي' }}: {{ formatePrice(p.amount) }} ج
-            </div>
-          </div>
-          <div class="mt-0.5 text-xs text-gray-500">
-            <span v-for="(a, i) in p.allocations" :key="i"
-              >{{ a.type === "invoice" ? "فاتورة" : "سلفة" }} #{{
-                shortId(a.reference_id)
-              }}: {{ formatePrice(a.amount)
-              }}{{ i < p.allocations.length - 1 ? " • " : "" }}</span
-            >
-            {{ p.note ? ` • ${p.note}` : "" }}
-          </div>
-        </div>
+    <UiAppDialog v-model:open="detailsOpen" :title="`سجل عمليات ${selected?.name || ''}`">
+      <div v-if="selected" class="max-h-[75vh] overflow-y-auto">
+        <CustomerDebtTimeline :customer-id="selected.customer_id" :total-debt="selected.totalDebt" :credit-balance="selected.creditBalance" @view-invoice="openViewInvoice" />
       </div>
     </UiAppDialog>
 
@@ -653,7 +457,6 @@
 import type { Customer } from "~/types";
 import type { Invoice } from "~/types";
 import type { CustomerDebt, Obligation } from "~/composables/useDebts";
-import type { DebtPayment } from "~/types/finance";
 import { toDateSafe } from "~/types";
 import { doc } from "firebase/firestore";
 
@@ -708,21 +511,6 @@ function formatDateOnly(v: unknown): string {
   const d = toDateSafe(v);
   return d ? d.toLocaleDateString("ar-EG") : "—";
 }
-function loanNoteOf(o: Obligation): string {
-  return o.ref?.note || "";
-}
-function loanStatusLabel(o: Obligation): string {
-  const s = loanStatusOf(o.paid, o.remaining);
-  return s === "paid" ? "مسددة" : s === "partial" ? "جزئية" : "مفتوحة";
-}
-function loanStatusColor(o: Obligation): "success" | "warning" | "error" {
-  const s = loanStatusOf(o.paid, o.remaining);
-  return s === "paid" ? "success" : s === "partial" ? "warning" : "error";
-}
-function shortId(id: string): string {
-  return String(id || "").slice(0, 6);
-}
-
 // Details
 const selected = ref<CustomerDebt | null>(null);
 const detailsOpen = computed({
@@ -731,38 +519,8 @@ const detailsOpen = computed({
     if (!v) selected.value = null;
   },
 });
-const payments = ref<DebtPayment[]>([]);
-const paymentsLoading = ref(false);
-async function openDetails(c: CustomerDebt): Promise<void> {
+function openDetails(c: CustomerDebt): void {
   selected.value = c;
-}
-const loansOpen = ref(false);
-const historyOpen = ref(false);
-function openLoansRow(c: CustomerDebt): void {
-  selected.value = c;
-  loansOpen.value = true;
-}
-function openHistoryRow(c: CustomerDebt): void {
-  selected.value = c;
-  void openHistory();
-}
-async function openHistory(): Promise<void> {
-  payments.value = [];
-  historyOpen.value = true;
-  if (selected.value?.customer_id) {
-    paymentsLoading.value = true;
-    try {
-      payments.value = await debts.fetchPaymentsForCustomer(
-        selected.value.customer_id,
-      );
-    } finally {
-      paymentsLoading.value = false;
-    }
-  }
-}
-async function openDetailsRefresh(): Promise<void> {
-  // Details dialog now shows invoices only; loans/history live in own modals.
-  if (historyOpen.value) await openHistory();
 }
 // On-demand single invoice fetch (never preloads full invoices).
 const viewInvoice = ref<Invoice | null>(null);
@@ -898,7 +656,6 @@ async function submitLoan(): Promise<void> {
     if (selected.value) {
       selected.value =
         book.value.find((c) => c.key === selected.value?.key) ?? selected.value;
-      if (selected.value.customer_id) await openDetailsRefresh();
     }
   } finally {
     loanBusy.value = false;

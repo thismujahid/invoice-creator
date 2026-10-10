@@ -1,7 +1,5 @@
 import { collection, doc, getDoc, getDocs, limit, query, where } from "firebase/firestore";
 import { onSnapshot } from "firebase/firestore";
-import { getApp } from "firebase/app";
-import { getFunctions, httpsCallable } from "firebase/functions";
 import type { Customer } from "~/types";
 import type { Invoice } from "~/types";
 import type { Product, ProductUnit } from "~/types";
@@ -594,9 +592,7 @@ export const useMigration = defineStore("migration", () => {
       if (state?.status === "running") onProgress?.(Number(state.processed) || 0, Number(state.total) || 0, String(state.collection || ""));
     });
     try {
-      const callable = httpsCallable<{ requestId: string }, { collections: number; documents: number }>(getFunctions(getApp()), "factoryReset", { timeout: 3_600_000 });
-      const response = await callable({ requestId });
-      return response.data;
+      return await callStaff<{ requestId: string }, { collections: number; documents: number }>("factoryReset", { requestId });
     } finally {
       unsubscribe();
     }

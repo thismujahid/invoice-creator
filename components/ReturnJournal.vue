@@ -45,7 +45,7 @@ type Entry =
   | { kind: "supplier"; record: SupplierReturn; invoiceId: string; name: string; total: number; offset: number; other: number; items: string };
 
 const { db } = useFirebase();
-const { formatePrice } = useHelpers();
+const { formatePrice, formatInvoiceLineName } = useHelpers();
 const { round2, toNum } = useFinance();
 const { notify } = useAppToast();
 const invoiceReturns = useInvoiceReturns();
@@ -99,8 +99,8 @@ async function loadJournal(): Promise<void> {
       for (const invoice of invoices.docs) names.set(invoice.id, String(invoice.data().customer_name || "عميل"));
     }
     entries.value = [
-      ...customerRecords.map((record): Entry => ({ kind: "customer", record, invoiceId: record.invoice_id, name: names.get(record.invoice_id) || "عميل", total: toNum(record.total_refund), offset: toNum(record.debt_reduction), other: toNum(record.cash_refund), items: (record.items || []).map((item) => `${item.product_name} × ${item.quantity} ${item.unit_name || "وحدة"}`).join("، ") })),
-      ...supplierRecords.map((record): Entry => ({ kind: "supplier", record, invoiceId: record.purchase_invoice_id, name: record.supplier_name || "مورد", total: toNum(record.total_return), offset: toNum(record.payable_reduction), other: toNum(record.receivable_amount), items: (record.items || []).map((item) => `${item.product_name} × ${item.quantity} ${item.unit_name || "وحدة"}`).join("، ") })),
+      ...customerRecords.map((record): Entry => ({ kind: "customer", record, invoiceId: record.invoice_id, name: names.get(record.invoice_id) || "عميل", total: toNum(record.total_refund), offset: toNum(record.debt_reduction), other: toNum(record.cash_refund), items: (record.items || []).map((item) => `${item.quantity} × ${formatInvoiceLineName(item.product_name, item.unit_name)}`).join("، ") })),
+      ...supplierRecords.map((record): Entry => ({ kind: "supplier", record, invoiceId: record.purchase_invoice_id, name: record.supplier_name || "مورد", total: toNum(record.total_return), offset: toNum(record.payable_reduction), other: toNum(record.receivable_amount), items: (record.items || []).map((item) => `${item.quantity} × ${formatInvoiceLineName(item.product_name, item.unit_name)}`).join("، ") })),
     ].sort((a, b) => (toDateSafe(b.record.created_at)?.getTime() ?? 0) - (toDateSafe(a.record.created_at)?.getTime() ?? 0));
     hasMore.value = customers.size >= limit.value || suppliers.size >= limit.value;
   } catch (cause) {

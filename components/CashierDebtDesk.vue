@@ -132,13 +132,13 @@
               </td>
               <td class="p-2">
                 <div class="flex gap-1.5">
-                  <UTooltip text="عرض التفاصيل"
+                  <UTooltip text="سجل عمليات العميل"
                     ><UButton
                       size="xs"
-                      icon="i-lucide-eye"
+                      icon="i-lucide-history"
                       color="neutral"
                       variant="soft"
-                      aria-label="عرض التفاصيل"
+                      aria-label="سجل عمليات العميل"
                       @click="openDetails(row)"
                   /></UTooltip>
                   <UTooltip text="تسديد دفعة"
@@ -169,25 +169,6 @@
                       :disabled="!row.customer_id"
                       @click="openLoan(row)"
                   /></UTooltip>
-                  <UTooltip text="عرض السلف"
-                    ><UButton
-                      size="xs"
-                      icon="i-lucide-wallet"
-                      color="neutral"
-                      variant="soft"
-                      aria-label="عرض السلف"
-                      @click="openLoans(row)"
-                  /></UTooltip>
-                  <UTooltip text="سجل السداد"
-                    ><UButton
-                      size="xs"
-                      icon="i-lucide-history"
-                      color="neutral"
-                      variant="soft"
-                      aria-label="سجل السداد"
-                      :disabled="!row.customer_id"
-                      @click="openHistory(row)"
-                  /></UTooltip>
                 </div>
               </td>
             </tr>
@@ -211,10 +192,10 @@
             <div class="flex max-w-28 flex-wrap justify-end gap-1" @click.stop>
               <UButton
                 size="xs"
-                icon="i-lucide-eye"
+                icon="i-lucide-history"
                 color="neutral"
                 variant="soft"
-                aria-label="عرض التفاصيل"
+                aria-label="سجل عمليات العميل"
                 @click="openDetails(row)"
               />
               <UButton
@@ -242,23 +223,6 @@
                 aria-label="إضافة سلفة"
                 :disabled="!row.customer_id"
                 @click="openLoan(row)"
-              />
-              <UButton
-                size="xs"
-                icon="i-lucide-wallet"
-                color="neutral"
-                variant="soft"
-                aria-label="عرض السلف"
-                @click="openLoans(row)"
-              />
-              <UButton
-                size="xs"
-                icon="i-lucide-history"
-                color="neutral"
-                variant="soft"
-                aria-label="سجل السداد"
-                :disabled="!row.customer_id"
-                @click="openHistory(row)"
               />
             </div>
           </div>
@@ -333,165 +297,11 @@
       </div>
     </template>
 
-    <UiAppDialog
-      v-model:open="detailsOpen"
-      :title="`ديون ${selected?.name || ''}`"
-    >
-      <div v-if="selected" class="max-h-[70vh] space-y-3 overflow-y-auto">
-        <div class="rounded-lg bg-gray-50 p-2 text-sm">
-          إجمالي الدين:
-          <b class="text-red-600">{{ formatePrice(selected.totalDebt) }} ج</b>
-        </div>
-        <div class="rounded-lg bg-emerald-50 p-2 text-sm">
-          رصيد له:
-          <b class="text-emerald-700"
-            >{{ formatePrice(selected.creditBalance) }} ج</b
-          >
-        </div>
-        <CustomerCreditSettlement
-          :customer-id="selected.customer_id"
-          :customer-name="selected.name"
-          :credit-balance="selected.creditBalance"
-          :total-debt="selected.totalDebt"
-          :obligations="[...selected.invoices, ...selected.loans]"
-          size="sm"
-          label
-          @settled="reload"
-        />
-        <p class="text-xs font-bold text-gray-500">الفواتير غير المسددة</p>
-        <div
-          v-for="item in selected.invoices"
-          :key="item.id"
-          class="flex items-center justify-between gap-2 rounded-lg border p-2 text-sm"
-        >
-          <div>
-            {{ formatDate(item.date) }} • الإجمالي
-            {{ formatePrice(item.total) }}
-            <div class="text-xs text-gray-500">
-              مدفوع: {{ formatePrice(item.paid) }}
-            </div>
-          </div>
-          <div class="flex items-center gap-1">
-            <b class="text-red-600">{{ formatePrice(item.remaining) }}</b
-            ><UButton
-              size="xs"
-              icon="i-lucide-eye"
-              color="neutral"
-              variant="soft"
-              aria-label="عرض الفاتورة"
-              :loading="viewingId === item.id"
-              @click="viewInvoice(item.id)"
-            />
-          </div>
-        </div>
-        <UEmpty
-          v-if="!selected.invoices.length"
-          title="لا توجد فواتير غير مسددة"
-        />
-        <div class="flex gap-2">
-          <UButton
-            size="sm"
-            color="info"
-            variant="soft"
-            @click="openLoans(selected)"
-            >عرض السلف ({{ selected.loans.length }})</UButton
-          ><UButton
-            size="sm"
-            color="neutral"
-            variant="soft"
-            :disabled="!selected.customer_id"
-            @click="openHistory(selected)"
-            >سجل السداد</UButton
-          >
-        </div>
+    <UiAppDialog v-model:open="detailsOpen" :title="`سجل عمليات ${selected?.name || ''}`">
+      <div v-if="selected" class="max-h-[75vh] overflow-y-auto">
+        <CustomerDebtTimeline :customer-id="selected.customer_id" :total-debt="selected.totalDebt" :credit-balance="selected.creditBalance" @view-invoice="viewInvoice" />
       </div>
-      <template #footer
-        ><div class="flex w-full gap-2">
-          <UButton
-            color="success"
-            class="flex-1"
-            :disabled="!selected?.customer_id"
-            @click="selected && openPay(selected)"
-            >تسديد دفعة</UButton
-          ><UButton
-            color="info"
-            variant="soft"
-            class="flex-1"
-            :disabled="!selected?.customer_id"
-            @click="selected && openLoan(selected)"
-            >سلفة جديدة</UButton
-          >
-        </div></template
-      >
     </UiAppDialog>
-
-    <UiAppDialog v-model:open="loansOpen" title="سلف على العميل ورصيده"
-      ><div class="max-h-[70vh] space-y-2 overflow-y-auto">
-        <div
-          v-if="selected"
-          class="flex justify-between rounded-lg bg-emerald-50 p-2 text-sm"
-        >
-          <span>رصيد له من المرتجعات</span
-          ><b class="text-emerald-700"
-            >{{ formatePrice(selected.creditBalance) }} ج</b
-          >
-        </div>
-        <div
-          v-if="selected"
-          class="flex justify-between rounded-lg bg-red-50 p-2 text-sm"
-        >
-          <span>سلف عليه</span
-          ><b class="text-red-600">{{ formatePrice(selected.loanDebt) }} ج</b>
-        </div>
-        <div
-          v-for="item in selected?.loans ?? []"
-          :key="item.id"
-          class="rounded-lg border p-2 text-sm"
-        >
-          <div class="flex justify-between">
-            <b
-              >{{ formatDate(item.date) }} • الأصل
-              {{ formatePrice(item.total) }}</b
-            ><b class="text-red-600">{{ formatePrice(item.remaining) }}</b>
-          </div>
-          <div class="text-xs text-gray-500">
-            مدفوع: {{ formatePrice(item.paid)
-            }}{{ item.note ? ` • ${item.note}` : "" }}
-          </div>
-        </div>
-        <UEmpty v-if="!selected?.loans.length" title="لا يوجد سلف" /></div
-    ></UiAppDialog>
-
-    <UiAppDialog v-model:open="historyOpen" title="سجل السداد"
-      ><div class="max-h-[70vh] space-y-2 overflow-y-auto">
-        <USkeleton v-if="historyLoading" class="h-16 w-full" />
-        <template v-else
-          ><div
-            v-for="item in payments"
-            :key="item.id"
-            class="rounded-lg border p-2 text-sm"
-          >
-            <div class="flex justify-between">
-              <b>{{ formatDate(item.created_at) }}</b
-              ><b class="text-emerald-600"
-                >{{ item.source === "credit" ? "تسوية رصيد" : "نقدي" }}:
-                {{ formatePrice(item.amount) }} ج</b
-              >
-            </div>
-            <div class="text-xs text-gray-500">
-              {{
-                item.allocations
-                  .map(
-                    (a) =>
-                      `${a.type === "invoice" ? "فاتورة" : "سلفة"}: ${formatePrice(a.amount)}`,
-                  )
-                  .join(" • ")
-              }}{{ item.note ? ` • ${item.note}` : "" }}
-            </div>
-          </div>
-          <UEmpty v-if="!payments.length" title="لا يوجد سدادات"
-        /></template></div
-    ></UiAppDialog>
 
     <UiAppDialog v-model:open="loanOpen" title="إضافة سلفة"
       ><div class="space-y-3">
@@ -647,19 +457,6 @@ interface DebtRow {
   creditBalance: number;
   unpaidCount: number;
 }
-interface Payment {
-  id: string;
-  amount: number;
-  source?: "cash" | "credit";
-  created_at: InvoiceDate;
-  note: string | null;
-  allocations: {
-    type: "invoice" | "loan";
-    reference_id: string;
-    amount: number;
-  }[];
-}
-
 const customers = useCustomersStore();
 const { formatePrice, formatDate } = useHelpers();
 const { notify } = useAppToast();
@@ -681,10 +478,6 @@ const page = ref(1);
 const perPage = ref(10);
 const selected = ref<DebtRow | null>(null);
 const detailsOpen = ref(false);
-const loansOpen = ref(false);
-const historyOpen = ref(false);
-const historyLoading = ref(false);
-const payments = ref<Payment[]>([]);
 const customerLoading = ref(false);
 const customerError = ref("");
 const customerOpen = ref(false);
@@ -796,30 +589,6 @@ function onCustomerCreated(customer: Customer): void {
 function openDetails(row: DebtRow): void {
   selected.value = row;
   detailsOpen.value = true;
-}
-function openLoans(row: DebtRow): void {
-  selected.value = row;
-  detailsOpen.value = false;
-  loansOpen.value = true;
-}
-async function openHistory(row: DebtRow): Promise<void> {
-  if (!row.customer_id) return;
-  selected.value = row;
-  detailsOpen.value = false;
-  payments.value = [];
-  historyOpen.value = true;
-  historyLoading.value = true;
-  try {
-    const result = await callStaff<
-      { customerId: string },
-      { items: Payment[] }
-    >("getCashierPayments", { customerId: row.customer_id });
-    payments.value = result.items;
-  } catch {
-    error.value = "تعذر تحميل سجل السداد.";
-  } finally {
-    historyLoading.value = false;
-  }
 }
 function openLoan(row: DebtRow | null): void {
   detailsOpen.value = false;

@@ -67,7 +67,7 @@
           <div class="grid gap-2 rounded-xl bg-gray-50 p-3 text-sm sm:grid-cols-3"><div><span class="block text-xs text-gray-500">العميل</span><strong>{{ returnTarget?.customer_name }}</strong></div><div><span class="block text-xs text-gray-500">الدين على الفاتورة</span><strong>{{ formatePrice(returnRemaining) }} ج</strong></div><div><span class="block text-xs text-gray-500">رصيد العميل المحفوظ</span><strong>{{ formatePrice(returnCreditBalance) }} ج</strong></div></div>
           <div class="space-y-2"><h3 class="text-sm font-bold">الأصناف المراد إرجاعها</h3>
           <div v-for="row in returnRows" :key="row.key" class="grid items-center gap-2 rounded-xl border p-3 sm:grid-cols-[minmax(0,1fr)_9rem_7rem]">
-            <div class="min-w-0"><strong>{{ row.product_name }} · {{ row.unit_name }}</strong><div class="text-xs text-gray-500">المتاح {{ row.maxQty }} · سعر البيع {{ formatePrice(row.unit_price) }} ج</div></div>
+            <div class="min-w-0"><strong>{{ formatInvoiceLineName(row.product_name, row.unit_name) }}</strong><div class="text-xs text-gray-500">المتاح {{ row.maxQty }} {{ row.unit_name }} · سعر البيع {{ formatePrice(row.unit_price) }} ج</div></div>
             <UFormField label="الكمية"><UInputNumber v-model="row.qty" :min="0" :max="row.maxQty" :step="0.01" class="w-full" /></UFormField>
             <div class="text-sm"><span class="block text-xs text-gray-500">قيمة المرتجع</span><strong>{{ formatePrice(round2(row.unit_price * row.qty * returnRatio)) }} ج</strong></div>
           </div></div>
@@ -109,7 +109,7 @@ interface CashierInvoiceSummary {
   credit_used: number;
 }
 
-const { formatePrice, formatDate } = useHelpers();
+const { formatePrice, formatDate, formatInvoiceLineName } = useHelpers();
 const activeTab = ref<"sales" | "returns">("sales");
 const { round2 } = useFinance();
 const { notify } = useAppToast();

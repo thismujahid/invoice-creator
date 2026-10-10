@@ -16,13 +16,14 @@
           <div v-if="line.productId && !line.expanded" class="flex items-center justify-between gap-2">
             <div class="min-w-0">
               <div class="truncate text-sm font-bold text-gray-900">{{ formatInvoiceLineName(productOf(line)?.name || '', unitOf(line)?.name, line.option) }}</div>
-              <div class="mt-0.5 text-[11px] text-gray-400">المتاح بالمخزون: {{ stockQuantityLabel(productOf(line)!) }}</div>
+              <div class="mt-0.5 text-[11px] text-gray-400">المتبقي بعد الفاتورة: {{ stockLabelOf(line) }}</div>
               <div class="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-gray-500">
                 <UButton size="xs" color="neutral" variant="soft" icon="i-lucide-minus" aria-label="تقليل الكمية" @click="changeQuantity(line, -1)" />
                 <UInput :model-value="String(line.quantity)" inputmode="decimal" aria-label="الكمية" size="xs" class="w-20" @update:model-value="(value) => setQuantity(line, value)" />
                 <UButton size="xs" color="neutral" variant="soft" icon="i-lucide-plus" aria-label="زيادة الكمية" @click="changeQuantity(line, 1)" />
                 <span>×</span><span dir="ltr">{{ formatePrice(priceOf(line)) }}</span><span>=</span><strong class="text-gray-800">{{ formatePrice(lineTotal(line)) }}</strong>
               </div>
+              <p v-if="stockErrorOf(line)" class="mt-1 text-xs font-semibold text-red-600">{{ stockErrorOf(line) }}</p>
             </div>
             <div class="flex shrink-0 gap-1.5"><UButton size="sm" color="neutral" variant="soft" icon="i-lucide-pencil" @click="line.expanded = true">تعديل</UButton><UButton v-if="lines.length > 1" size="sm" color="error" variant="soft" icon="i-lucide-trash-2" @click="removeLine(index)">حذف</UButton></div>
           </div>
@@ -32,7 +33,7 @@
               <UFormField label="المنتج" class="col-span-2"><USelectMenu :model-value="productOf(line)" :items="products.activeProducts" label-key="name" by="id" :search-input="{ placeholder: 'بحث عن منتج...', icon: 'i-lucide-search' }" placeholder="المنتج" class="w-full" @update:model-value="(value) => selectProduct(line, value)" /></UFormField>
               <UFormField label="خيار معين"><UInput v-model="line.option" placeholder="خيار معين" class="w-full" /></UFormField>
               <UFormField v-if="unitsOf(line).length > 1" label="الوحدة"><USelectMenu :model-value="unitOf(line)" :items="unitsOf(line)" label-key="name" by="id" :search-input="false" class="w-full" @update:model-value="(value) => selectUnit(line, value)" /></UFormField>
-              <UFormField :label="line.productId ? 'الكمية (المتاح: ' + stockQuantityLabel(productOf(line)!) + ')' : 'الكمية'"><UInputNumber v-model="line.quantity" :min="0.01" :step="0.01" class="w-full" /></UFormField>
+              <UFormField :label="line.productId ? 'الكمية (المتبقي بعد الفاتورة: ' + stockLabelOf(line) + ')' : 'الكمية'" :error="stockErrorOf(line) || undefined"><UInputNumber v-model="line.quantity" :min="0.01" :step="0.01" class="w-full" /></UFormField>
               <UFormField label="سعر المنتج"><UInput :model-value="priceOf(line) === null ? 'غير محدد' : formatePrice(priceOf(line))" readonly class="w-full" /></UFormField>
               <UFormField label="الإجمالي"><UInput :model-value="formatePrice(lineTotal(line))" readonly class="w-full" /></UFormField>
             </div>
@@ -114,6 +115,7 @@ const editId = ref<string | null>(null);
 const editRevision = ref<string | null>(null);
 const originalExtras = ref({ debt: 0, delivery: 0, feeds: 0, mahros: 0 });
 const lines = ref<SaleLine[]>([]);
+const originalReserved = new Map<string, number>();
 const savedInvoice = ref<Invoice | null>(null);
 const receiptOpen = ref(false);
 const previewOpen = ref(false);
@@ -128,6 +130,29 @@ function unitsOf(line: SaleLine): ProductUnit[] { const product = productOf(line
 function unitOf(line: SaleLine): ProductUnit | undefined { return unitsOf(line).find((unit) => unit.id === line.unitId); }
 function priceOf(line: SaleLine): number | null { return line.lockedPrice ?? unitOf(line)?.selling_price ?? null; }
 function lineTotal(line: SaleLine): number { return round2((priceOf(line) ?? 0) * line.quantity); }
+function stockLabelOf(line: SaleLine): string {
+  const product = productOf(line);
+  if (!product) return "—";
+  const selected = lines.value.reduce((sum, item) => item.productId === line.productId ? sum + item.quantity * Number(unitOf(item)?.factor || 1) : sum, 0);
+  return stockQuantityLabel(product, Math.max(0, round2(availableStock(line.productId) - selected)));
+}
+function availableStock(productId: string): number {
+  return round2(Number(products.productsById.get(productId)?.stock_quantity || 0) + (originalReserved.get(productId) || 0));
+}
+const stockErrors = computed(() => {
+  const selected = new Map<string, number>();
+  for (const line of lines.value) {
+    if (!line.productId || !unitOf(line)) continue;
+    selected.set(line.productId, round2((selected.get(line.productId) || 0) + line.quantity * Number(unitOf(line)!.factor || 1)));
+  }
+  const errors = new Map<string, string>();
+  for (const [productId, quantity] of selected) {
+    const available = availableStock(productId);
+    if (quantity - available > 1e-9) errors.set(productId, `إجمالي المطلوب ${stockQuantityLabel(products.productsById.get(productId)!, quantity)} يتجاوز المتاح ${stockQuantityLabel(products.productsById.get(productId)!, available)}.`);
+  }
+  return errors;
+});
+function stockErrorOf(line: SaleLine): string { return stockErrors.value.get(line.productId) || ""; }
 const subtotal = computed(() => round2(lines.value.reduce((sum, line) => sum + lineTotal(line), 0)));
 const invoiceExtras = computed(() => round2(Object.values(originalExtras.value).reduce((sum, value) => sum + value, 0)));
 const gross = computed(() => round2(subtotal.value + invoiceExtras.value));
@@ -194,12 +219,13 @@ async function loadData(): Promise<void> {
   loading.value = false;
 }
 function onCustomerCreated(created: Customer): void { customer.value = customers.list.find((item) => item.id === created.id) ?? created; }
-function reset(): void { lines.value = []; paidTouched.value = false; addLine(); paid.value = 0; creditUsed.value = 0; creditBalance.value = 0; discount.value = null; discountPercentage.value = false; discountFor.value = ""; editId.value = null; editRevision.value = null; originalExtras.value = { debt: 0, delivery: 0, feeds: 0, mahros: 0 }; error.value = ""; customer.value = undefined; requestId.value = crypto.randomUUID(); }
+function reset(): void { lines.value = []; originalReserved.clear(); paidTouched.value = false; addLine(); paid.value = 0; creditUsed.value = 0; creditBalance.value = 0; discount.value = null; discountPercentage.value = false; discountFor.value = ""; editId.value = null; editRevision.value = null; originalExtras.value = { debt: 0, delivery: 0, feeds: 0, mahros: 0 }; error.value = ""; customer.value = undefined; requestId.value = crypto.randomUUID(); }
 
 async function save(print: boolean): Promise<void> {
   if (saving.value) return;
   error.value = "";
   if (!customer.value?.id || !lines.value.length || lines.value.some((line) => !productOf(line) || !unitOf(line) || !Number.isFinite(line.quantity) || line.quantity <= 0)) { error.value = "اختر العميل والمنتجات والوحدات وأدخل كميات صحيحة."; return; }
+  if (stockErrors.value.size) { error.value = "كمية المنتجات المطلوبة تتجاوز المتاح بالمخزون. خفّض الكمية قبل الحفظ."; return; }
   if (discountError.value) { error.value = discountError.value; return; }
   if (!Number.isFinite(paid.value) || paid.value < 0 || !Number.isFinite(creditUsed.value) || creditUsed.value < 0 || creditUsed.value > creditBalance.value || paid.value + creditUsed.value > total.value + 0.005) { error.value = "راجع النقد ورصيد العميل؛ مجموع السداد لا يجوز أن يتجاوز الفاتورة."; return; }
   saving.value = true;
@@ -244,6 +270,11 @@ onMounted(async () => {
   const draft = invoices.invoiceToEdit;
   if (!draft) return;
   invoices.invoiceToEdit = undefined;
+  if (draft.id && draft.inventory_applied === true) {
+    for (const item of draft.products || []) {
+      if (item.product_id) originalReserved.set(item.product_id, round2((originalReserved.get(item.product_id) || 0) + Number(item.base_quantity ?? Number(item.product_quantity) * Number(item.unit_factor || 1))));
+    }
+  }
   editId.value = draft.id || null;
   editRevision.value = draft.id ? draft.edit_revision ?? null : null;
   customer.value = customers.list.find((item) => item.id === draft.customer_id)

@@ -16,6 +16,7 @@ const operations = new Set([
   "getCashierDebts",
   "getCashierDebtBook",
   "getCashierPayments",
+  "getCustomerHistory",
   "createStaffCustomer",
   "createStaffLoan",
   "createStaffSale",
@@ -24,6 +25,7 @@ const operations = new Set([
   "createStaffReturn",
   "deleteStaffInvoice",
   "updateStaffInvoice",
+  "factoryReset",
 ]);
 
 const statuses = {
@@ -83,13 +85,15 @@ export default defineEventHandler(async (event) => {
     let staff;
     if (import.meta.dev) {
       const require = createRequire(pathToFileURL(resolve(process.cwd(), "package.json")));
-      const staffPath = require.resolve("./functions/staff.cjs");
+      const staffPath = require.resolve(name === "factoryReset" ? "./functions/index.cjs" : "./functions/staff.cjs");
       const actionsPath = require.resolve("./functions/staffInvoiceActions.cjs");
       delete require.cache[staffPath];
       delete require.cache[actionsPath];
       staff = require(staffPath);
     } else {
-      staff = (await import("../../../functions/staff.cjs")).default;
+      staff = name === "factoryReset"
+        ? (await import("../../../functions/index.cjs")).default
+        : (await import("../../../functions/staff.cjs")).default;
     }
     const result = await staff[name].run({ data, auth: { uid: auth.uid, token: auth } });
     return serializeResult(result);

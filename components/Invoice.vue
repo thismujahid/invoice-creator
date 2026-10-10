@@ -68,18 +68,15 @@
             <strong :class="hasReturns ? 'print-only' : ''">الإجمالي {{ invoiceData.discount ? "النهائي" : "" }}/</strong>
             <span>{{ formatePrice(calcTotal(invoiceData) - discountAmount) }}</span>
           </div>
-          <div v-if="hasReturns" class="no-print text-red-700"><strong>المرتجعات/</strong><span>-{{ formatePrice(returnTotal) }}</span></div>
-          <div v-if="hasReturns" class="no-print text-sm font-bold"><strong>الصافي بعد المرتجعات/</strong><span>{{ formatePrice(calcTotal(invoiceData) - discountAmount - returnTotal) }}</span></div>
+          <div v-if="hasReturns" class="no-print text-sm font-bold"><strong>الصافي بعد مرتجع {{ formatePrice(returnTotal) }}/</strong><span>{{ formatePrice(calcTotal(invoiceData) - discountAmount - returnTotal) }}</span></div>
+          <div v-if="hasReturns" class="no-print"><strong>تسوية المرتجع/</strong><span>{{ returnSettlementLabel }}</span></div>
           <!-- paid / remaining rows: 0 is a valid financial value, never hide it. -->
           <div v-if="invoiceData.paid_amount !== null && invoiceData.paid_amount !== undefined">
             <strong>المدفوع/</strong>
             <span>{{ formatePrice(invoiceData.paid_amount) }}</span>
           </div>
-          <div v-if="invoiceData.credit_used"><strong>من رصيد العميل/</strong><span>{{ formatePrice(invoiceData.credit_used) }}</span></div>
-          <div v-if="invoiceData.credit_used"><strong>نقد مدفوع/</strong><span>{{ formatePrice(Number(invoiceData.paid_amount || 0) - Number(invoiceData.credit_used || 0)) }}</span></div>
+          <div v-if="invoiceData.credit_used" class="no-print"><strong>من رصيد العميل/</strong><span>{{ formatePrice(invoiceData.credit_used) }}</span></div>
           <div v-if="hasReturns && cashRefundTotal" class="no-print text-red-700"><strong>نقد مردود/</strong><span>-{{ formatePrice(cashRefundTotal) }}</span></div>
-          <div v-if="hasReturns && invoiceData.paid_amount !== null && invoiceData.paid_amount !== undefined" class="no-print"><strong>صافي النقد المحصل/</strong><span>{{ formatePrice(netCollectedOf(Number(invoiceData.paid_amount) - Number(invoiceData.credit_used || 0), cashRefundTotal)) }}</span></div>
-          <div v-if="hasReturns && creditAddedTotal" class="no-print"><strong>رصيد أُضيف للعميل/</strong><span>{{ formatePrice(creditAddedTotal) }}</span></div>
           <div v-if="invoiceData.paid_amount !== null && invoiceData.paid_amount !== undefined" :class="hasReturns ? 'print-only' : ''">
             <strong>المتبقي/</strong>
             <span>{{ formatePrice((calcTotal(invoiceData) - discountAmount) - Number(invoiceData.paid_amount ?? 0)) }}</span>
@@ -138,7 +135,6 @@
 <script setup lang="ts">
 import type { Invoice, InvoiceProductLine } from "~/types";
 import type { InvoiceReturn } from "~/types/finance";
-import { netCollectedOf } from "~/composables/invoiceStats";
 
 const props = defineProps<{
   invoiceData: Invoice;
@@ -171,7 +167,11 @@ const mappedProducts = computed(() => {
 const hasReturns = computed(() => !!props.viewMode && !!props.returns?.length);
 const returnTotal = computed(() => (props.returns ?? []).reduce((sum, item) => sum + Number(item.total_refund || 0), 0));
 const cashRefundTotal = computed(() => (props.returns ?? []).reduce((sum, item) => sum + Number(item.cash_refund || 0), 0));
-const creditAddedTotal = computed(() => (props.returns ?? []).reduce((sum, item) => sum + Number(item.credit_issued || 0) + Number(item.credit_restored || 0), 0));
+const returnSettlementLabel = computed(() => {
+  const debt = (props.returns ?? []).reduce((sum, item) => sum + Number(item.debt_reduction || 0), 0);
+  const credit = (props.returns ?? []).reduce((sum, item) => sum + Number(item.credit_issued || 0) + Number(item.credit_restored || 0), 0);
+  return [debt > 0 ? `دين ${formatePrice(debt)}` : "", cashRefundTotal.value > 0 ? `نقد ${formatePrice(cashRefundTotal.value)}` : "", credit > 0 ? `رصيد للعميل ${formatePrice(credit)}` : ""].filter(Boolean).join(" · ");
+});
 const returnedProducts = computed(() => hasReturns.value ? (props.returns ?? []).flatMap((record) => (record.items ?? []).map((item) => ({
   name: formatInvoiceLineName(item.product_name, item.unit_name),
   quantity: item.quantity,

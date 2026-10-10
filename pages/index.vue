@@ -120,7 +120,7 @@
                   {{ form.product_name ? formatInvoiceLineName(form.product_name, form.unit_name, form.option) : "—" }}
                 </div>
                 <div class="mt-0.5 text-[11px] text-gray-400">
-                  المتاح بالمخزون: {{ stockLabelOf(form) }}
+                  {{ invoiceData.id ? 'المتاح بالمخزون' : 'المتبقي بعد الفاتورة' }}: {{ stockLabelOf(form) }}
                 </div>
                 <div
                   class="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-gray-500"
@@ -252,7 +252,7 @@
                 <UFormField
                   :label="
                     form.product_id
-                      ? `الكمية (المتاح: ${stockOf(form)} ${form.unit_name || 'وحدة'})`
+                      ? `الكمية (${invoiceData.id ? 'المتاح بالمخزون' : 'المتبقي بعد الفاتورة'}: ${stockLabelOf(form)})`
                       : 'الكمية'
                   "
                 >
@@ -711,6 +711,7 @@ function onInvoiceSaved(id: unknown): void {
 }
 async function saveAndPrint(): Promise<void> {
   if (saving.value) return;
+  if (!validateStock()) return;
   resetAfterSave.value = false;
   saving.value = true;
   try {
@@ -724,6 +725,7 @@ async function saveAndPrint(): Promise<void> {
 }
 async function saveAndNew(): Promise<void> {
   if (saving.value) return;
+  if (!validateStock()) return;
   resetAfterSave.value = true;
   saving.value = true;
   try {
@@ -790,7 +792,7 @@ async function fillOldDebt(): Promise<void> {
 function handleCtrlPlusS(e: KeyboardEvent): void {
   if (e && (e.ctrlKey || e.metaKey) && e.code === "KeyS") {
     e.preventDefault();
-    void invoiceEngine.value?.startPrint(true);
+    if (validateStock()) void invoiceEngine.value?.startPrint(true);
   }
 }
 // FLAG [D1]: shared calc lives in useHelpers.calcLineTotal; kept local for template compat.
@@ -995,15 +997,12 @@ function expandLine(form: InvoiceProductLine): void {
   expandedLines.add(form);
 }
 // Live stock info per line (reactive to store + typed qty).
-function stockOf(form: InvoiceProductLine): number {
-  if (!form.product_id) return 0;
-  return (
-    (products.list.find((p) => p.id === form.product_id)?.stock_quantity ?? 0) / Number(form.unit_factor || 1)
-  );
-}
 function stockLabelOf(form: InvoiceProductLine): string {
   const product = products.list.find((item) => item.id === form.product_id);
-  return product ? stockQuantityLabel(product) : "—";
+  if (!product) return "—";
+  if (invoiceData.value.id) return stockQuantityLabel(product);
+  const remaining = Math.max(0, round2(availableOf(form.product_id ?? "") - (needByProduct.value.get(form.product_id ?? "") ?? 0)));
+  return stockQuantityLabel(product, remaining);
 }
 const needByProduct = computed(() => {
   const need = new Map<string, number>();
@@ -1029,7 +1028,15 @@ function qtyExceeds(form: InvoiceProductLine): boolean {
 function exceedText(form: InvoiceProductLine): string {
   const info = form.product_id ? exceedsByProduct(form.product_id) : null;
   if (!info) return "";
-  return `المتاح تغيّر إلى ${info.available} — الكمية المطلوبة ${info.need} تتجاوز المخزون`;
+  const product = products.list.find((item) => item.id === form.product_id);
+  if (!product) return "الكمية المطلوبة تتجاوز المخزون المتاح.";
+  return `إجمالي المطلوب ${stockQuantityLabel(product, info.need)} يتجاوز المتاح ${stockQuantityLabel(product, info.available)}.`;
+}
+function validateStock(): boolean {
+  const line = invoiceData.value.products.find((item) => item.product_id && qtyExceeds(item));
+  if (!line) return true;
+  notify(`كمية ${line.product_name} المطلوبة تتجاوز المتاح بالمخزون. خفّض الكمية قبل الحفظ.`, "error");
+  return false;
 }
 function priceHintOf(form: InvoiceProductLine): number | null {
   const product = form.product_id ? products.list.find((p) => p.id === form.product_id) : undefined;

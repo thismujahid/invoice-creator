@@ -10,7 +10,7 @@
         <b class="text-amber-700">{{ formatePrice(item.total_refund) }} ج</b>
       </div>
       <div v-for="(line, index) in item.items || []" :key="index" class="mt-2 flex flex-wrap justify-between gap-2 border-t pt-2 text-sm">
-        <span>{{ line.product_name }} · {{ line.quantity }} {{ line.unit_name || 'وحدة' }}</span>
+        <span>{{ line.quantity }} × {{ formatInvoiceLineName(line.product_name, line.unit_name) }}</span>
         <b>{{ formatePrice(line.refund_amount) }} ج</b>
       </div>
       <div class="mt-2 grid grid-cols-2 gap-2 rounded-lg bg-gray-50 p-2 text-xs">
@@ -27,7 +27,7 @@
         <b class="text-amber-700">{{ formatePrice(item.total_return) }} ج</b>
       </div>
       <div v-for="(line, index) in item.items || []" :key="index" class="mt-2 flex flex-wrap justify-between gap-2 border-t pt-2 text-sm">
-        <span>{{ line.product_name }} · {{ line.quantity }} {{ line.unit_name || 'وحدة' }}</span>
+        <span>{{ line.quantity }} × {{ formatInvoiceLineName(line.product_name, line.unit_name) }}</span>
         <b>{{ formatePrice(line.amount) }} ج</b>
       </div>
       <div class="mt-2 grid grid-cols-2 gap-2 rounded-lg bg-gray-50 p-2 text-xs">
@@ -51,7 +51,7 @@ withDefaults(defineProps<{
   error?: string;
 }>(), { customerReturns: () => [], supplierReturns: () => [], loading: false, error: "" });
 
-const { formatePrice } = useHelpers();
+const { formatePrice, formatInvoiceLineName } = useHelpers();
 function formatDate(value: unknown): string {
   return toDateSafe(value)?.toLocaleString("ar-EG", { timeZone: "Africa/Cairo" }) ?? "—";
 }

@@ -151,16 +151,19 @@ export function stockQuantityLabel(product: Product, quantity: number | null | u
   if (!Number.isFinite(quantity)) return "—";
   const units = unitsForProduct(product);
   const base = units.find((unit) => unit.is_base || unit.id === product.base_unit_id) ?? units[0];
-  const next = units.find((unit) => unit.id !== base?.id);
   const baseName = base?.name || product.base_unit_name || "وحدة";
-  const absolute = Math.abs(quantity);
-  if (!next || !Number.isFinite(next.factor) || next.factor <= 1 || quantity < 0) {
-    return `${quantity} ${baseName}`;
+  if (quantity < 0) return `${quantity} ${baseName}`;
+  let remaining = round4(quantity);
+  const parts: string[] = [];
+  const larger = units.filter((unit) => unit.id !== base?.id && Number.isFinite(Number(unit.factor)) && Number(unit.factor) > 1).sort((a, b) => b.factor - a.factor);
+  for (const unit of larger) {
+    const whole = Math.floor((remaining + 1e-9) / unit.factor);
+    if (!whole) continue;
+    parts.push(`${whole} ${unit.name}`);
+    remaining = round4(remaining - whole * unit.factor);
   }
-  const whole = Math.floor((absolute + 1e-9) / next.factor);
-  const remainder = round4(absolute - whole * next.factor);
-  if (!whole) return `${remainder} ${baseName}`;
-  return remainder > 0 ? `${whole} ${next.name} و${remainder} ${baseName}` : `${whole} ${next.name}`;
+  if (remaining > 0 || !parts.length) parts.push(`${remaining} ${baseName}`);
+  return parts.join(" و");
 }
 
 export function convertUnitPrice(unitCost: unknown, fromFactor: unknown, toFactor: unknown): number {

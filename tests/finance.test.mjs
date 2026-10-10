@@ -24,9 +24,9 @@ import {
 } from "../composables/finance.ts";
 import { deriveSupplierInvoiceStatus, supplierInvoiceStatus } from "../types/finance.ts";
 import { cairoDayStart, invoiceDayKey, invoiceMonthKey, invoicePaymentStatus, invoiceStatsDelta, invoiceStatsOf, netCollectedOf, netSalesOf } from "../composables/invoiceStats.ts";
-import { formatePrice } from "../composables/helpers.ts";
+import { formatePrice, formatInvoiceLineName } from "../composables/helpers.ts";
 
-test("stock label uses the second unit and base remainder only", () => {
+test("stock label decomposes quantities across configured units", () => {
   const product = { name: "مرقة", price: 2, cost_price: 1, stock_quantity: 99, base_unit_id: "cube", units: [
     { id: "cube", name: "مكعب", factor: 1, selling_price: 2, is_base: true },
     { id: "box", name: "علبة", factor: 30, selling_price: 50 },
@@ -34,9 +34,15 @@ test("stock label uses the second unit and base remainder only", () => {
   ] };
   assert.equal(stockQuantityLabel(product), "3 علبة و9 مكعب");
   assert.equal(stockQuantityLabel(product, 60), "2 علبة");
+  assert.equal(stockQuantityLabel(product, 334), "1 كرتونة و1 علبة و4 مكعب");
   assert.equal(stockQuantityLabel(product, 9), "9 مكعب");
   assert.equal(stockQuantityLabel({ ...product, units: [product.units[0]] }, 99), "99 مكعب");
   assert.equal(stockQuantityLabel({ ...product, stock_quantity: null }), "غير مُدخل");
+});
+
+test("invoice line name does not repeat an identical base unit", () => {
+  assert.equal(formatInvoiceLineName("مكنة حلاقة", "مكنة حلاقة"), "مكنة حلاقة");
+  assert.equal(formatInvoiceLineName("مكنة حلاقة", "علبة"), "علبة مكنة حلاقة");
 });
 
 test("supplier cash above invoice total becomes a separate advance", () => {

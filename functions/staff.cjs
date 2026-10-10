@@ -316,6 +316,38 @@ exports.getCashierPayments = onCall(async (request) => {
   return { items: snapshot.docs.map((doc) => ({ id: doc.id, amount: doc.data().amount, source: doc.data().source ?? "cash", allocations: doc.data().allocations ?? [], note: doc.data().note ?? null, created_at: doc.data().created_at ?? null })).sort((a, b) => Number(b.created_at?.seconds || 0) - Number(a.created_at?.seconds || 0)) };
 });
 
+exports.getCustomerHistory = onCall(async (request) => {
+  await roleOf(request);
+  const customerId = cleanText(request.data?.customerId, 128);
+  if (!customerId) fail("Select a customer.");
+  const customer = await db.doc(`customers/${customerId}`).get();
+  if (!customer.exists) throw new HttpsError("not-found", "Customer not found.");
+  const [invoices, loans, returns, payments, credits] = await Promise.all([
+    db.collection("invoices").where("customer_id", "==", customerId).get(),
+    db.collection("customer_loans").where("customer_id", "==", customerId).get(),
+    db.collection("invoice_returns").where("customer_id", "==", customerId).get(),
+    db.collection("debt_payments").where("customer_id", "==", customerId).get(),
+    db.collection("customer_credit_transactions").where("customer_id", "==", customerId).get(),
+  ]);
+  const paidLater = new Map();
+  for (const payment of payments.docs) {
+    for (const allocation of payment.data().allocations || []) {
+      if (allocation.type !== "invoice") continue;
+      paidLater.set(allocation.reference_id, money((paidLater.get(allocation.reference_id) || 0) + Number(allocation.amount || 0)));
+    }
+  }
+  const entries = [
+    ...invoices.docs.map((doc) => ({ id: doc.id, type: "deferred", amount: doc.data().paid_amount == null ? 0 : money(cashierInvoiceTotal(doc.data()) - Number(doc.data().paid_amount) + (paidLater.get(doc.id) || 0)), invoiceId: doc.id, date: doc.data().date ?? null, detail: "" })).filter((entry) => entry.amount > 0),
+    ...loans.docs.map((doc) => ({ id: doc.id, type: "loan", amount: money(doc.data().amount), date: doc.data().created_at ?? null, detail: doc.data().note || "" })),
+    ...returns.docs.map((doc) => ({ id: doc.id, type: "credit_added", amount: money(Number(doc.data().credit_issued || 0) + Number(doc.data().credit_restored || 0)), invoiceId: doc.data().invoice_id, date: doc.data().created_at ?? null, detail: "" })).filter((entry) => entry.amount > 0),
+    ...payments.docs.map((doc) => ({ id: doc.id, type: doc.data().source === "credit" ? "settlement" : "payment", amount: money(doc.data().amount), date: doc.data().created_at ?? null, detail: doc.data().note || "" })),
+    ...credits.docs.filter((doc) => doc.data().type === "redeemed").map((doc) => ({ id: doc.id, type: "credit_used", amount: money(doc.data().amount), invoiceId: doc.data().invoice_id || null, date: doc.data().created_at ?? null, detail: "" })),
+  ];
+  const time = (value) => value?.toMillis?.() ?? (value instanceof Date ? value.getTime() : Number(value?.seconds) * 1000 || Date.parse(value || "") || 0);
+  entries.sort((a, b) => time(b.date) - time(a.date));
+  return { items: entries };
+});
+
 exports.getCashierDebts = onCall(async (request) => {
   if (await roleOf(request) !== "cashier") throw new HttpsError("permission-denied", "Cashier only.");
   const customerId = cleanText(request.data?.customerId, 128);

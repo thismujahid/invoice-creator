@@ -98,7 +98,7 @@ export function formatInvoiceLineName(
   const unit = String(unit_name ?? "").trim();
   const opt = String(option ?? "").trim();
   let base = product;
-  if (unit) base = product ? `${unit} ${product}` : unit;
+  if (unit && unit.toLocaleLowerCase() !== product.toLocaleLowerCase()) base = product ? `${unit} ${product}` : unit;
   if (opt) base = base ? `${base} (${opt})` : `(${opt})`;
   return base;
 }
