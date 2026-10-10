@@ -106,7 +106,7 @@ export function writeSupplierSummaryDelta(
   tx: Transaction,
   db: Firestore,
   supplier: { supplier_id?: string | null; supplier_name?: string | null },
-  delta: { invoice_count?: number; total_purchases?: number; outstanding_payable?: number },
+  delta: { invoice_count?: number; total_purchases?: number; outstanding_payable?: number; advance_receivable?: number },
 ): void {
   if (!supplier.supplier_id) return;
   const changes: Record<string, unknown> = {

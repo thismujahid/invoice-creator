@@ -1,8 +1,11 @@
-import { collection, doc, getCountFromServer, getDoc, getDocs, limit, query, where } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, limit, query, where } from "firebase/firestore";
+import { onSnapshot } from "firebase/firestore";
+import { getApp } from "firebase/app";
+import { getFunctions, httpsCallable } from "firebase/functions";
 import type { Customer } from "~/types";
 import type { Invoice } from "~/types";
 import type { Product, ProductUnit } from "~/types";
-import type { PurchaseInvoice, Supplier } from "~/types/finance";
+import type { PurchaseInvoice, Supplier, SupplierAdvance } from "~/types/finance";
 import { ADMIN_EMAIL } from "~/constants/auth";
 import { deriveSupplierInvoiceStatus } from "~/types/finance";
 import { normalizeName, normalizePhone, round2, toNum } from "./finance";
@@ -303,11 +306,12 @@ export const useMigration = defineStore("migration", () => {
     onProgress?: (done: number, total: number) => void,
   ): Promise<{ invoices: number; customers: number; customerSummaries: number; debtSummaries: number; supplierInvoices: number; suppliers: number; dailyStats: number; monthlyStats: number; returns: number; returnsTotal: number }> {
     if (auth.currentUser?.email !== ADMIN_EMAIL) throw new Error("Admin access is required to rebuild performance summaries.");
-    const [invoices, customers, purchaseInvoices, suppliers, existingDebtSummaries, existingCustomerSummaries, existingSupplierSummaries, returnSnapshots, existingDaily, existingMonthly] = await Promise.all([
+    const [invoices, customers, purchaseInvoices, suppliers, supplierAdvances, existingDebtSummaries, existingCustomerSummaries, existingSupplierSummaries, returnSnapshots, existingDaily, existingMonthly] = await Promise.all([
       readAll<Invoice>("invoices"),
       readAll<Customer>("customers"),
       readAll<PurchaseInvoice>("purchase_invoices"),
       readAll<Supplier>("suppliers"),
+      readAll<SupplierAdvance>("supplier_advances"),
       getDocs(collection(db, "invoice_debt_summaries")),
       getDocs(collection(db, "customer_summaries")),
       getDocs(collection(db, "supplier_summaries")),
@@ -369,8 +373,8 @@ export const useMigration = defineStore("migration", () => {
       if (dayKey) dailyStats.set(dayKey, sumInvoiceStats(dailyStats.get(dayKey) ?? {}, delta));
       if (monthKey) monthlyStats.set(monthKey, sumInvoiceStats(monthlyStats.get(monthKey) ?? {}, delta));
     }
-    const supplierAggregates = new Map<string, { supplier_id: string; supplier_name: string; invoice_count: number; total_purchases: number; outstanding_payable: number }>();
-    for (const supplier of suppliers) if (supplier.id) supplierAggregates.set(supplier.id, { supplier_id: supplier.id, supplier_name: supplier.name, invoice_count: 0, total_purchases: 0, outstanding_payable: 0 });
+    const supplierAggregates = new Map<string, { supplier_id: string; supplier_name: string; invoice_count: number; total_purchases: number; outstanding_payable: number; advance_receivable: number }>();
+    for (const supplier of suppliers) if (supplier.id) supplierAggregates.set(supplier.id, { supplier_id: supplier.id, supplier_name: supplier.name, invoice_count: 0, total_purchases: 0, outstanding_payable: 0, advance_receivable: 0 });
     const suppliersByName = new Map<string, Supplier[]>();
     for (const supplier of suppliers) {
       const name = normalizeName(supplier.name);
@@ -386,11 +390,15 @@ export const useMigration = defineStore("migration", () => {
           ? suppliersByName.get(normalizeName(invoice.supplier_name))?.[0]
           : undefined;
       if (!supplier?.id) continue;
-      const aggregate = supplierAggregates.get(supplier.id) ?? { supplier_id: supplier.id, supplier_name: supplier.name, invoice_count: 0, total_purchases: 0, outstanding_payable: 0 };
+      const aggregate = supplierAggregates.get(supplier.id) ?? { supplier_id: supplier.id, supplier_name: supplier.name, invoice_count: 0, total_purchases: 0, outstanding_payable: 0, advance_receivable: 0 };
       aggregate.invoice_count += 1;
       aggregate.total_purchases = round2(aggregate.total_purchases + toNum(invoice.total_amount));
       aggregate.outstanding_payable = round2(aggregate.outstanding_payable + toNum(invoice.remaining_amount));
       supplierAggregates.set(supplier.id, aggregate);
+    }
+    for (const advance of supplierAdvances) {
+      const aggregate = supplierAggregates.get(advance.supplier_id);
+      if (aggregate) aggregate.advance_receivable = round2(aggregate.advance_receivable + toNum(advance.remaining_amount));
     }
     const docs = [...aggregates.entries()];
     const supplierDocs = [...supplierAggregates.entries()];
@@ -570,59 +578,23 @@ export const useMigration = defineStore("migration", () => {
     return { total: invoices.length, updated: targets.length, skipped: invoices.length - targets.length };
   }
 
-  /** FACTORY RESET: deletes EVERY document in ALL app collections.
-   *  Admin-only (callers must verify the password first), chunked,
-   *  idempotent. There is no undo — the UI confirms twice. Auth users are
-   *  NOT touched (Firebase Auth is separate from Firestore). */
-  const FACTORY_RESET_COLLECTIONS = [
-    "invoices",
-    "invoice_debt_summaries",
-    "invoice_returns",
-    "customers",
-    "customer_summaries",
-    "customer_loans",
-    "debt_payments",
-    "suppliers",
-    "supplier_summaries",
-    "supplier_payments",
-    "purchase_invoices",
-    "products",
-    "inventory_transactions",
-    "inventory_cost_adjustments",
-    "cash_transactions",
-    "cashbox",
-    "store_stats",
-    "invoice_stats_daily",
-    "invoice_stats_monthly",
-  ];
   async function factoryReset(
     onProgress?: (done: number, total: number, collectionName: string) => void,
+    requestId?: string,
   ): Promise<{ collections: number; documents: number }> {
     if (auth.currentUser?.email !== ADMIN_EMAIL) throw new Error("Admin access is required.");
-    const BATCH = 400;
-    let documents = 0;
-    let collectionsDone = 0;
-    // Cheap count pass (aggregation, no doc reads) so progress has a total.
-    let total = 0;
-    for (const name of FACTORY_RESET_COLLECTIONS) {
-      total += (await getCountFromServer(collection(db, name))).data().count;
+    if (!requestId) throw new Error("Reset request key is missing.");
+    const unsubscribe = onSnapshot(doc(db, "system_jobs", "factory_reset"), (snapshot) => {
+      const state = snapshot.data();
+      if (state?.status === "running") onProgress?.(Number(state.processed) || 0, Number(state.total) || 0, String(state.collection || ""));
+    });
+    try {
+      const callable = httpsCallable<{ requestId: string }, { collections: number; documents: number }>(getFunctions(getApp()), "factoryReset", { timeout: 3_600_000 });
+      const response = await callable({ requestId });
+      return response.data;
+    } finally {
+      unsubscribe();
     }
-    onProgress?.(0, total, "");
-    for (const name of FACTORY_RESET_COLLECTIONS) {
-      for (;;) {
-        const snap = await getDocs(query(collection(db, name), limit(BATCH)));
-        if (snap.empty) break;
-        const batch = writeBatch(db);
-        for (const d of snap.docs) batch.delete(d.ref);
-        await batch.commit();
-        documents += snap.size;
-        onProgress?.(documents, total, name);
-        if (snap.size < BATCH) break;
-      }
-      collectionsDone += 1;
-    }
-    onProgress?.(total, total, "");
-    return { collections: collectionsDone, documents };
   }
 
   return { backfillCustomerIds, repairCustomerLinks, normalizeCustomerPhones, backfillProductUnits, factoryReset, setOpeningStocks, backfillDebtSummaries, backfillPerformanceSummaries, backfillSupplierInvoiceStatuses };

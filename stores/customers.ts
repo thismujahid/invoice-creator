@@ -1,4 +1,5 @@
-import { collection, doc, increment } from "firebase/firestore";
+import { defineStore } from "pinia";
+import { doc, increment } from "firebase/firestore";
 import type { Customer } from "~/types";
 
 export const useCustomersStore = defineStore("customers", () => {
@@ -10,7 +11,12 @@ export const useCustomersStore = defineStore("customers", () => {
   const fetchCustomers = async (filters?: Record<string, string | number | boolean | Date | null | undefined>, force = false): Promise<boolean> => {
     const filtered = !!filters && Object.values(filters).some((value) => value !== undefined && value !== null && value !== "");
     if (!filtered && !force && loaded.value && Date.now() - lastFetchedAt.value < 30_000) return true;
-    list.value = await readFrom<Customer>("customers", filters ?? {});
+    if (useAuth().role === "cashier") {
+      const result = await callStaff<Record<string, never>, { items: Customer[] }>("getCashierCustomers", {});
+      list.value = result.items;
+    } else {
+      list.value = await readFrom<Customer>("customers", filters ?? {});
+    }
     if (!filtered) { loaded.value = true; lastFetchedAt.value = Date.now(); }
     return true;
   };
@@ -25,23 +31,9 @@ export const useCustomersStore = defineStore("customers", () => {
 
   const addCustomer = async (customer: Omit<Customer, "id">) => {
     const normalized: Omit<Customer, "id"> = { ...customer, phone: normalizePhoneField(customer.phone) };
-    const ref = doc(collection(db, "customers"));
-    await runTx(async (tx) => {
-      tx.set(ref, normalized as Record<string, unknown>);
-      tx.set(doc(db, "store_stats", "current"), { customer_count: increment(1), updated_at: serverTimestamp() }, { merge: true });
-      tx.set(doc(db, "customer_summaries", ref.id), {
-        customer_id: ref.id,
-        customer_name: normalized.name,
-        customer_phone: normalized.phone,
-        invoice_count: 0,
-        total_sales: 0,
-        outstanding_debt: 0,
-        initialized: true,
-        updated_at: serverTimestamp(),
-      });
-    });
-    list.value.push({ ...normalized, id: ref.id });
-    return ref;
+    const created = await callStaff<{ name: string; phone: string | null }, Customer>("createStaffCustomer", { name: normalized.name, phone: normalized.phone == null ? null : String(normalized.phone) });
+    list.value = [...list.value, created];
+    return { id: created.id };
   };
 
   const updateCustomer = async (id: string, updatedFields: Partial<Customer>) => {

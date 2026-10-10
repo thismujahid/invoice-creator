@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   applyStockGroup,
+  allocateSupplierCash,
   convertUnitPrice,
   grossProfitOf,
   invoiceEditCashOutflowError,
@@ -14,11 +15,37 @@ import {
   proposedSellingPrice,
   restoreGroupsForEdit,
   sellableUnitsForProduct,
+  stockQuantityLabel,
   unitSellingPrice,
   unitsForProduct,
 } from "../composables/finance.ts";
 import { deriveSupplierInvoiceStatus, supplierInvoiceStatus } from "../types/finance.ts";
 import { invoiceDayKey, invoiceMonthKey, invoicePaymentStatus, invoiceStatsDelta, invoiceStatsOf } from "../composables/invoiceStats.ts";
+import { formatePrice } from "../composables/helpers.ts";
+
+test("stock label uses the second unit and base remainder only", () => {
+  const product = { name: "مرقة", price: 2, cost_price: 1, stock_quantity: 99, base_unit_id: "cube", units: [
+    { id: "cube", name: "مكعب", factor: 1, selling_price: 2, is_base: true },
+    { id: "box", name: "علبة", factor: 30, selling_price: 50 },
+    { id: "carton", name: "كرتونة", factor: 300, selling_price: 450 },
+  ] };
+  assert.equal(stockQuantityLabel(product), "3 علبة و9 مكعب");
+  assert.equal(stockQuantityLabel(product, 60), "2 علبة");
+  assert.equal(stockQuantityLabel(product, 9), "9 مكعب");
+  assert.equal(stockQuantityLabel({ ...product, units: [product.units[0]] }, 99), "99 مكعب");
+  assert.equal(stockQuantityLabel({ ...product, stock_quantity: null }), "غير مُدخل");
+});
+
+test("supplier cash above invoice total becomes a separate advance", () => {
+  assert.deepEqual(allocateSupplierCash(100, 150), { applied: 100, advance: 50, remaining: 0 });
+  assert.deepEqual(allocateSupplierCash(100, 40), { applied: 40, advance: 0, remaining: 60 });
+});
+
+test("money display retains exactly two decimal places", () => {
+  assert.equal(formatePrice(1), "1.00");
+  assert.equal(formatePrice(0.5), "0.50");
+  assert.equal(formatePrice(1234.567), "1,234.57");
+});
 
 test("moving weighted average stays aligned with sale and historical replay", () => {
   const afterFirstPurchase = applyStockGroup(0, undefined, 0, [{ qty: 10, cost: 100 }]);

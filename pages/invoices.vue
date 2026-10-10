@@ -1,5 +1,7 @@
 <template>
-  <div class="rounded-xl bg-white p-3 shadow-sm sm:p-4">
+  <ClientOnly>
+  <CashierInvoices v-if="authStore.role === 'cashier'" />
+  <div v-else class="rounded-xl bg-white p-3 shadow-sm sm:p-4">
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
       <h2 class="text-lg font-bold text-gray-900">الفواتير</h2>
       <!-- HOME delta: debts actions (pay-all + totals gate) + export. -->
@@ -430,6 +432,8 @@
       </template>
     </UiAppDialog>
   </div>
+  <template #fallback><UiAppTableSkeleton /></template>
+  </ClientOnly>
 </template>
 
 <script setup lang="ts">
@@ -883,6 +887,7 @@ onMounted(async () => {
     statsLoading.value = false;
     return; // layout redirects to /login
   }
+  if (authStore.role === "cashier") return;
   // Consume a customer deep-link once, then clean the URL.
   customerFilter.value = readCustomerQuery();
   stripCustomerQuery();

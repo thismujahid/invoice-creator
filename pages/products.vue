@@ -3,7 +3,7 @@
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
       <h2 class="text-lg font-bold text-gray-900">المنتجات</h2>
       <div class="flex flex-wrap items-center gap-2">
-        <UButton
+        <UButton v-if="isAdmin"
           color="info"
           variant="soft"
           icon="i-lucide-file-up"
@@ -18,7 +18,7 @@
           >المنتجات قليلة الكمية ({{ lowStockCount }})</UButton
         >
         <!-- HOME delta: no products export (as in home branch). -->
-        <FormsProduct
+        <FormsProduct v-if="isAdmin"
           @close="productForm = undefined"
           :refresher="loadProds"
           v-model="productFormState"
@@ -30,12 +30,13 @@
         </FormsProduct>
       </div>
     </div>
+    <UAlert v-if="productsStore.syncError || loadError" color="error" variant="soft" :title="loadError || 'تعذر تحميل المنتجات.'" class="mb-3"><template #actions><UButton size="xs" color="error" variant="soft" @click="retryProducts">إعادة المحاولة</UButton></template></UAlert>
     <ProductsLowStockDialog
       v-model:open="shortagesOpen"
       :products="productsStore.list"
-      :show-cost="true"
+      :show-cost="false"
     />
-    <ProductsPurchaseImportDialog
+    <ProductsPurchaseImportDialog v-if="isAdmin"
       v-model:open="importOpen"
       :products="productsStore.list"
       :cash-balance="cashBalance"
@@ -49,7 +50,7 @@
         size="lg"
         class="w-full sm:max-w-xs"
       />
-      <div v-if="selectProducts.length > 0" class="flex flex-wrap gap-2">
+      <div v-if="isAdmin && selectProducts.length > 0" class="flex flex-wrap gap-2">
         <UButton
           icon="i-lucide-file-plus"
           color="success"
@@ -88,51 +89,43 @@
         </UiAppDialog>
       </div>
     </div>
-    <UiAppTableSkeleton v-if="loading" />
+    <UiAppTableSkeleton v-if="loading || (!productsStore.inventoryReady && productsStore.inventorySyncState === 'loading')" />
     <template v-else>
       <!-- Desktop table -->
       <div class="hidden overflow-x-auto md:block">
         <table class="w-full text-sm">
           <thead>
             <tr class="border-b border-gray-200 text-gray-500">
-              <th class="w-10 p-2"></th>
+              <th v-if="isAdmin" class="w-10 p-2"></th>
               <th class="p-2 text-start font-medium">الاسم</th>
-              <th class="p-2 text-start font-medium">سعر البيع</th>
-              <th class="p-2 text-start font-medium">
-                متوسط التكلفة
-              </th>
-              <th class="p-2 text-start font-medium">العدد</th>
-              <th class="p-2 text-start font-medium">المخزون (أساسية)</th>
-              <th class="p-2 text-start font-medium">الأدوات</th>
+              <th class="p-2 text-start font-medium">الكمية المتاحة</th>
+              <th class="p-2 text-start font-medium">أسعار البيع</th>
+              <th v-if="isAdmin" class="p-2 text-start font-medium">الأدوات</th>
             </tr>
           </thead>
           <tbody>
             <tr
               v-for="p in paginateArray"
               :key="p.id"
-              class="cursor-pointer border-b border-gray-100 last:border-0 hover:bg-gray-50"
+              class="border-b border-gray-100 last:border-0 hover:bg-gray-50"
               :class="p.id && isSelected({ id: p.id }) ? 'bg-emerald-50' : ''"
-              @click="p.id && toggleSelect({ id: p.id })"
+              @click="isAdmin && p.id && toggleSelect({ id: p.id })"
             >
-              <td class="p-2" @click.stop>
+              <td v-if="isAdmin" class="p-2" @click.stop>
                 <UCheckbox
                   :model-value="p.id ? isSelected({ id: p.id }) : false"
                   @update:model-value="p.id && toggleSelect({ id: p.id })"
                 />
               </td>
-              <td class="p-2 font-medium">{{ p.name }}<div v-if="p.cost_detail" class="text-[11px] font-normal text-gray-400">{{ p.cost_detail }}</div></td>
-              <td class="p-2">{{ p.price }}</td>
-              <td class="p-2 text-gray-600">
-                {{ p.cost_price }}
-              </td>
-              <td class="p-2">{{ p.count }}</td>
+              <td class="p-2 font-medium">{{ p.name }}</td>
               <td
                 class="p-2 font-semibold"
                 :class="p.stock === null ? 'text-gray-400' : ''"
               >
-                {{ p.stock ?? "—" }} {{ p.base_name }}
+                {{ p.stock_label }}
               </td>
-              <td class="p-2" @click.stop>
+              <td class="p-2"><div class="flex flex-wrap gap-1"><UBadge v-for="unit in p.selling_units" :key="unit.id" color="neutral" variant="soft">{{ unit.name }}: {{ unit.price }}</UBadge></div></td>
+              <td v-if="isAdmin" class="p-2" @click.stop>
                 <div class="flex gap-2">
                   <UButton
                     icon="i-lucide-pencil"
@@ -190,30 +183,27 @@
           :key="p.id"
           variant="outline"
           :class="p.id && isSelected({ id: p.id }) ? '!border-emerald-500' : ''"
-          @click="p.id && toggleSelect({ id: p.id })"
+          @click="isAdmin && p.id && toggleSelect({ id: p.id })"
         >
           <div class="flex items-center justify-between gap-2">
             <div class="flex min-w-0 items-center gap-2">
-              <UCheckbox
+              <UCheckbox v-if="isAdmin"
                 :model-value="p.id ? isSelected({ id: p.id }) : false"
                 @click.stop
                 @update:model-value="p.id && toggleSelect({ id: p.id })"
               />
               <div class="min-w-0">
                 <div class="truncate font-bold">{{ p.name }}</div>
-                <div class="text-sm text-gray-500">
-                  بيع: {{ p.price }}
-                  <span>| {{ p.cost_price }}</span>
-                </div>
                 <div
                   class="text-xs"
                   :class="p.stock === null ? 'text-gray-400' : 'text-gray-500'"
                 >
                   {{ p.stock_label }}
                 </div>
+                <div class="flex flex-wrap gap-1"><UBadge v-for="unit in p.selling_units" :key="unit.id" color="neutral" variant="soft">{{ unit.name }}: {{ unit.price }}</UBadge></div>
               </div>
             </div>
-            <div class="flex shrink-0 gap-1.5" @click.stop>
+            <div v-if="isAdmin" class="flex shrink-0 gap-1.5" @click.stop>
               <UButton
                 icon="i-lucide-pencil"
                 color="success"
@@ -281,7 +271,7 @@
         {{ confirmDelete?.name }} — الأرشفة تحفظ السجل المحاسبي (مفضلة للمنتجات ذات الفواتير/الحركات).
       </p>
       <p v-if="deleteStock > 0" class="mb-4 text-xs text-gray-500">
-        المخزون المتبقي: {{ deleteStock }} {{ deleteTarget?.base_unit_name || "وحدة أساسية" }} — الحذف لا ينشئ نقدًا؛ إرجاع المورد عملية مالية مستقلة.
+        المخزون المتبقي: {{ deleteTarget ? stockQuantityLabel(deleteTarget) : '—' }} — الحذف لا ينشئ نقدًا؛ إرجاع المورد عملية مالية مستقلة.
       </p>
       <template #footer>
         <div class="flex w-full flex-col gap-2">
@@ -358,7 +348,7 @@
             <UInputNumber
               :model-value="purchasePaid"
               :min="0"
-              :max="Math.min(purchaseTotal, cashBalance)"
+              :max="cashBalance"
               :step="0.01"
               size="sm"
               class="w-40"
@@ -369,9 +359,10 @@
           <div class="flex justify-between">
             <span>الباقي المستحق</span
             ><b class="text-amber-700"
-              >{{ formatePrice(purchaseTotal - (purchasePaid ?? 0)) }} ج</b
+              >{{ formatePrice(Math.max(0, purchaseTotal - (purchasePaid ?? 0))) }} ج</b
             >
           </div>
+          <div v-if="(purchasePaid ?? 0) > purchaseTotal" class="flex justify-between text-blue-700"><span>سلفة مستحقة لنا</span><b>{{ formatePrice((purchasePaid ?? 0) - purchaseTotal) }} ج</b></div>
         </div>
         <!-- Selling-price policy: shown only when the new average exceeds price -->
         <div
@@ -580,11 +571,13 @@ import { toDateSafe } from "~/types";
 definePageMeta({ title: "المنتجات" });
 const searchText = ref<string>("");
 const { formatePrice } = useHelpers();
-const { round2, round4, toNum, movingAverageCost, proposedSellingPrice, isLowStock, unitsForProduct, purchasableUnitsForProduct, convertUnitPrice, unitPurchasePrice, purchaseLineBaseQuantity, purchaseLineBaseCost, purchasePreviewAverage, purchaseUnitProposals } =
+const { round2, round4, toNum, movingAverageCost, proposedSellingPrice, isLowStock, unitsForProduct, sellableUnitsForProduct, unitSellingPrice, purchasableUnitsForProduct, convertUnitPrice, unitPurchasePrice, purchaseLineBaseQuantity, purchaseLineBaseCost, purchasePreviewAverage, purchaseUnitProposals, stockQuantityLabel } =
   useFinance();
 const productFormState = ref(false);
 const productsStore = useProductsStore();
+const isAdmin = computed(() => useAuth().role === "admin");
 const loading = ref(true);
+const loadError = ref("");
 const deleting = ref(false);
 const currentPage = ref(1);
 const currentPerPage = ref(10);
@@ -658,7 +651,7 @@ const purchaseCount = computed(
     null,
 );
 const purchaseCountText = computed(() =>
-  purchaseCount.value === null ? "غير مُدخل" : String(purchaseCount.value),
+  stockQuantityLabel(prodsList.value.find((p) => p.id === purchaseId.value) ?? { name: "", price: null, cost_price: null }, purchaseCount.value),
 );
 // Shortages dialog state (dialog content lands in S4).
 const shortagesOpen = ref(false);
@@ -692,24 +685,20 @@ const paginateArray = computed(() => {
     )
     .slice(startIndex, startIndex + currentPerPage.value)
     .map((prod) => {
-      const baseName = prod.base_unit_name?.trim() || prod.units?.find((u) => u.is_base)?.name || "وحدة";
-      const units = unitsForProduct(prod);
-      const derived = units
-        .filter((u) => !u.is_base && u.id !== prod.base_unit_id)
-        .slice(0, 3)
-        .map((u) => `${u.name} ×${u.factor}: ${formatePrice((prod.cost_price ?? 0) * Number(u.factor || 1))}`)
-        .join(" · ");
+      const sellingUnits = sellableUnitsForProduct(prod).map((unit) => ({
+        id: unit.id,
+        name: unit.name,
+        price: unit.selling_price == null && !unit.is_base && unit.id !== prod.base_unit_id
+          ? "غير محدد"
+          : unitSellingPrice(prod, unit) == null ? "غير محدد" : `${formatePrice(unitSellingPrice(prod, unit))} ج`,
+      }));
       return {
         id: prod.id,
         select: false,
         name: prod.name,
-        price: `${formatePrice(prod.price)} ج / ${baseName}`,
-        cost_price: `متوسط ${formatePrice(prod.cost_price)} ج / ${baseName}`,
-        cost_detail: derived,
-        count: prod.count,
+        selling_units: sellingUnits,
         stock: prod.stock_quantity ?? null,
-        stock_label: `المخزون: ${prod.stock_quantity ?? "غير مُدخل"} ${baseName}`,
-        base_name: baseName,
+        stock_label: stockQuantityLabel(prod),
       };
     });
 });
@@ -755,8 +744,8 @@ const purchasePaidError = computed(() => {
   if (purchasePaid.value === undefined || purchasePaid.value === null)
     return "";
   if (!(purchasePaid.value >= 0)) return "المدفوع غير صالح.";
-  if (purchasePaid.value - purchaseTotal.value > 1e-9)
-    return "المدفوع لا يجوز أن يتجاوز الإجمالي.";
+  if (purchasePaid.value - purchaseTotal.value > 1e-9 && !purchaseSupplier.value?.id)
+    return "اختر المورد لتسجيل الزيادة كسلفة.";
   if (purchasePaid.value - cashBalance.value > 1e-9)
     return "المدفوع يتجاوز رصيد الخزنة المتاح.";
   return "";
@@ -838,7 +827,7 @@ const adjustCount = computed(
     null,
 );
 const adjustCountText = computed(() =>
-  adjustCount.value === null ? "غير مُدخل" : String(adjustCount.value),
+  stockQuantityLabel(prodsList.value.find((p) => p.id === adjustId.value) ?? { name: "", price: null, cost_price: null }, adjustCount.value),
 );
 function openPurchase(id?: string): void {
   if (!id) return;
@@ -916,9 +905,8 @@ async function doPurchase(): Promise<void> {
     const t = round2(
       round2((purchaseQty.value ?? 0) * (purchaseCost.value ?? 0)),
     );
-    if (purchasePaid.value - t > 1e-9) {
-      stockSubmitError.value =
-        "المدفوع الآن لا يجوز أن يتجاوز إجمالي الفاتورة.";
+    if (purchasePaid.value - t > 1e-9 && !purchaseSupplier.value?.id) {
+      stockSubmitError.value = "اختر المورد لتسجيل الزيادة كسلفة.";
       return;
     }
   }
@@ -975,7 +963,7 @@ async function doAdjust(): Promise<void> {
   try {
     const res = await inventory.adjustStock({
       product_id: adjustId.value,
-      new_count: adjustNew.value ?? -1,
+      new_stock_quantity: adjustNew.value ?? -1,
       note: adjustReason.value,
     });
     if (!res.ok) {
@@ -992,10 +980,6 @@ const clearConfirm = ref(false);
 interface ProductRow {
   id?: string;
   name: string;
-  price: string;
-  cost_price: string;
-  count?: number | null;
-  stock?: number | null;
 }
 const confirmDelete = ref<ProductRow | null>(null);
 const deleteOpen = computed({
@@ -1010,11 +994,23 @@ const deleteTarget = computed(() =>
 const deleteStock = computed(() => toNum(deleteTarget.value?.stock_quantity));
 async function loadProds(): Promise<void> {
   loading.value = true;
+  loadError.value = "";
   try {
     await productsStore.fetchProducts();
+  } catch {
+    loadError.value = "تعذر تحميل المنتجات. حاول مرة أخرى.";
   } finally {
     loading.value = false;
   }
+}
+async function retryProducts(): Promise<void> {
+  productsStore.stopInventorySubscription();
+  if (isAdmin.value) productsStore.ensureInventorySubscription();
+  loading.value = true;
+  loadError.value = "";
+  try { await productsStore.fetchProducts(undefined, true); }
+  catch { loadError.value = "تعذر تحميل المنتجات. حاول مرة أخرى."; }
+  finally { loading.value = false; }
 }
 async function archiveConfirmed(): Promise<void> {
   const id = confirmDelete.value?.id;
@@ -1083,7 +1079,7 @@ onMounted(async () => {
     loading.value = false;
     return; // layout redirects to /login
   }
-  productsStore.ensureInventorySubscription();
+  if (isAdmin.value) productsStore.ensureInventorySubscription();
   await loadProds();
 });
 </script>

@@ -1,22 +1,18 @@
 import type { Invoice, InvoiceProductLine } from "~/types";
 
 export function formatePrice(price: unknown): string {
-  if (price === null || price === undefined || price === "") return "0";
+  if (price === null || price === undefined || price === "") return "0.00";
   const num = Number(price);
-  if (Number.isNaN(num)) return "0";
-  if (!import.meta.client) return String(num);
+  if (!Number.isFinite(num)) return "0.00";
   try {
-    const formatter = new Intl.NumberFormat("ar-US", {
-      currencyDisplay: "symbol",
-      currencySign: "standard",
+    const formatter = new Intl.NumberFormat("en-US", {
       maximumFractionDigits: 2,
       minimumFractionDigits: 2,
-      localeMatcher: "best fit",
       style: "decimal",
     });
-    return formatter.format(num).replace(".00", "");
+    return formatter.format(num);
   } catch {
-    return String(num);
+    return num.toFixed(2);
   }
 }
 

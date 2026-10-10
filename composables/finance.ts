@@ -13,6 +13,11 @@ export function round4(n: unknown): number {
   return Math.round((v + Number.EPSILON) * 10000) / 10000;
 }
 
+export function allocateSupplierCash(outstanding: number, cash: number): { applied: number; advance: number; remaining: number } {
+  const applied = Math.min(round2(outstanding), round2(cash));
+  return { applied, advance: round2(cash - applied), remaining: round2(outstanding - applied) };
+}
+
 /** Lenient number coercion (mirrors legacy toNum). */
 export function toNum(n: unknown): number {
   if (n === null || n === undefined || n === "") return 0;
@@ -139,6 +144,23 @@ export function unitStockDisplay(product: Product, unit: ProductUnit): number {
   const factor = Number(unit.factor);
   const safe = Number.isFinite(factor) && factor > 0 ? factor : 1;
   return toNum(product.stock_quantity) / safe;
+}
+
+export function stockQuantityLabel(product: Product, quantity: number | null | undefined = product.stock_quantity): string {
+  if (quantity === null || quantity === undefined) return "غير مُدخل";
+  if (!Number.isFinite(quantity)) return "—";
+  const units = unitsForProduct(product);
+  const base = units.find((unit) => unit.is_base || unit.id === product.base_unit_id) ?? units[0];
+  const next = units.find((unit) => unit.id !== base?.id);
+  const baseName = base?.name || product.base_unit_name || "وحدة";
+  const absolute = Math.abs(quantity);
+  if (!next || !Number.isFinite(next.factor) || next.factor <= 1 || quantity < 0) {
+    return `${quantity} ${baseName}`;
+  }
+  const whole = Math.floor((absolute + 1e-9) / next.factor);
+  const remainder = round4(absolute - whole * next.factor);
+  if (!whole) return `${remainder} ${baseName}`;
+  return remainder > 0 ? `${whole} ${next.name} و${remainder} ${baseName}` : `${whole} ${next.name}`;
 }
 
 export function convertUnitPrice(unitCost: unknown, fromFactor: unknown, toFactor: unknown): number {
@@ -826,6 +848,7 @@ export function normalizeName(name: unknown): string {
 export const useFinance = () => ({
   round2,
   round4,
+  allocateSupplierCash,
   toNum,
   invoiceTotals,
   discountValueOf,
@@ -860,6 +883,7 @@ export const useFinance = () => ({
   unitPurchasePrice,
   unitAverageCost,
   unitStockDisplay,
+  stockQuantityLabel,
   convertUnitPrice,
   toBaseQuantity,
   toUnitQuantity,

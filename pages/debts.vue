@@ -1,5 +1,6 @@
 <template>
-  <div class="rounded-xl bg-white p-3 shadow-sm sm:p-4">
+  <CashierDebtDesk v-if="!isAdmin" />
+  <div v-else class="rounded-xl bg-white p-3 shadow-sm sm:p-4">
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
       <h2 class="text-lg font-bold text-gray-900">دفتر الديون</h2>
       <div class="flex flex-wrap gap-2">
@@ -652,6 +653,7 @@ import { toDateSafe } from "~/types";
 import { doc } from "firebase/firestore";
 
 definePageMeta({ title: "دفتر الديون" });
+const isAdmin = computed(() => useAuth().role === "admin");
 const route = useRoute();
 const { formatePrice, useDownloadPDF } = useHelpers();
 const { round2, loanStatusOf, normalizePhone, normalizeName } = useFinance();
@@ -1123,6 +1125,7 @@ async function printDebtsStatement(): Promise<void> {
 onMounted(async () => {
   const authed = await useAuthReady();
   if (!authed) return; // layout redirects to /login
+  if (!isAdmin.value) return;
   await Promise.all([reload(), customers.fetchCustomers()]);
 });
 </script>

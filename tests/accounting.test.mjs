@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import {
   aggregatePurchaseByProduct,
   applyStockGroup,
@@ -32,6 +33,39 @@ import {
 } from "../composables/finance.ts";
 import { deriveSupplierInvoiceStatus } from "../types/finance.ts";
 import { invoiceStatsOf } from "../composables/invoiceStats.ts";
+const { safeProduct, saleAmounts } = createRequire(import.meta.url)("../functions/staffMath.cjs");
+
+test("cashier catalog excludes cost and purchase prices", () => {
+  const product = safeProduct("p1", {
+    name: "مرقة دجاج", price: 1, cost_price: 0.7, stock_quantity: 99,
+    units: [
+      { id: "cube", name: "مكعب", factor: 1, selling_price: 1, purchase_price: 0.7, is_base: true },
+      { id: "box", name: "علبة", factor: 30, selling_price: 43, purchase_price: 25 },
+    ],
+  });
+  assert.equal(product.units[0].selling_price, 1);
+  assert.equal(product.units[1].selling_price, 43);
+  assert.equal(product.stock_quantity, 99);
+  assert.equal(JSON.stringify(product).includes("cost_price"), false);
+  assert.equal(JSON.stringify(product).includes("purchase_price"), false);
+});
+
+test("server sale accounting matches invoice stats with units, old debt and discount", () => {
+  const lines = [
+    { product_price: 43, product_quantity: 2, base_quantity: 60, product_cost_price: 0.8333 },
+    { product_price: 1, product_quantity: 3, base_quantity: 3, product_cost_price: 0.8333 },
+  ];
+  const amounts = saleAmounts(lines, { previous: 20, delivery: 5, feeds: 0, mahros: 0, discount: 10, discountPercentage: false, paid: 50 });
+  const invoice = {
+    products: lines.map((line) => ({ ...line, cost_groups: [{ base_quantity: line.base_quantity, unit_cost: line.product_cost_price }] })),
+    debt: 20, delivery_price: 5, discount: 10, discount_percentage: false, paid_amount: 50,
+  };
+  const expected = invoiceStatsOf(invoice);
+  assert.equal(amounts.sales, expected.total_sales);
+  assert.equal(amounts.cost, expected.total_cost);
+  assert.equal(amounts.profit, expected.total_profit);
+  assert.equal(amounts.remaining, expected.outstanding_customer_debt);
+});
 
 // ---------- Unit conversion: piece / box x12 / carton x24 ----------
 

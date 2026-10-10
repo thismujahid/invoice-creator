@@ -21,7 +21,7 @@ export interface PurchaseInput {
 
 export interface AdjustInput {
   product_id: string;
-  new_count: number;
+  new_stock_quantity: number;
   note: string;
 }
 
@@ -92,7 +92,7 @@ export const useInventory = defineStore("inventory", () => {
   async function adjustStock(input: AdjustInput): Promise<{ ok: true } | { ok: false; error: string }> {
     if (!input.product_id) return { ok: false, error: "حدد المنتج أولاً." };
     if (!input.note?.trim()) return { ok: false, error: "سبب التعديل مطلوب." };
-    const target = round2(input.new_count);
+    const target = round2(input.new_stock_quantity);
     if (!Number.isFinite(target) || target < 0) return { ok: false, error: "الكمية الجديدة غير صالحة." };
     if (!Number.isInteger(target)) return { ok: false, error: "الكمية يجب أن تكون رقمًا صحيحًا." };
     try {

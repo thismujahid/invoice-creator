@@ -1,3 +1,4 @@
+import { defineStore } from "pinia";
 import { collection, doc } from "firebase/firestore";
 import type { Supplier } from "~/types/finance";
 
@@ -24,6 +25,7 @@ export const useSuppliersStore = defineStore("suppliers", () => {
         invoice_count: 0,
         total_purchases: 0,
         outstanding_payable: 0,
+        advance_receivable: 0,
         initialized: true,
         updated_at: serverTimestamp(),
       });

@@ -28,7 +28,7 @@
                 <td class="p-2 font-medium">{{ p.name }}</td>
                 <td class="p-2 font-semibold text-red-700">{{ stockLabelOf(p) }}</td>
                 <td class="p-2">{{ thresholdDisplayOf(p) }}</td>
-                <td v-if="showCost" class="p-2">{{ formatePrice(p.cost_price) }}</td>
+                <td v-if="showCost" class="p-2">{{ p.cost_price == null ? '—' : formatePrice(p.cost_price) }}</td>
                 <td class="p-2"><UBadge color="error" variant="soft">سالب</UBadge></td>
               </tr>
             </tbody>
@@ -53,7 +53,7 @@
                 <td class="p-2 font-medium">{{ p.name }}</td>
                 <td class="p-2 font-semibold text-gray-500">{{ stockLabelOf(p) }}</td>
                 <td class="p-2">{{ thresholdDisplayOf(p) }}</td>
-                <td v-if="showCost" class="p-2">{{ formatePrice(p.cost_price) }}</td>
+                <td v-if="showCost" class="p-2">{{ p.cost_price == null ? '—' : formatePrice(p.cost_price) }}</td>
                 <td class="p-2"><UBadge color="error" variant="soft">نافد</UBadge></td>
               </tr>
             </tbody>
@@ -78,7 +78,7 @@
                 <td class="p-2 font-medium">{{ p.name }}</td>
                 <td class="p-2 font-semibold text-amber-700">{{ stockLabelOf(p) }}</td>
                 <td class="p-2">{{ thresholdDisplayOf(p) }}</td>
-                <td v-if="showCost" class="p-2">{{ formatePrice(p.cost_price) }}</td>
+                <td v-if="showCost" class="p-2">{{ p.cost_price == null ? '—' : formatePrice(p.cost_price) }}</td>
                 <td class="p-2"><UBadge color="warning" variant="soft">قليل الكمية</UBadge></td>
               </tr>
             </tbody>
@@ -95,7 +95,7 @@ import type { Product } from "~/types";
 const props = defineProps<{ products: Product[]; showCost: boolean }>();
 const open = defineModel<boolean>("open", { required: true });
 const { formatePrice } = useHelpers();
-const { isLowStock, isNegativeStock, isOutOfStock, thresholdDisplayOf, toNum, unitStockDisplay, unitsForProduct } = useFinance();
+const { isLowStock, isNegativeStock, isOutOfStock, thresholdDisplayOf, toNum, stockQuantityLabel, purchasableUnitsForProduct, unitPurchasePrice, round4 } = useFinance();
 const search = ref("");
 function matchesSearch(p: Product): boolean {
   const q = search.value.trim().toLocaleLowerCase();
@@ -105,11 +105,7 @@ function byShortage(a: Product, b: Product): number {
   return toNum(a.stock_quantity) - toNum(b.stock_quantity) || a.name.localeCompare(b.name);
 }
 function stockLabelOf(p: Product): string {
-  const units = unitsForProduct(p);
-  const base = units.find((u) => u.is_base) ?? units[0];
-  if (!base) return String(toNum(p.stock_quantity));
-  const value = unitStockDisplay(p, base);
-  return `${Number.isInteger(value) ? value : Math.round(value * 100) / 100} ${base.name}`;
+  return stockQuantityLabel(p);
 }
 const negativeRows = computed(() => props.products.filter((p) => isNegativeStock(p) && matchesSearch(p)).sort(byShortage));
 const outRows = computed(() => props.products.filter((p) => isOutOfStock(p) && !isNegativeStock(p) && matchesSearch(p)).sort(byShortage));
@@ -119,11 +115,16 @@ const rows = computed(() => [...negativeRows.value, ...outRows.value, ...lowRows
 async function exportOrder(): Promise<void> {
   const XLSX = await import("xlsx/dist/xlsx.full.min.js");
   const data = [
-    ["رقم المنتج", "اسم المنتج", "الكمية المطلوبة", "تكلفة شراء الوحدة"],
-    ...rows.value.map((p) => [p.id ?? "", p.name, "", toNum(p.cost_price)]),
+    ["رقم المنتج", "اسم المنتج", "الكمية المطلوبة", "تكلفة شراء الوحدة", "نوع الوحدة"],
+    ...rows.value.map((p) => {
+      const units = purchasableUnitsForProduct(p);
+      const unit = units[1] ?? units[0];
+      const purchasePrice = unit ? unitPurchasePrice(p, unit) : null;
+      return [p.id ?? "", p.name, "", purchasePrice ?? round4(toNum(p.cost_price) * (unit?.factor ?? 1)), unit?.name ?? p.base_unit_name ?? "وحدة"];
+    }),
   ];
   const sheet = XLSX.utils.aoa_to_sheet(data);
-  sheet["!cols"] = [{ wch: 24 }, { wch: 32 }, { wch: 20 }, { wch: 24 }];
+  sheet["!cols"] = [{ wch: 24 }, { wch: 32 }, { wch: 20 }, { wch: 24 }, { wch: 20 }];
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, sheet, "طلب شراء");
   XLSX.writeFile(workbook, `طلب_شراء_${new Date().toISOString().slice(0, 10)}.xlsx`);

@@ -1,3 +1,4 @@
+import { defineStore } from "pinia";
 import { and, collection, doc, getDocs, limit as fsLimit, orderBy, or, query, startAfter, Timestamp, where, type Query, type QueryDocumentSnapshot } from "firebase/firestore";
 import type { Invoice } from "~/types";
 import { toDateSafe } from "~/types";
@@ -15,6 +16,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
   const { notify } = useAppToast();
   const list = ref<Invoice[]>([]);
   const invoiceToEdit = ref<Invoice | undefined>(undefined);
+  let pendingCreate: { fingerprint: string; requestId: string } | null = null;
 
   // Substring search without per-keystroke full scans:
   // - New docs carry normalized `customer_name_norm` + `customer_phone_digits`
@@ -303,165 +305,20 @@ export const useInvoicesStore = defineStore("invoices", () => {
   async function createInvoiceWithAccounting(
     payload: Omit<Invoice, "id">,
   ): Promise<{ ok: true; id: string; cashSkipped: boolean } | { ok: false; error: string }> {
-    const lines = (payload.products ?? [])
-      .filter((l) => l.product_id && toNum(l.product_quantity) > 0)
-      .map((line) => ({ ...line, base_quantity: round2(toNum(line.product_quantity) * lineUnitFactor(line)) }));
-    if (!lines.length) return { ok: false, error: "لا يمكن حفظ فاتورة فارغة." };
-    const paid = round2(toNum(payload.paid_amount));
     try {
-      let invoiceId = "";
-      let cashSkipped = false;
-      await runTx(async (tx) => {
-        // 1. Read stock + CURRENT cost + validate aggregated need per product.
-        // Sale-line costs are snapshotted from these txn reads (never the
-        // possibly-stale form), so later cost changes can't rewrite history.
-        const ids = [...new Set(lines.map((l) => l.product_id as string))];
-        const stocks = new Map<string, { stock: number; name: string; cost: number; units: { id: string; factor: number; can_sell?: boolean; is_base?: boolean }[]; baseUnitId: string | null }>();
-        for (const pid of ids) {
-          const snap = await tx.get(doc(db, "products", pid));
-          if (!snap.exists()) throw new Error("VALIDATION:منتج غير موجود بالمخزون.");
-          stocks.set(pid, {
-            stock: toNum(snap.data().stock_quantity),
-            name: String(snap.data().name || ""),
-            cost: round4(toNum(snap.data().cost_price)),
-            units: Array.isArray(snap.data().units) ? snap.data().units as { id: string; factor: number; can_sell?: boolean; is_base?: boolean }[] : [],
-            baseUnitId: typeof snap.data().base_unit_id === "string" ? snap.data().base_unit_id : null,
-          });
-        }
-        const needByProduct = new Map<string, number>();
-        for (const l of lines) {
-          const pid = l.product_id as string;
-          const product = stocks.get(pid)!;
-          const unitId = typeof l.unit_id === "string" ? l.unit_id : product.baseUnitId ?? product.units.find((unit) => unit.is_base)?.id ?? product.units[0]?.id;
-          const configuredUnit = product.units.find((unit) => unit.id === unitId);
-          if (product.units.length && (!configuredUnit || Math.abs(Number(configuredUnit.factor) - lineUnitFactor(l)) > STOCK_EPS)) {
-            throw new Error("VALIDATION:وحدة البيع المختارة غير متاحة أو تغير إعدادها. حدّث الفاتورة وحاول مرة أخرى.");
-          }
-          if (!product.units.length && lineUnitFactor(l) !== 1) {
-            throw new Error("VALIDATION:هذا المنتج القديم يدعم وحدة مخزون واحدة فقط.");
-          }
-          needByProduct.set(pid, round2((needByProduct.get(pid) ?? 0) + lineBaseQuantity(l)));
-        }
-        for (const [pid, need] of needByProduct) {
-          const st = stocks.get(pid)!;
-          if (need - st.stock > STOCK_EPS) {
-            throw new Error(`VALIDATION:الكمية المطلوبة (${need}) تتجاوز المخزون المتاح (${st.stock}) لمنتج ${st.name}.`);
-          }
-          st.stock = round2(st.stock - need);
-        }
-        // 2. Cashbox state. Atomicity invariant: a paid invoice MUST have its
-        // cash movement. Missing cashbox + paid > 0 rejects the whole op —
-        // no invoice, no stock change, no partial effects.
-        const cashRef = doc(db, "cashbox", "current");
-        const cashSnap = await tx.get(cashRef);
-        const cashReady = cashSnap.exists();
-        const cashBal = cashReady ? round2(Number(cashSnap.data()?.balance || 0)) : 0;
-        if (paid > 0 && !cashReady) {
-          throw new Error("VALIDATION:لا يمكن حفظ فاتورة مدفوعة قبل تهيئة الخزنة. هيّئ الخزنة أولاً ثم أعد الحفظ.");
-        }
-        cashSkipped = false;
-        // 3. Invoice doc (id known upfront for log references).
-        // Line costs are snapshotted from the txn-read products above —
-        // form costs may predate a newer purchase and must not leak in.
-        const invRef = doc(collection(db, "invoices"));
-        invoiceId = invRef.id;
-        const now = serverTimestamp();
-        const pricedLines = lines.map((l, index) => ({
-          ...l,
-          line_id: l.line_id || invRef.id + "-" + index,
-          product_cost_price: stocks.get(l.product_id as string)!.cost,
-          unit_factor: Number.isFinite(Number(l.unit_factor)) && Number(l.unit_factor) > 0 ? Number(l.unit_factor) : 1,
-          base_quantity: lineBaseQuantity(l),
-          base_cost_snapshot: stocks.get(l.product_id as string)!.cost,
-          cost_groups: [{ base_quantity: lineBaseQuantity(l), unit_cost: stocks.get(l.product_id as string)!.cost }],
-        }));
-        tx.set(invRef, {
-          ...(payload as Record<string, unknown>),
-          products: pricedLines,
-          inventory_applied: true,
-          cashbox_applied: paid > 0,
-          ...invoiceSearchKeys(payload.customer_name, payload.customer_phone),
-        });
-        // 3b. Debt summary for the lightweight debt book (same txn).
-        writeDebtSummary(tx, db, {
-          invoice_id: invoiceId,
-          customer_id: (payload.customer_id as string) || null,
-          customer_name: payload.customer_name ?? null,
-          customer_phone: (payload.customer_phone as string | number | null) ?? null,
-          date: (payload.date as unknown) ?? null,
-          ...summarizeInvoice(payload as Invoice),
-        });
-        writeInvoiceStatsDelta(tx, db, null, { ...(payload as Invoice), products: pricedLines });
-        const newSummary = summarizeInvoice(payload as Invoice);
-        writeCustomerSummaryDelta(tx, db, payload as Invoice, {
-          invoice_count: 1,
-          total_sales: newSummary.sales,
-          outstanding_debt: newSummary.remaining,
-        });
-        // 4. Stock (final balances from step 1) + per-line inventory logs.
-        // Logs carry the same txn-fresh snapshot cost as the saved lines.
-        let saleSeq = 0;
-        const saleMovements = pricedLines.map(() => doc(collection(db, "inventory_transactions")));
-        const lastSaleMovementByProduct = new Map<string, string>();
-        const saleMovementIdsByProduct = new Map<string, string[]>();
-        for (const [index, l] of pricedLines.entries()) {
-          const pid = l.product_id as string;
-          lastSaleMovementByProduct.set(pid, saleMovements[index]!.id);
-          const movementIds = saleMovementIdsByProduct.get(pid) ?? [];
-          movementIds.push(saleMovements[index]!.id);
-          saleMovementIdsByProduct.set(pid, movementIds);
-          tx.set(saleMovements[index]!, {
-            type: "sale",
-            product_id: pid,
-            product_name: l.product_name || stocks.get(pid)!.name,
-            quantity: round2(toNum(l.product_quantity)),
-            unit_id: l.unit_id ?? null,
-            unit_name: l.unit_name ?? null,
-            unit_factor: l.unit_factor,
-            base_quantity: lineBaseQuantity(l),
-            direction: "out",
-            unit_cost: round4(toNum(l.product_cost_price)),
-            invoice_id: invoiceId,
-            note: null,
-            seq: saleSeq++,
-            created_by: (authStore.currentUserKey as string) || null,
-            created_at: now,
-          });
-        }
-        for (const [pid, st] of stocks) {
-          tx.update(doc(db, "products", pid), {
-            stock_quantity: st.stock,
-            last_inventory_transaction_id: lastSaleMovementByProduct.get(pid),
-            last_inventory_transaction_ids: saleMovementIdsByProduct.get(pid) ?? [],
-          });
-        }
-        // 5. Cash (paid only, never zero-value txns).
-        if (paid > 0 && cashReady) {
-          tx.set(cashRef, { balance: round2(cashBal + paid), updated_at: now }, { merge: true });
-          tx.set(doc(collection(db, "cash_transactions")), {
-            type: "invoice_sale",
-            direction: "in",
-            amount: paid,
-            customer_id: (payload.customer_id as string) || null,
-            invoice_id: invoiceId,
-            reference_type: "invoice",
-            reference_id: invoiceId,
-            reference_label: `فاتورة بيع لـ ${payload.customer_name || "عميل"}`,
-            note: null,
-            created_by: (authStore.currentUserKey as string) || null,
-            created_at: now,
-          });
-        }
+      const fingerprint = JSON.stringify(payload);
+      if (pendingCreate?.fingerprint !== fingerprint) pendingCreate = { fingerprint, requestId: crypto.randomUUID() };
+      const result = await callStaff<Omit<Invoice, "id"> & { requestId: string }, { id: string }>("createStaffSale", {
+        ...payload,
+        requestId: pendingCreate.requestId,
       });
+      pendingCreate = null;
       useProductsStore().invalidateCache();
       invalidateCache();
-      return { ok: true, id: invoiceId, cashSkipped };
-    } catch (e) {
-      if (e instanceof Error && e.message.startsWith("VALIDATION:")) {
-        return { ok: false, error: e.message.slice("VALIDATION:".length) };
-      }
-      console.error(e);
-      return { ok: false, error: "تعذر حفظ العملية، لم يتم تعديل الخزنة أو المخزون." };
+      return { ok: true, id: result.id, cashSkipped: false };
+    } catch (error) {
+      console.error(error);
+      return { ok: false, error: "تعذر حفظ الفاتورة. تحقق من العميل والمخزون والأسعار ثم حاول مرة أخرى." };
     }
   }
 

@@ -21,7 +21,7 @@
           <span class="hidden shrink-0 text-xs text-gray-400 md:block">{{
             todayLine
           }}</span>
-          <UDropdownMenu v-if="!isLoginRoute" :items="userMenu">
+          <UDropdownMenu v-if="!isLoginRoute && authStore.role" :items="userMenu">
             <div
               class="flex shrink-0 cursor-pointer items-center gap-2 rounded-full py-1 pe-1 ps-1"
             >
@@ -46,7 +46,7 @@
         class="mx-auto flex w-full max-w-6xl min-w-0 flex-1 items-start gap-3 px-3 py-4 md:px-4"
       >
         <aside
-          v-if="!isLoginRoute"
+          v-if="!isLoginRoute && authStore.role"
           class="sticky top-18 bottom-none z-20 hidden w-38 shrink-0 flex-col items-center rounded-lg border border-gray-200 bg-white py-3 md:py-0 shadow-sm sm:flex"
           aria-label="التنقل الرئيسي"
         >
@@ -103,14 +103,13 @@
         </template>
       </UiAppDialog>
 
-      <!-- Mobile bottom bar: exactly 4 primary items; المزيد opens the rest -->
       <nav
-        v-if="!isLoginRoute"
+        v-if="!isLoginRoute && authStore.role"
         class="fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur sm:hidden"
         aria-label="التنقل السريع"
       >
         <div
-          v-if="moreOpen"
+          v-if="moreOpen && secondaryItems.length"
           class="absolute inset-x-3 bottom-full mb-2 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg"
         >
           <button
@@ -146,6 +145,7 @@
             {{ item.label }}
           </button>
           <button
+            v-if="secondaryItems.length"
             aria-label="المزيد"
             :aria-expanded="moreOpen"
             class="flex min-h-14 flex-col items-center justify-center gap-0.5 text-[11px] leading-none"
@@ -159,7 +159,7 @@
       </nav>
       <!-- Spacer so the fixed bar never covers footer content on mobile -->
       <div
-        v-if="!isLoginRoute"
+        v-if="!isLoginRoute && authStore.role"
         aria-hidden="true"
         class="h-[calc(3.5rem+env(safe-area-inset-bottom))] sm:hidden"
       />
@@ -174,6 +174,9 @@ const route = useRoute();
 const authStore = useAuth();
 const productsStore = useProductsStore();
 const cashboxStore = useCashbox();
+const invoicesStore = useInvoicesStore();
+const customersStore = useCustomersStore();
+const suppliersStore = useSuppliersStore();
 const { auth } = useFirebase();
 const { notify } = useAppToast();
 useLowStockAlerts();
@@ -191,7 +194,7 @@ const todayLine = computed(() =>
   }),
 );
 
-const tabItems = computed(() => [
+const allTabItems = [
   { label: "إنشاء فاتورة", icon: "i-lucide-file-plus", to: "/" },
   { label: "دفتر الديون", icon: "i-lucide-notebook-text", to: "/debts" },
   { label: "الفواتير", icon: "i-lucide-files", to: "/invoices" },
@@ -204,19 +207,25 @@ const tabItems = computed(() => [
     icon: "i-lucide-receipt",
     to: "/supplier-invoices",
   },
-]);
+];
+const tabItems = computed(() => authStore.role === "admin"
+  ? allTabItems
+  : allTabItems.filter((item) => ["/", "/invoices", "/debts", "/products"].includes(item.to)));
 
 function isActiveTab(to: string): boolean {
   return route.path === to;
 }
 
-// Mobile bottom bar: 3 primaries + المزيد popover with the rest.
 const PRIMARY_TOS = ["/", "/invoices", "/debts"];
 const primaryItems = computed(() =>
-  tabItems.value.filter((t) => PRIMARY_TOS.includes(t.to as string)),
+  authStore.role === "cashier"
+    ? tabItems.value
+    : tabItems.value.filter((t) => PRIMARY_TOS.includes(t.to as string)),
 );
 const secondaryItems = computed(() =>
-  tabItems.value.filter((t) => !PRIMARY_TOS.includes(t.to as string)),
+  authStore.role === "cashier"
+    ? []
+    : tabItems.value.filter((t) => !PRIMARY_TOS.includes(t.to as string)),
 );
 const moreOpen = ref(false);
 const moreActive = computed(() =>
@@ -248,8 +257,7 @@ async function logout(): Promise<void> {
     await auth.signOut();
     // FLAG [S9]: clear role cookie on logout (was surviving before).
     authStore.clearSession();
-    productsStore.clearInventory();
-    cashboxStore.clearCashbox();
+    clearSensitiveState();
     resetLowStockAlerts();
     logoutConfirm.value = false;
     notify("لقد تم إغلاق التطبيق بنجاح، إلى اللقاء", "success");
@@ -257,6 +265,18 @@ async function logout(): Promise<void> {
   } finally {
     loggingOut.value = false;
   }
+}
+function clearSensitiveState(): void {
+  productsStore.clearInventory();
+  cashboxStore.clearCashbox();
+  invoicesStore.list = [];
+  invoicesStore.invoiceToEdit = undefined;
+  invoicesStore.invalidateCache();
+  customersStore.list = [];
+  customersStore.loaded = false;
+  suppliersStore.list = [];
+  suppliersStore.loaded = false;
+  resetLowStockAlerts();
 }
 const toast = useToast();
 auth.languageCode = "ar";
@@ -276,11 +296,30 @@ function redirectForAuth(authed: boolean): void {
   }
 }
 
-function applyAuthUser(user: User | null): void {
-  const authed = !!user;
+let authEpoch = 0;
+async function applyAuthUser(user: User | null): Promise<void> {
+  const epoch = ++authEpoch;
+  let role: "admin" | "cashier" | null = null;
+  if (user) {
+    try {
+      role = await resolveStaffRole(user);
+    } catch {
+      role = null;
+    }
+  }
+  if (epoch !== authEpoch) return;
+  if (user && !role) {
+    await auth.signOut();
+    return;
+  }
+  if (!user || (authStore.userData?.id && authStore.userData.id !== user.uid) || (authStore.role && authStore.role !== role)) {
+    clearSensitiveState();
+  }
+  authStore.role = role;
+  const authed = !!role;
   isAuthed.value = authed;
   reportAuthState(authed); // unblocks pages awaiting useAuthReady()
-  if (user) {
+  if (user && role) {
     authStore.userData = {
       name: user.displayName,
       email: user.email,
@@ -291,6 +330,9 @@ function applyAuthUser(user: User | null): void {
   } else {
     authStore.userData = null;
   }
+  if (role === "cashier" && !["/", "/login", "/invoices", "/debts", "/products"].includes(route.path)) {
+    void navigateTo("/", { replace: true });
+  }
   if (!authSettled) {
     authSettled = true;
     if (authTimer) clearTimeout(authTimer);
@@ -298,6 +340,7 @@ function applyAuthUser(user: User | null): void {
   }
 }
 
+let stopAuthListener: (() => void) | undefined;
 if (import.meta.client) {
   // Watchdog: if the first callback never fires (offline/blocked storage),
   // unblock waiting pages so they fall through to /login instead of
@@ -311,22 +354,28 @@ if (import.meta.client) {
       redirectForAuth(authed);
     }
   }, AUTH_TIMEOUT_MS);
+  stopAuthListener = auth.onAuthStateChanged(applyAuthUser);
 }
-const stopAuthListener = auth.onAuthStateChanged(applyAuthUser);
 onUnmounted(() => {
-  stopAuthListener();
+  stopAuthListener?.();
   if (authTimer) clearTimeout(authTimer);
 });
 // Later auth changes (sign-out, revoked token): keep the route in sync.
 watch(isAuthed, (v) => {
   if (authSettled) redirectForAuth(v);
-  if (v) {
+  if (v && authStore.role === "admin") {
     productsStore.ensureInventorySubscription();
     cashboxStore.ensureCashboxSubscription();
-  } else {
+  } else if (v && authStore.role === "cashier") {
     productsStore.clearInventory();
     cashboxStore.clearCashbox();
-    resetLowStockAlerts();
+  } else {
+    clearSensitiveState();
+  }
+});
+watch(() => route.path, (path) => {
+  if (authStore.role === "cashier" && !["/", "/login", "/invoices", "/debts", "/products"].includes(path)) {
+    void navigateTo("/", { replace: true });
   }
 });
 // Single toast render path: writers set snackBarText, we show + consume.

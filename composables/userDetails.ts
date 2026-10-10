@@ -1,8 +1,8 @@
 import type { ActiveUser, UserKey } from "~/types";
 
-// Single admin user — no roles or permission levels.
 export const userDetails = computed<ActiveUser>(() => {
   const useAuthStore = useAuth();
+  if (useAuthStore.role === "cashier") return { avatar_text: "ك", name: "كاشير", position: "المبيعات والتحصيل" };
   return formateActiveUserKey(useAuthStore.currentUserKey);
 });
 

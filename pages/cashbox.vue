@@ -67,8 +67,9 @@
           :loading="openingBusy"
           icon="i-lucide-vault"
           @click="doOpening"
-          >تأكيد الرصيد الافتتاحي</UButton
+          >تهيئة الخزنة والتقارير</UButton
         >
+        <p v-if="openingProgress" class="mt-2 text-xs text-gray-600">{{ openingProgress }}</p>
       </template>
     </UCard>
 
@@ -82,13 +83,14 @@
           <div v-if="cashbox.initialized && cashbox.balance <= 0" class="mt-1 text-xs text-gray-400">مهيأة بصفر — ليست غير مهيأة</div>
         </UCard>
         <UCard variant="outline">
-          <div class="text-lg font-bold text-red-600 sm:text-xl">
+          <div class="text-lg font-bold text-blue-700 sm:text-xl">
             {{ summariesReady ? formatePrice(receivablesTotal) : "…" }}
           </div>
           <div class="text-xs text-gray-500">المستحق لنا</div>
           <div v-if="summariesReady" class="mt-1 space-y-0.5 border-t border-gray-100 pt-1 text-xs text-gray-500">
             <div class="flex justify-between gap-2"><span>مستحقات فواتير</span><b>{{ formatePrice(receivablesInvoices) }}</b></div>
-            <div class="flex justify-between gap-2"><span>سلف مستحقة</span><b>{{ formatePrice(receivablesLoans) }}</b></div>
+            <div class="flex justify-between gap-2"><span>سلف العملاء</span><b>{{ formatePrice(receivablesLoans) }}</b></div>
+            <div class="flex justify-between gap-2"><span>سلف الموردين المستحقة لنا</span><b>{{ formatePrice(receivablesSupplierAdvances) }}</b></div>
           </div>
         </UCard>
         <UCard variant="outline">
@@ -102,10 +104,10 @@
         </UCard>
         <UCard variant="outline">
           <div class="text-lg font-bold sm:text-xl">
-            {{ formatePrice(agg.costValue) }}
+            {{ products.inventoryReady ? formatePrice(agg.costValue) : "…" }}
           </div>
           <div class="text-xs text-gray-500">المخزون بالتكلفة</div>
-          <div v-if="inventoryValuationNote" class="mt-1 text-xs text-amber-700">{{ inventoryValuationNote }}</div>
+          <div v-if="inventoryValuationNote && products.inventoryReady" class="mt-1 text-xs text-amber-700">{{ inventoryValuationNote }}</div>
         </UCard>
       </div>
 
@@ -123,52 +125,38 @@
         :show-cost="true"
       />
 
-      <p class="mb-2 mt-4 text-xs font-bold text-gray-400">حسابات افتراضية وتحليلات</p>
-      <div class="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-3">
+      <div class="mb-2 mt-5 flex flex-wrap items-center justify-between gap-2">
+        <h3 class="text-sm font-bold text-gray-800">أداء البيع</h3>
+        <USelect v-model="reportPeriod" :items="reportPeriodOptions" value-key="value" label-key="label" size="sm" class="w-40" />
+      </div>
+      <p class="mb-2 text-xs text-gray-500">المبيعات والربح للفترة المختارة؛ النقدية والديون والمخزون أرصدة حالية.</p>
+      <UAlert v-if="summaryError || reportError" color="error" variant="soft" class="mb-3" title="تعذر تحميل بعض المؤشرات. أعد فتح الصفحة." />
+      <UAlert v-else-if="!statsLoading && !statsReady" color="warning" variant="soft" class="mb-3" title="ملخصات الفواتير غير مهيأة. استخدم تصحيح الحسابات من أدوات الإدارة." />
+      <div class="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
         <UCard variant="outline">
-          <div class="text-lg font-bold sm:text-xl">
-            {{ summariesReady ? formatePrice(round2(cashbox.balance + receivablesTotal)) : "…" }}
-          </div>
-          <div class="text-xs text-gray-500">رصيدنا بعد التحصيل الكامل</div>
-          <div class="mt-1 text-xs text-gray-400">افتراضي — بفرض تحصيل كل المستحقات</div>
+          <div class="text-lg font-bold text-emerald-700 sm:text-xl">{{ reportReady ? formatePrice(netSales) : "…" }}</div>
+          <div class="text-xs text-gray-500">صافي المبيعات بعد المرتجعات</div>
+          <div v-if="reportReady" class="mt-1 text-xs text-gray-400">{{ reportStats.invoices }} فاتورة · {{ reportStats.returnsCount }} مرتجع</div>
         </UCard>
         <UCard variant="outline">
-          <div class="text-lg font-bold sm:text-xl">
-            {{ summariesReady ? formatePrice(hypotheticalSettlement) : "…" }}
-          </div>
-          <div class="text-xs text-gray-500">رصيد افتراضي بعد تحصيل وسداد جميع المستحقات</div>
-          <div class="mt-1 text-xs text-gray-400">تقدير نظري — لا يعني توفر السيولة الآن</div>
+          <div class="text-lg font-bold sm:text-xl" :class="reportStats.profit < 0 ? 'text-red-600' : 'text-emerald-700'">{{ reportReady ? formatePrice(reportStats.profit) : "…" }}</div>
+          <div class="text-xs text-gray-500">مجمل ربح البضاعة بعد المرتجعات</div>
+          <div class="mt-1 text-xs text-gray-400">قبل الإيجار والرواتب والمصروفات</div>
         </UCard>
         <UCard variant="outline">
-          <div class="text-lg font-bold sm:text-xl">
-            {{ summariesReady ? formatePrice(registeredNetAssets) : "…" }}
-          </div>
-          <div class="text-xs text-gray-500">صافي الأصول المسجلة</div>
-          <div class="mt-1 text-xs text-gray-400">نقد + مخزون + مستحق لنا − مستحق علينا — بنود التطبيق فقط</div>
+          <div class="text-lg font-bold text-blue-700 sm:text-xl">{{ products.inventoryReady ? formatePrice(sellableInventory.expectedProfit) : "…" }}</div>
+          <div class="text-xs text-gray-500">ربح محتمل من المخزون الحالي</div>
+          <div class="mt-1 text-xs text-gray-400">ليس ضمن ربح الفترة · بأسعار وحدة الأساس الحالية</div>
+          <div v-if="forecastNote && products.inventoryReady" class="mt-1 text-xs text-amber-700">{{ forecastNote }}</div>
         </UCard>
         <UCard variant="outline">
-          <div class="text-lg font-bold sm:text-xl">{{ payablesCoverage }}</div>
-          <div class="text-xs text-gray-500">تغطية المستحق علينا من النقدية الحالية</div>
-        </UCard>
-        <UCard variant="outline">
-          <div class="text-lg font-bold text-emerald-700 sm:text-xl">
-            {{ statsReady ? formatePrice(stats.sales) : "…" }}
-          </div>
-          <div class="text-xs text-gray-500">إجمالي المبيعات</div>
-        </UCard>
-        <UCard variant="outline">
-          <div class="text-lg font-bold text-emerald-600 sm:text-xl">
-            {{ statsReady ? formatePrice(stats.profits) : "…" }}
-          </div>
-          <div class="text-xs text-gray-500">مجمل ربح البضاعة</div>
-        </UCard>
-        <UCard variant="outline">
-          <div class="text-lg font-bold text-blue-600 sm:text-xl">
-            {{ formatePrice(agg.expectedProfit) }}
-          </div>
-          <div class="text-xs text-gray-500">الربح المتوقع من المخزون <span class="text-gray-400">(غير محقق — يتأثر بالوحدات والأسعار والخصومات)</span></div>
+          <div class="text-lg font-bold sm:text-xl" :class="cashGap < 0 ? 'text-red-600' : 'text-emerald-700'">{{ summariesReady ? formatePrice(cashGap) : "…" }}</div>
+          <div class="text-xs text-gray-500">النقدية بعد سداد الموردين الآن</div>
+          <div v-if="summariesReady && cashGap < 0" class="mt-1 text-xs text-gray-500">العجز الفوري: {{ formatePrice(-cashGap) }} ج</div>
         </UCard>
       </div>
+      <UAlert v-if="businessHealth && reportReady && summariesReady" :color="businessHealth.color" variant="soft" class="mb-3" :title="businessHealth.title" :description="businessHealth.description" />
+      <p v-if="summariesReady" class="mb-3 text-xs text-gray-500">النقدية + المستحق لنا − المستحق للموردين = <b :class="collectionGap < 0 ? 'text-red-600' : 'text-emerald-700'">{{ formatePrice(collectionGap) }} ج</b> بافتراض تحصيل جميع المستحقات. الديون ليست ربحًا، والمخزون ليس نقدًا جاهزًا.</p>
 
       <div class="mb-2 mt-4 flex flex-wrap items-center justify-between gap-2">
         <p class="text-xs font-bold text-gray-400">سجل العمليات</p>
@@ -206,8 +194,9 @@
           >
         </div>
       </div>
-      <div v-if="periodStart" class="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-5">
-        <UCard variant="outline">
+      <UAlert v-if="periodError" color="error" variant="soft" class="mb-2" title="تعذر تحميل ملخص حركات الفترة." />
+      <div v-if="periodStart && !periodLoading && !periodError" class="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-5">
+        <UCard v-if="!periodIsFiltered && !periodTruncated" variant="outline">
           <div class="text-base font-bold sm:text-lg">{{ formatePrice(periodOpening) }}</div>
           <div class="text-xs text-gray-500">رصيد بداية الفترة</div>
         </UCard>
@@ -225,12 +214,12 @@
           </div>
           <div class="text-xs text-gray-500">صافي الحركة</div>
         </UCard>
-        <UCard variant="outline">
+        <UCard v-if="!periodIsFiltered && !periodTruncated" variant="outline">
           <div class="text-base font-bold sm:text-lg">{{ formatePrice(cashbox.balance) }}</div>
           <div class="text-xs text-gray-500">رصيد نهاية الفترة (الحالي)</div>
         </UCard>
       </div>
-      <p v-if="periodIsFiltered" class="mb-2 text-xs text-gray-400">الملخص أعلاه لنتائج الفلتر فقط — رصيد الخزنة شامل كل الحركات.</p>
+      <p v-if="periodIsFiltered" class="mb-2 text-xs text-gray-400">المقبوضات والمدفوعات للحركات المختارة فقط؛ لا يُحسب منها رصيد الخزنة.</p>
       <p v-if="periodTruncated" class="mb-2 text-xs text-amber-700">الفترة كبيرة — الملخص والتصدير لأحدث 2000 حركة فقط.</p>
       <UAlert
         v-if="newOpsAvailable"
@@ -427,8 +416,8 @@
         <UCard variant="outline" class="border-red-200">
           <div class="mb-1 text-sm font-bold text-red-700">إعادة ضبط المصنع</div>
           <p class="mb-2 text-xs text-gray-500">
-            مسح كل بيانات النظام من كل المجموعات بلا استثناء (الفواتير، العملاء،
-            المنتجات، الخزنة، الموردون، الملخصات والإحصائيات). لا يمكن التراجع.
+            مسح الفواتير والسلف والديون والحركات والتقارير، وتصفير الخزنة ومخزون المنتجات وأسعارها.
+            تبقى بيانات العملاء والموردين والمنتجات ووحداتها. لا يمكن التراجع.
             يتطلب كلمة مرور المدير.
           </p>
           <UButton
@@ -473,8 +462,8 @@
         <UAlert
           color="error"
           variant="soft"
-          title="سيتم مسح كل شيء نهائيًا"
-          description="كل الفواتير والعملاء والمنتجات والخزنة والموردين والملخصات من كل المجموعات بلا استثناء. لا يوجد تراجع بعد التأكيد."
+          title="سيتم مسح السجلات المالية نهائيًا"
+          description="تبقى أسماء العملاء والموردين والمنتجات ووحداتها؛ تُمسح الفواتير والديون والسلف والتقارير، وتُصفّر الخزنة والكميات والأسعار. لا يوجد تراجع."
         />
         <UCheckbox
           v-model="resetUnderstood"
@@ -542,7 +531,7 @@
               :loading="resetBusy"
               :disabled="!resetUnderstood"
               @click="runFactoryReset"
-              >مسح كل البيانات نهائيًا</UButton
+              >تأكيد ضبط المصنع</UButton
             >
             <UButton
               color="neutral"
@@ -965,7 +954,9 @@ const resetError = ref("");
 const resetPct = ref(0);
 const resetMsg = ref("");
 const resetResult = ref("");
+const resetRequestId = ref("");
 function openFactoryReset(): void {
+  resetRequestId.value = crypto.randomUUID();
   resetStep.value = "password";
   resetPassword.value = "";
   resetUnderstood.value = false;
@@ -1000,10 +991,10 @@ async function runFactoryReset(): Promise<void> {
   resetStep.value = "wiping";
   try {
     const res = await migration.factoryReset((done, total, name) => {
-      resetPct.value = total ? Math.round((done / total) * 100) : 100;
+      resetPct.value = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
       resetMsg.value = name ? `مسح ${name}… (${done}/${total})` : "";
-    });
-    resetResult.value = `تم مسح ${res.documents} مستندًا من ${res.collections} مجموعة. أعد تحميل التطبيق لبداية نظيفة.`;
+    }, resetRequestId.value);
+    resetResult.value = `اكتمل ضبط المصنع. عُولج ${res.documents} مستندًا؛ بقي العملاء والموردون والمنتجات بوحداتها. أعد تحميل التطبيق.`;
     resetStep.value = "done";
   } catch (error) {
     console.error("Factory reset failed:", error);
@@ -1184,6 +1175,7 @@ const amountError = computed(() => {
 const openingAmount = ref<number | undefined>(undefined);
 const openingNote = ref("");
 const openingBusy = ref(false);
+const openingProgress = ref("");
 
 const typeFilter = ref<string | null>(null);
 const typeOptions = computed(() => [
@@ -1194,32 +1186,63 @@ const typeOptions = computed(() => [
   })),
 ]);
 const agg = computed(() => inventoryAggregates(products.list));
+const sellableInventory = computed(() => inventoryAggregates(products.activeProducts));
 
 const statsLoading = ref(true);
 const statsReady = ref(false);
-const stats = ref({
-  sales: 0,
-  profits: 0,
-  invoices: 0,
-  customers: 0,
-});
+type ReportMetrics = { sales: number; profit: number; returns: number; invoices: number; returnsCount: number };
+const emptyMetrics = (): ReportMetrics => ({ sales: 0, profit: 0, returns: 0, invoices: 0, returnsCount: 0 });
+function metricsFrom(data: Record<string, unknown> | undefined): ReportMetrics {
+  return {
+    sales: round2(toNum(data?.total_sales)),
+    profit: round2(toNum(data?.total_profit)),
+    returns: round2(toNum(data?.returns_total)),
+    invoices: Math.max(0, Math.floor(toNum(data?.invoice_count))),
+    returnsCount: Math.max(0, Math.floor(toNum(data?.return_count))),
+  };
+}
+const stats = ref<ReportMetrics>(emptyMetrics());
+const reportMonthStats = ref<ReportMetrics>(emptyMetrics());
+const reportPeriod = ref<"current" | "previous" | "all">("current");
+const reportPeriodOptions = [
+  { label: "الشهر الحالي", value: "current" },
+  { label: "الشهر السابق", value: "previous" },
+  { label: "كل الفترات", value: "all" },
+];
+const reportLoaded = ref(false);
+const reportError = ref(false);
+const summaryError = ref(false);
+const reportReady = computed(() => statsReady.value && (reportPeriod.value === "all" || reportLoaded.value) && !reportError.value);
+const reportStats = computed(() => reportPeriod.value === "all" ? stats.value : reportMonthStats.value);
+const netSales = computed(() => round2(reportStats.value.sales - reportStats.value.returns));
 const receivablesInvoices = ref(0);
 const receivablesLoans = ref(0);
+const receivablesSupplierAdvances = ref(0);
 const payablesTotal = ref(0);
 const unlinkedPayables = ref(0);
-const liveReady = reactive({ debts: false, loans: false, payables: false });
-const summariesReady = computed(() => liveReady.debts && liveReady.loans && liveReady.payables);
-const receivablesTotal = computed(() => round2(receivablesInvoices.value + receivablesLoans.value));
-const hypotheticalSettlement = computed(() => round2(cashbox.balance + receivablesTotal.value - payablesTotal.value));
-const registeredNetAssets = computed(() => round2(cashbox.balance + agg.value.costValue + receivablesTotal.value - payablesTotal.value));
-const payablesCoverage = computed(() => {
-  if (!(payablesTotal.value > 0)) return "—";
-  if (!(cashbox.balance > 0)) return "0%";
-  return `${Math.round((cashbox.balance / payablesTotal.value) * 100)}%`;
+const liveReady = reactive({ debts: false, loans: false, payables: false, advances: false });
+const summariesReady = computed(() => !summaryError.value && liveReady.debts && liveReady.loans && liveReady.payables && liveReady.advances);
+const receivablesTotal = computed(() => round2(receivablesInvoices.value + receivablesLoans.value + receivablesSupplierAdvances.value));
+const cashGap = computed(() => round2(cashbox.balance - payablesTotal.value));
+const collectionGap = computed(() => round2(cashGap.value + receivablesTotal.value));
+const businessHealth = computed<{ color: "error" | "warning" | "success" | "info"; title: string; description: string } | null>(() => {
+  if (!reportReady.value || !summariesReady.value) return null;
+  const profit = reportStats.value.profit;
+  const expenseNote = "المؤشر يعرض مجمل ربح البضاعة فقط؛ لا يشمل مصروفات التشغيل أو احتمال تعثر التحصيل.";
+  if (profit < 0) return { color: "error", title: "المبيعات حققت خسارة إجمالية في الفترة", description: `خسارة البضاعة ${formatePrice(-profit)} ج. ${expenseNote}` };
+  if (collectionGap.value < 0) return { color: "error", title: "التزامات الموردين تتجاوز النقد والمستحق لنا", description: `العجز ${formatePrice(-collectionGap.value)} ج حتى بافتراض تحصيل المستحقات بالكامل. ${expenseNote}` };
+  if (cashGap.value < 0) return { color: "warning", title: "السيولة الحالية لا تكفي لسداد الموردين", description: `يلزم تحصيل ${formatePrice(-cashGap.value)} ج أو أكثر لتغطية المستحق للموردين. ${expenseNote}` };
+  if (netSales.value <= 0) return { color: "info", title: "لا توجد مبيعات كافية للحكم على أداء الفترة", description: expenseNote };
+  if (profit > 0) return { color: "success", title: "ربح بضاعة موجب والسيولة تغطي الموردين", description: `مجمل الربح ${formatePrice(profit)} ج خلال الفترة المختارة. ${expenseNote}` };
+  return { color: "info", title: "المبيعات لا تحقق ربحًا إجماليًا في الفترة", description: expenseNote };
 });
 const inventoryValuationNote = computed(() => {
   const missing = products.list.filter((p) => p.stock_quantity === null || p.stock_quantity === undefined || p.cost_price === null || p.cost_price === undefined).length;
   return missing > 0 ? `${missing} صنف ببيانات ناقصة — التقييم غير مكتمل` : "";
+});
+const forecastNote = computed(() => {
+  const missing = products.activeProducts.filter((p) => toNum(p.stock_quantity) > 0 && (p.price === null || p.price === undefined || p.cost_price === null || p.cost_price === undefined)).length;
+  return missing ? `${missing} صنف بلا سعر أو تكلفة؛ التوقع غير مكتمل` : "";
 });
 const shortagesOpen = ref(false);
 const shortageAlert = computed(() => {
@@ -1233,30 +1256,55 @@ let unsubStats: Unsubscribe | null = null;
 let unsubDebts: Unsubscribe | null = null;
 let unsubLoans: Unsubscribe | null = null;
 let unsubPayables: Unsubscribe | null = null;
+let unsubAdvances: Unsubscribe | null = null;
+let unsubReport: Unsubscribe | null = null;
+let reportsActive = false;
+function reportMonthKey(period: "current" | "previous"): string {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "Africa/Cairo", year: "numeric", month: "2-digit" }).formatToParts(new Date());
+  const year = Number(parts.find((part) => part.type === "year")?.value);
+  const month = Number(parts.find((part) => part.type === "month")?.value);
+  return period === "current" ? `${year}-${String(month).padStart(2, "0")}` : new Date(Date.UTC(year, month - 2, 1)).toISOString().slice(0, 7);
+}
+function subscribeReportPeriod(): void {
+  unsubReport?.();
+  unsubReport = null;
+  reportError.value = false;
+  reportLoaded.value = reportPeriod.value === "all";
+  if (!reportsActive || reportPeriod.value === "all") return;
+  unsubReport = onSnapshot(doc(db, "invoice_stats_monthly", reportMonthKey(reportPeriod.value)),
+    (snap) => { reportMonthStats.value = metricsFrom(snap.data()); reportLoaded.value = true; },
+    () => { reportError.value = true; });
+}
+watch(reportPeriod, subscribeReportPeriod);
 function unsubscribeSummaries(): void {
   unsubStats?.(); unsubStats = null;
   unsubDebts?.(); unsubDebts = null;
   unsubLoans?.(); unsubLoans = null;
   unsubPayables?.(); unsubPayables = null;
+  unsubAdvances?.(); unsubAdvances = null;
+  unsubReport?.(); unsubReport = null;
 }
 function subscribeSummaries(): void {
   if (!import.meta.client) return;
   unsubscribeSummaries();
+  reportsActive = true;
+  summaryError.value = false;
+  reportError.value = false;
+  liveReady.debts = false;
+  liveReady.loans = false;
+  liveReady.payables = false;
+  liveReady.advances = false;
+  subscribeReportPeriod();
   unsubStats = onSnapshot(doc(db, "store_stats", "current"),
     (snap) => {
       const data = snap.exists() ? snap.data() : null;
       statsReady.value = data?.initialized === true;
       if (statsReady.value && data) {
-        stats.value = {
-          sales: round2(toNum(data.total_sales)),
-          profits: round2(toNum(data.total_profit)),
-          invoices: Math.max(0, Math.floor(toNum(data.invoice_count))),
-          customers: Math.max(0, Math.floor(toNum(data.customer_count))),
-        };
+        stats.value = metricsFrom(data);
       }
       statsLoading.value = false;
     },
-    () => { statsLoading.value = false; });
+    () => { reportError.value = true; statsLoading.value = false; });
   unsubDebts = onSnapshot(query(collection(db, "invoice_debt_summaries"), where("remaining", ">", 0)),
     (snap) => {
       let sum = 0;
@@ -1264,7 +1312,7 @@ function subscribeSummaries(): void {
       receivablesInvoices.value = sum;
       liveReady.debts = true;
     },
-    () => { liveReady.debts = true; });
+    () => { summaryError.value = true; });
   unsubLoans = onSnapshot(query(collection(db, "customer_loans"), where("remaining", ">", 0)),
     (snap) => {
       let sum = 0;
@@ -1272,7 +1320,7 @@ function subscribeSummaries(): void {
       receivablesLoans.value = sum;
       liveReady.loans = true;
     },
-    () => { liveReady.loans = true; });
+    () => { summaryError.value = true; });
   unsubPayables = onSnapshot(query(collection(db, "purchase_invoices"), where("remaining_amount", ">", 0)),
     (snap) => {
       let sum = 0;
@@ -1287,7 +1335,13 @@ function subscribeSummaries(): void {
       unlinkedPayables.value = unlinked;
       liveReady.payables = true;
     },
-    () => { liveReady.payables = true; });
+    () => { summaryError.value = true; });
+  unsubAdvances = onSnapshot(query(collection(db, "supplier_advances"), where("remaining_amount", ">", 0)),
+    (snap) => {
+      receivablesSupplierAdvances.value = round2(snap.docs.reduce((sum, item) => sum + toNum(item.data().remaining_amount), 0));
+      liveReady.advances = true;
+    },
+    () => { summaryError.value = true; });
 }
 
 function cairoOffsetMs(at: Date): number {
@@ -1320,24 +1374,30 @@ const periodStart = computed<Date | null>(() => {
   return customFrom.value ? cairoDayStart(customFrom.value) : null;
 });
 const periodLoading = ref(false);
+const periodError = ref(false);
 const periodTxns = ref<CashTransaction[]>([]);
 const periodTruncated = ref(false);
+let periodRequest = 0;
 async function reloadPeriodSummary(): Promise<void> {
+  const request = ++periodRequest;
   const start = periodStart.value;
   periodTxns.value = [];
   periodTruncated.value = false;
-  if (!start) return;
+  periodError.value = false;
+  if (!start) { periodLoading.value = false; return; }
   periodLoading.value = true;
   try {
     let q = query(collection(db, "cash_transactions"), where("created_at", ">=", Timestamp.fromDate(start)));
     if (typeFilter.value) q = query(q, where("type", "==", typeFilter.value));
     const snap = await getDocs(query(q, orderBy("created_at", "desc"), fsLimit(2000)));
+    if (request !== periodRequest) return;
     periodTxns.value = snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) }) as CashTransaction);
     periodTruncated.value = snap.size >= 2000;
   } catch (e) {
     console.error(e);
+    if (request === periodRequest) periodError.value = true;
   } finally {
-    periodLoading.value = false;
+    if (request === periodRequest) periodLoading.value = false;
   }
 }
 const periodIsFiltered = computed(() => typeFilter.value !== null && typeFilter.value !== undefined);
@@ -1689,6 +1749,7 @@ async function doAdjust(
 }
 
 async function doOpening(): Promise<void> {
+  if (openingBusy.value) return;
   const raw = openingAmount.value;
   if (raw === undefined || raw === null || !Number.isFinite(Number(raw)) || Number(raw) < 0) {
     notify("أدخل الرصيد الافتتاحي (صفر مسموح به).", "error");
@@ -1696,22 +1757,34 @@ async function doOpening(): Promise<void> {
   }
   const v = round2(raw);
   openingBusy.value = true;
+  openingProgress.value = "جاري تهيئة تقارير الفواتير…";
   try {
+    await migration.backfillPerformanceSummaries((done, total) => {
+      openingProgress.value = total ? `جاري تهيئة التقارير (${done}/${total})…` : "جاري تهيئة تقارير الفواتير…";
+    });
+    openingProgress.value = "جاري حفظ الرصيد الافتتاحي…";
     const res = await cashbox.ensureOpeningBalance(
       v,
       openingNote.value.trim() || null,
     );
     if (!res.ok) {
+      openingProgress.value = "اكتملت التقارير، لكن تعذر حفظ الرصيد الافتتاحي. أعد المحاولة.";
       notify(res.error, "error");
       return;
     }
-    notify("تم تهيئة الخزنة بالرصيد الافتتاحي.", "success");
+    openingProgress.value = "";
+    notify("تم تهيئة الخزنة وتقارير الفواتير.", "success");
+  } catch (error) {
+    console.error("Opening cashbox and reports failed:", error);
+    openingProgress.value = "تعذرت التهيئة. لم يُحفظ الرصيد الافتتاحي؛ أعد المحاولة.";
+    notify("تعذرت تهيئة التقارير والخزنة. أعد المحاولة.", "error");
   } finally {
     openingBusy.value = false;
   }
 }
 
 onUnmounted(() => {
+  reportsActive = false;
   stopLiveTxns();
   unsubscribeSummaries();
 });

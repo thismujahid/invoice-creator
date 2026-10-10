@@ -20,7 +20,8 @@ export type CashTransactionType =
   | "inventory_purchase"
   | "inventory_adjustment"
   | "supplier_return"
-  | "supplier_payment";
+  | "supplier_payment"
+  | "supplier_advance_refund";
 
 export type CashDirection = "in" | "out";
 
@@ -58,6 +59,7 @@ export const CASH_TYPE_LABELS: Record<CashTransactionType, string> = {
   inventory_adjustment: "تسوية مخزون",
   supplier_return: "استرجاع منتجات للمورد",
   supplier_payment: "سداد مورد",
+  supplier_advance_refund: "استرداد سلفة مورد",
 };
 
 // ---------- Inventory ----------
@@ -124,8 +126,19 @@ export interface PurchaseInvoice {
   remaining_amount: number;
   status?: SupplierInvoiceStatus;
   payment_ids?: string[];
+  advance_amount?: number;
   note?: string | null;
   created_by?: string | null;
+  created_at?: Timestamp | unknown;
+}
+
+export interface SupplierAdvance {
+  id?: string;
+  supplier_id: string;
+  supplier_name: string;
+  purchase_invoice_id: string;
+  amount: number;
+  remaining_amount: number;
   created_at?: Timestamp | unknown;
 }
 
@@ -167,6 +180,8 @@ export interface SupplierPayment {
   id?: string;
   purchase_invoice_id: string;
   amount: number;
+  cash_amount?: number;
+  advance_amount?: number;
   note?: string | null;
   created_by?: string | null;
   created_at?: Timestamp | unknown;

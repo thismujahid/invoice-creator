@@ -1,4 +1,6 @@
 <template>
+  <CashierSale v-if="authStore.role === 'cashier'" />
+  <template v-else-if="authStore.role === 'admin'">
   <div class="invoice-creator-view" id="editor-area">
     <div class="flex flex-col gap-4">
       <UCard variant="outline" class="w-full">
@@ -118,7 +120,7 @@
                   {{ form.product_name ? formatInvoiceLineName(form.product_name, form.unit_name, form.option) : "—" }}
                 </div>
                 <div class="mt-0.5 text-[11px] text-gray-400">
-                  المتاح بالمخزون: {{ stockOf(form) }} {{ form.unit_name || "وحدة أساسية" }}
+                  المتاح بالمخزون: {{ stockLabelOf(form) }}
                 </div>
                 <div
                   class="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-gray-500"
@@ -548,6 +550,8 @@
       @close="previewOpen = false"
     />
   </UiAppDialog>
+  </template>
+  <UiAppTableSkeleton v-else />
 </template>
 <script setup lang="ts">
 import type { Customer, Invoice, InvoiceProductLine, Product } from "~/types";
@@ -556,7 +560,7 @@ import type { ProductUnit } from "~/types";
 
 definePageMeta({ title: "إنشاء فاتورة" });
 const { formatePrice, calcTotal, formatInvoiceLineName } = useHelpers();
-const { unitsForProduct, unitSellingPrice, lineBaseQuantity, normalizePhone, round2 } = useFinance();
+const { unitsForProduct, unitSellingPrice, lineBaseQuantity, normalizePhone, round2, stockQuantityLabel } = useFinance();
 const products = useProductsStore();
 const lowStockCount = computed(() => products.lowStockCount + products.outOfStockProducts.length);
 const invoices = useInvoicesStore();
@@ -966,6 +970,10 @@ function stockOf(form: InvoiceProductLine): number {
     (products.list.find((p) => p.id === form.product_id)?.stock_quantity ?? 0) / Number(form.unit_factor || 1)
   );
 }
+function stockLabelOf(form: InvoiceProductLine): string {
+  const product = products.list.find((item) => item.id === form.product_id);
+  return product ? stockQuantityLabel(product) : "—";
+}
 const needByProduct = computed(() => {
   const need = new Map<string, number>();
   for (const line of invoiceData.value.products) {
@@ -1190,7 +1198,12 @@ onMounted(async () => {
     loadingProds.value = false;
     return; // layout redirects to /login
   }
-  products.ensureInventorySubscription();
+  if (authStore.role === "cashier") {
+    loadingCustomers.value = false;
+    loadingProds.value = false;
+    return;
+  }
+  if (authStore.role === "admin") products.ensureInventorySubscription();
   if (invoices.invoiceToEdit) {
     // HOME delta: don't let the autosync overwrite a stored paid_amount.
     blockUpdatePaidAmount.value = true;

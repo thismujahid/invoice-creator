@@ -1,3 +1,4 @@
+import { defineStore } from "pinia";
 import { collection, doc, onSnapshot, type Unsubscribe } from "firebase/firestore";
 import type { Product } from "~/types";
 import { isLowStock, isNegativeStock, isOutOfStock, round2, toNum } from "~/composables/finance";
@@ -43,6 +44,7 @@ export const useProductsStore = defineStore("products", () => {
 
   function ensureInventorySubscription(): void {
     if (!import.meta.client) return;
+    if (authStore.role === "cashier") return;
     const uid = useFirebase().auth.currentUser?.uid ?? null;
     if (!uid) return;
     if (inventoryUnsub) {
@@ -109,6 +111,24 @@ export const useProductsStore = defineStore("products", () => {
   }
 
   const fetchProducts = async (filters?: Record<string, string | number | boolean | Date | null | undefined>, force = false): Promise<boolean> => {
+    if (authStore.role === "cashier") {
+      if (!force && loaded.value && Date.now() - lastFetchedAt.value < 15_000) return true;
+      inventorySyncState.value = "loading";
+      try {
+        const response = await callStaff<Record<string, never>, { items: Product[] }>("getCashierCatalog", {});
+        list.value = response.items.map((product) => ({ ...product, cost_price: null }));
+        loaded.value = true;
+        inventoryReady.value = true;
+        lastFetchedAt.value = Date.now();
+        inventorySyncState.value = "live";
+        syncError.value = null;
+        return true;
+      } catch (error) {
+        syncError.value = error instanceof Error ? error.message : "تعذر تحميل المنتجات";
+        inventorySyncState.value = "error";
+        throw error;
+      }
+    }
     const filtered = !!filters && Object.values(filters).some((value) => value !== undefined && value !== null && value !== "");
     if (filtered) return true;
     if (inventoryUnsub) return true;
@@ -125,7 +145,7 @@ export const useProductsStore = defineStore("products", () => {
 
   const addProduct = async (product: Omit<Product, "id">) => {
     const ref = await saveDataTo("products", product as Record<string, unknown>);
-    if (ref) list.value.push({ ...product, id: ref.id });
+    if (ref) upsertCached({ ...product, id: ref.id });
     return ref;
   };
 

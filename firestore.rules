@@ -1,12 +1,21 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Email-based admin authorization is intentional for the current single-admin deployment.
-    // Migrate to Firebase Custom Claims if multi-role Firebase users are added later.
-    // Deploy with: firebase deploy --only firestore:rules
     function signedIn() { return request.auth != null; }
-    function isAdmin() { return signedIn() && request.auth.token.email == 'mohamed.mojahead@gmail.com'; }
+    function isAdminIdentity() { return signedIn() && request.auth.token.email == 'mohamed.mojahead@gmail.com'; }
+    function resetRunning() {
+      return exists(/databases/$(database)/documents/system_jobs/factory_reset)
+        && get(/databases/$(database)/documents/system_jobs/factory_reset).data.status == 'running';
+    }
+    function isAdmin() { return isAdminIdentity() && !resetRunning(); }
     function isStaff() { return isAdmin(); }
+    function isCashier() {
+      return signedIn() && !resetRunning()
+        && exists(/databases/$(database)/documents/staff_users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/staff_users/$(request.auth.uid)).data.role == 'cashier'
+        && get(/databases/$(database)/documents/staff_users/$(request.auth.uid)).data.active == true
+        && get(/databases/$(database)/documents/staff_users/$(request.auth.uid)).data.email == request.auth.token.email;
+    }
 
     // Invoice invariants enforceable in Rules (client transaction code owns
     // the full accounting orchestration — multi-document atomicity such as
@@ -182,7 +191,7 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
     match /customers/{id} {
-      allow read: if isStaff();
+      allow read: if isStaff() || isCashier();
       allow create, update: if isStaff();
       allow delete: if isAdmin();
     }
@@ -291,6 +300,20 @@ service cloud.firestore {
       allow read: if isStaff();
       allow create: if isStaff() && validSupplierPaymentRecord(id);
       allow update, delete: if isAdmin();
+    }
+    match /supplier_advances/{id} {
+      allow read, create, update, delete: if isAdmin();
+    }
+    match /supplier_advance_transactions/{id} {
+      allow read, create, update, delete: if isAdmin();
+    }
+    match /system_jobs/{id} {
+      allow read: if isAdminIdentity() && id == 'factory_reset';
+      allow write: if false;
+    }
+    match /staff_users/{id} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == id);
+      allow write: if false;
     }
     match /{document=**} {
       allow read, write: if false;
