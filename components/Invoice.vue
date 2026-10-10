@@ -60,6 +60,15 @@
             <strong>الإجمالي {{ invoiceData.discount ? "النهائي" : "" }}/</strong>
             <span>{{ formatePrice(calcTotal(invoiceData) - discountAmount) }}</span>
           </div>
+          <!-- paid / remaining rows: 0 is a valid financial value, never hide it. -->
+          <div v-if="invoiceData.paid_amount !== null && invoiceData.paid_amount !== undefined">
+            <strong>المدفوع/</strong>
+            <span>{{ formatePrice(invoiceData.paid_amount) }}</span>
+          </div>
+          <div v-if="invoiceData.paid_amount !== null && invoiceData.paid_amount !== undefined">
+            <strong>المتبقي/</strong>
+            <span>{{ formatePrice((calcTotal(invoiceData) - discountAmount) - Number(invoiceData.paid_amount ?? 0)) }}</span>
+          </div>
         </div>
       </div>
       <div class="no-print mt-3 flex gap-2 pb-1">
@@ -118,7 +127,7 @@ const props = defineProps<{
   viewMode?: boolean;
   isForAdmin?: boolean;
 }>();
-const { formatDate, calcTotal, formatTime12Hour, formatePrice, useDownloadPDF } = useHelpers();
+const { formatDate, calcTotal, formatTime12Hour, formatePrice, useDownloadPDF, formatInvoiceLineName } = useHelpers();
 const { notify } = useAppToast();
 const printing = ref(false);
 const { saveDataTo, updateItem } = useFirebase();
@@ -133,7 +142,7 @@ const mappedProducts = computed(() => {
     else if (prod.product_quantity === 0.75) quantity = "3/4";
     return {
       عدد: quantity,
-      البيان: (prod.product_name || "") + (prod.option ? ` (${prod.option})` : ""),
+      البيان: formatInvoiceLineName(prod.product_name, prod.unit_name, prod.option),
       تصحيح: "",
       "سعر الوحدة": formatePrice(prod.product_price || 0),
       الإجمالي: formatePrice(calcTotalOfForm(prod)),
@@ -175,10 +184,22 @@ async function startPrint(saveOnly?: boolean) {
   }
   const _time = resolveTime(props.invoiceData.date, props.invoiceData.time);
   void _time;
-  if (isAdmin.value && !costConfirmed.value) {
-    const belowCost = lines.some(
-      (element) => Number(element.product_price) < Number(element.product_cost_price)
-    );
+  if (!costConfirmed.value) {
+    // Same-unit comparison: selected-unit price vs derived selected-unit
+    // average (base average × factor). Never compare against base cost directly.
+    const belowCost = lines.some((element) => {
+      const factor = Number(element.unit_factor) > 0 ? Number(element.unit_factor) : 1;
+      const baseCost = Number(element.product_cost_price);
+      if (!Number.isFinite(baseCost)) return false;
+      // product_cost_price on the form may already be a selected-unit average
+      // for legacy lines; prefer cost_groups/base snapshot when available.
+      const historicalBase = Array.isArray(element.cost_groups) && element.cost_groups.length
+        ? element.cost_groups.reduce((s, g) => s + Number(g.base_quantity) * Number(g.unit_cost), 0) /
+          Math.max(1e-9, element.cost_groups.reduce((s, g) => s + Number(g.base_quantity), 0))
+        : Number(element.base_cost_snapshot ?? element.product_cost_price);
+      const avgForUnit = Number.isFinite(historicalBase) ? historicalBase * factor : baseCost;
+      return Number(element.product_price) - avgForUnit < -1e-9;
+    });
     if (belowCost) {
       pendingSaveOnly.value = saveOnly;
       costConfirmOpen.value = true;
@@ -203,12 +224,29 @@ async function doSave(saveOnly?: boolean) {
     void _order;
     // Persist only filled lines — drop empty drafts.
     const filled = (props.invoiceData.products ?? []).filter((l) => l.product_id);
-    const payload = { ...data, products: filled } as Record<string, unknown>;
+    // HOME delta: persist computed remaining (debts feature).
+    const remaining = (calcTotal(props.invoiceData) - discountAmount.value) - Number(props.invoiceData.paid_amount || 0);
+    const payload = { ...data, products: filled, remaining } as Omit<Invoice, "id">;
     if (id) {
-      await updateItem("invoices", id, payload);
+      // Atomic edit: stock + paid deltas with corrective logs (F10).
+      const invoicesStore = useInvoicesStore();
+      const res = await invoicesStore.updateInvoiceWithAccounting(id, payload);
+      if (!res.ok) {
+        printing.value = false;
+        notify(res.error, "error");
+        return;
+      }
+      emit("saved", id);
     } else {
-      const response = (await saveDataTo("invoices", payload)) as { id?: string } | null;
-      if (response?.id) emit("saved", response.id);
+      // Atomic create: invoice + stock + inventory logs + cashbox (F9).
+      const invoicesStore = useInvoicesStore();
+      const res = await invoicesStore.createInvoiceWithAccounting(payload);
+      if (!res.ok) {
+        printing.value = false;
+        notify(res.error, "error");
+        return;
+      }
+      emit("saved", res.id);
     }
   }
   if (!saveOnly) {
@@ -231,18 +269,9 @@ const discountAmount = computed(() => {
   }
   return Number(props.invoiceData.discount || 0);
 });
-function handleCtrlPlusS(e: KeyboardEvent) {
-  if (e && e.ctrlKey && e.code === "KeyS") {
-    e.preventDefault();
-    void startPrint(true);
-  }
-}
-onMounted(() => {
-  window.addEventListener("keydown", handleCtrlPlusS);
-});
-onUnmounted(() => {
-  window.removeEventListener("keydown", handleCtrlPlusS);
-});
+// Ctrl+S lives on the host page (pages/index.vue) so hidden + preview
+// instances never double-fire.
+defineExpose({ startPrint });
 </script>
 
 <style scoped>

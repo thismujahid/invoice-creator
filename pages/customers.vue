@@ -3,14 +3,7 @@
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
       <h2 class="text-lg font-bold text-gray-900">العملاء</h2>
       <div class="flex flex-wrap gap-2">
-        <UButton
-          v-if="isAdmin"
-          icon="i-lucide-download"
-          color="neutral"
-          variant="soft"
-          @click="exportToExcel"
-          >تصدير العملاء</UButton
-        >
+        <!-- HOME delta: no customers export (as in home branch). -->
         <FormsCustomer
           v-model="customerFormState"
           :edit="customerForm"
@@ -29,7 +22,7 @@
       size="lg"
       class="mb-3 w-full sm:max-w-xs"
       />
-    <USkeleton v-if="loading" class="h-24 w-full" />
+    <UiAppTableSkeleton v-if="loading" />
     <template v-else>
       <!-- Desktop table -->
       <div class="hidden overflow-x-auto md:block">
@@ -38,6 +31,8 @@
             <tr class="border-b border-gray-200 text-gray-500">
               <th class="p-2 text-start font-medium">الأسم</th>
               <th class="p-2 text-start font-medium">الهاتف</th>
+              <th class="p-2 text-start font-medium">الفواتير</th>
+              <th class="p-2 text-start font-medium">الدين الحالي</th>
               <th class="p-2 text-start font-medium">الأدوات</th>
             </tr>
           </thead>
@@ -49,6 +44,8 @@
             >
               <td class="p-2 font-medium">{{ c.name }}</td>
               <td class="p-2 text-gray-600" dir="ltr">{{ c.phone }}</td>
+              <td class="p-2"><UButton v-if="c.invoiceCount !== null" color="primary" variant="link" class="p-0" @click="goInvoices(c)">{{ c.invoiceCount }} فواتير</UButton><span v-else class="text-xs text-gray-400">يحتاج تهيئة الملخص</span></td>
+              <td class="p-2"><UButton v-if="c.debt !== null && c.debt > 0" color="error" variant="link" class="p-0" @click="goDebt(c)">{{ formatePrice(c.debt) }} ج</UButton><span v-else-if="c.debt === 0" class="text-xs text-gray-400">لا يوجد دين مستحق</span><span v-else class="text-xs text-gray-400">يحتاج تهيئة الملخص</span></td>
               <td class="p-2">
                 <div class="flex gap-2">
                   <UButton
@@ -61,7 +58,6 @@
                     class="flex items-center justify-center"
                     />
                   <UButton
-                    v-if="isAdmin"
                     icon="i-lucide-trash-2"
                     color="error"
                     variant="soft"
@@ -92,6 +88,7 @@
             <div class="min-w-0">
               <div class="truncate font-bold">{{ c.name }}</div>
               <div class="text-sm text-gray-500" dir="ltr">{{ c.phone }}</div>
+              <div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs"><UButton v-if="c.invoiceCount !== null" color="primary" variant="link" class="p-0" @click="goInvoices(c)">{{ c.invoiceCount }} فواتير</UButton><span v-else class="text-gray-400">ملخص الفواتير يحتاج تهيئة</span><UButton v-if="c.debt !== null && c.debt > 0" color="error" variant="link" class="p-0" @click="goDebt(c)">{{ formatePrice(c.debt) }} ج مستحق</UButton><span v-else-if="c.debt === 0" class="text-gray-400">لا يوجد دين مستحق</span></div>
             </div>
             <div class="flex shrink-0 gap-2">
               <UButton
@@ -104,7 +101,6 @@
                 class="flex items-center justify-center"
                 />
               <UButton
-                v-if="isAdmin"
                 icon="i-lucide-trash-2"
                 color="error"
                 variant="soft"
@@ -167,24 +163,11 @@
 </template>
 
 <script setup lang="ts">
-import * as XLSX from "xlsx";
 import type { Customer } from "~/types";
+import { collection, getDocs } from "firebase/firestore";
+import { normalizeName, normalizePhone } from "~/composables/finance";
 
 definePageMeta({ title: "العملاء" });
-function exportToExcel(): void {
-  const headers = ["name", "phone"] as const;
-  const orderedData = customersStore.list.map((item) => {
-    const obj: Record<string, unknown> = {};
-    headers.forEach((h) => (obj[h] = item[h] ?? ""));
-    return obj;
-  });
-  const finalSheet = XLSX.utils.json_to_sheet(orderedData, {
-    header: [...headers],
-  });
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, finalSheet, "Sheet1");
-  XLSX.writeFile(workbook, "العملاء.xlsx");
-}
 const customerFormState = ref(false);
 const customersStore = useCustomersStore();
 const searchText = ref<string>("");
@@ -192,8 +175,10 @@ const customerForm = ref<Customer>({ name: "", phone: null });
 const currentPage = ref(1);
 const currentPerPage = ref(10);
 const saving = ref(false);
-const loading = ref(false);
+const loading = ref(true);
 const deleting = ref(false);
+const summaries = ref<Record<string, { invoiceCount: number; debt: number; initialized: boolean }>>({});
+const { formatePrice } = useHelpers();
 
 // FLAG [B4-FIXED]: watcher instead of side-effect in computed.
 watch(searchText, () => {
@@ -216,6 +201,8 @@ const paginateArray = computed(() => {
       id: customer.id,
       name: customer.name,
       phone: customer.phone,
+      invoiceCount: summaries.value[customer.id || legacyCustomerKey(customer)]?.initialized ? summaries.value[customer.id || legacyCustomerKey(customer)]!.invoiceCount : null,
+      debt: summaries.value[customer.id || legacyCustomerKey(customer)]?.initialized ? summaries.value[customer.id || legacyCustomerKey(customer)]!.debt : null,
     }));
 });
 async function saveProduct(isActive: { value: boolean }) {
@@ -226,9 +213,14 @@ async function saveProduct(isActive: { value: boolean }) {
         ...customerForm.value,
       });
     } else {
-      await customersStore.addCustomer({ ...customerForm.value });
+      const created = await customersStore.addCustomer({ ...customerForm.value });
+      if (created?.id) {
+        summaries.value = {
+          ...summaries.value,
+          [created.id]: { invoiceCount: 0, debt: 0, initialized: true },
+        };
+      }
     }
-    await loadCustomers();
     customerForm.value = { name: "", phone: null };
     isActive.value = false;
   } finally {
@@ -238,11 +230,30 @@ async function saveProduct(isActive: { value: boolean }) {
 async function loadCustomers(): Promise<void> {
   loading.value = true;
   try {
-    await customersStore.fetchCustomers();
+    const { db } = useFirebase();
+    const [_, snapshot] = await Promise.all([customersStore.fetchCustomers(), getDocs(collection(db, "customer_summaries"))]);
+    const totals: Record<string, { invoiceCount: number; debt: number; initialized: boolean }> = {};
+    for (const item of snapshot.docs) {
+      const data = item.data();
+      if (data.initialized !== true) continue;
+      let key = typeof data.customer_id === "string" && data.customer_id ? data.customer_id : "";
+      if (!key) {
+        const matchingCustomers = customersStore.list.filter((customer) => normalizeName(customer.name) === normalizeName(data.customer_name) && normalizePhone(customer.phone) === normalizePhone(data.customer_phone));
+        if (matchingCustomers.length === 1) key = matchingCustomers[0]?.id || "";
+      }
+      if (!key) continue;
+      const aggregate = totals[key] ??= { invoiceCount: 0, debt: 0, initialized: true };
+      aggregate.invoiceCount += Math.max(0, Number(data.invoice_count) || 0);
+      aggregate.debt += Math.max(0, Number(data.outstanding_debt) || 0);
+    }
+    summaries.value = totals;
   } finally {
     loading.value = false;
   }
 }
+function legacyCustomerKey(customer: Customer): string { return `legacy:${normalizeName(customer.name)}|${normalizePhone(customer.phone)}`; }
+function goInvoices(customer: Customer): void { navigateTo({ path: "/invoices", query: { customer_id: customer.id || "", customer_name: customer.name, customer_phone: String(customer.phone ?? "") } }); }
+function goDebt(customer: Customer): void { navigateTo({ path: "/debts", query: { customer_id: customer.id || "", customer_name: customer.name, customer_phone: String(customer.phone ?? "") } }); }
 function editCustomer(customer: Customer): void {
   customerForm.value = { ...customer };
   customerFormState.value = true;
@@ -259,12 +270,23 @@ async function deleteConfirmed(): Promise<void> {
   if (!id) return;
   deleting.value = true;
   try {
-    await customersStore.deleteCustomer(id);
-    await loadCustomers();
+    const deleted = await customersStore.deleteCustomer(id);
+    if (deleted) {
+      const nextSummaries = { ...summaries.value };
+      delete nextSummaries[id];
+      summaries.value = nextSummaries;
+    }
   } finally {
     deleting.value = false;
     confirmDelete.value = null;
   }
 }
-void loadCustomers();
+onMounted(async () => {
+  const authed = await useAuthReady();
+  if (!authed) {
+    loading.value = false;
+    return; // layout redirects to /login
+  }
+  await loadCustomers();
+});
 </script>

@@ -1,111 +1,185 @@
 <template>
-  <!-- Shell: fixed vertical icon rail on the far right (RTL start) is the
-       ONLY navigation — no drawer, no hamburger, no bottom tab-bar. -->
-  <div id="app-shell" class="flex min-h-dvh flex-col bg-gray-50" dir="rtl">
-    <!-- Top bar -->
-    <header
-      class="sticky top-0 z-40 border-b border-gray-200 bg-white/90 backdrop-blur"
-    >
-      <div
-        class="mx-auto flex h-14 w-full max-w-6xl items-center gap-2 px-3 sm:px-4"
+  <!-- The page outlet below is intentionally unconditional: pages mount
+    immediately and render their own skeletons while auth/data load, so the
+    router integration never sees a missing <NuxtPage /> (NUXT_E4011). -->
+  <div>
+    <div id="printableArea" class="printable-area"></div>
+    <div id="app-shell" class="flex min-h-dvh flex-col bg-gray-50" dir="rtl">
+      <!-- Top bar -->
+      <header
+        class="sticky top-0 z-40 border-b border-gray-200 bg-white/90 backdrop-blur"
       >
-        <h1 class="min-w-0 flex-1 truncate text-base font-bold text-gray-900">
-          منشئ الفواتير
-          <span v-if="currentPageTitle" class="font-normal text-gray-500"
-            >| {{ currentPageTitle }}</span
-          >
-        </h1>
-        <span class="hidden shrink-0 text-xs text-gray-400 md:block">{{
-          todayLine
-        }}</span>
-        <UDropdownMenu :items="userMenu">
-          <div
-            class="flex shrink-0 cursor-pointer items-center gap-2 rounded-full py-1 pe-1 ps-1"
-          >
-            <UAvatar
-              :text="userDetails.avatar_text"
-              color="success"
-              size="md"
-            />
-            <div class="hidden leading-tight sm:block">
-              <div class="text-sm font-semibold">{{ userDetails.name }}</div>
-              <div class="text-xs text-gray-500">
-                {{ userDetails.position }}
+        <div
+          class="mx-auto flex h-14 w-full max-w-6xl items-center gap-2 px-3 sm:px-4"
+        >
+          <h1 class="min-w-0 flex-1 truncate text-base font-bold text-gray-900">
+            قريتي
+            <span v-if="currentPageTitle" class="font-normal text-gray-500"
+              >| {{ currentPageTitle }}</span
+            >
+          </h1>
+          <span class="hidden shrink-0 text-xs text-gray-400 md:block">{{
+            todayLine
+          }}</span>
+          <UDropdownMenu v-if="!isLoginRoute && authStore.role" :items="userMenu">
+            <div
+              class="flex shrink-0 cursor-pointer items-center gap-2 rounded-full py-1 pe-1 ps-1"
+            >
+              <UAvatar
+                :text="userDetails.avatar_text"
+                color="success"
+                size="md"
+              />
+              <div class="hidden leading-tight sm:block">
+                <div class="text-sm font-semibold">{{ userDetails.name }}</div>
+                <div class="text-xs text-gray-500">
+                  {{ userDetails.position }}
+                </div>
               </div>
             </div>
-          </div>
-        </UDropdownMenu>
-      </div>
-    </header>
-
-    <!-- Body: fixed vertical nav rail (right in RTL) + page -->
-    <div
-      class="mx-auto flex w-full max-w-6xl min-w-0 flex-1 items-start gap-3 px-3 py-4 md:px-4"
-    >
-      <aside
-        class="fixed md:sticky z-20 inset-x-0 top-none md:top-18 bottom-0 md:bottom-none w-full p-2 flex-row flex md:w-32 shrink-0 md:flex-col items-center md:rounded-2xl border border-gray-200 bg-white py-3 shadow-sm"
-        aria-label="التنقل الرئيسي"
-      >
-        <UButton
-          v-for="item in tabItems"
-          :key="item.to"
-          :icon="item.icon"
-          :variant="isActiveTab(item.to) ? 'solid' : 'ghost'"
-          :color="isActiveTab(item.to) ? 'success' : 'neutral'"
-          :aria-label="item.label"
-          class="flex w-full flex-col md:flex-row items-center justify-start"
-          @click="navigateTo(item.to)"
-        >
-          {{ item.label }}</UButton
-        >
-      </aside>
-
-      <main class="min-w-0 flex-1">
-        <slot />
-      </main>
-    </div>
-
-    <footer class="border-t border-white/10 bg-neutral-950 py-1.5 text-center">
-      <p class="text-[11px] font-normal text-gray-400">
-        برمجة وتطوير:
-        <NuxtLink
-          target="_blank"
-          class="text-gray-300 no-underline hover:underline"
-          href="https://thismujahid.github.io"
-          >محمد إبراهيم مجاهد</NuxtLink
-        >
-        <span class="mx-1 text-gray-600">•</span>
-        جميع الحقوق محفوظة @ {{ new Date().getFullYear() }}
-      </p>
-    </footer>
-
-    <UiAppDialog v-model:open="logoutConfirm" title="هل أنت متأكد">
-      <p class="mb-4 text-gray-600">أنت علي وشك تسجيل الخروج وإغلاق التطبيق</p>
-      <template #footer>
-        <div class="flex w-full flex-col gap-2">
-          <UButton color="error" block :loading="loggingOut" @click="logout"
-            >تأكيد الإغلاق</UButton
-          >
-          <UButton
-            color="neutral"
-            variant="ghost"
-            block
-            @click="logoutConfirm = false"
-            >إلغاء</UButton
-          >
+          </UDropdownMenu>
         </div>
-      </template>
-    </UiAppDialog>
+      </header>
+
+      <!-- Body: desktop nav rail (right in RTL) + page -->
+      <div
+        class="mx-auto flex w-full max-w-6xl min-w-0 flex-1 items-start gap-3 px-3 py-4 md:px-4"
+      >
+        <aside
+          v-if="!isLoginRoute && authStore.role"
+          class="sticky top-18 bottom-none z-20 hidden w-38 shrink-0 flex-col items-center rounded-lg border border-gray-200 bg-white py-3 md:py-0 shadow-sm sm:flex"
+          aria-label="التنقل الرئيسي"
+        >
+          <UButton
+            v-for="item in tabItems"
+            :key="item.to"
+            :icon="item.icon"
+            :variant="isActiveTab(item.to) ? 'solid' : 'ghost'"
+            :color="isActiveTab(item.to) ? 'success' : 'neutral'"
+            :aria-label="item.label"
+            class="flex w-full flex-row items-center justify-start"
+            @click="navigateTo(item.to)"
+          >
+            {{ item.label }}</UButton
+          >
+        </aside>
+
+        <main class="min-w-0 flex-1">
+          <slot />
+        </main>
+      </div>
+
+      <footer
+        class="border-t border-white/10 bg-neutral-950 py-1.5 text-center"
+      >
+        <p class="text-[11px] font-normal text-gray-400">
+          برمجة وتطوير:
+          <NuxtLink
+            target="_blank"
+            class="text-gray-300 no-underline hover:underline"
+            href="https://mejo.dev"
+            >محمد إبراهيم مجاهد</NuxtLink
+          >
+        </p>
+      </footer>
+
+      <UiAppDialog v-model:open="logoutConfirm" title="هل أنت متأكد">
+        <p class="mb-4 text-gray-600">
+          أنت علي وشك تسجيل الخروج وإغلاق التطبيق
+        </p>
+        <template #footer>
+          <div class="flex w-full flex-col gap-2">
+            <UButton color="error" block :loading="loggingOut" @click="logout"
+              >تأكيد الإغلاق</UButton
+            >
+            <UButton
+              color="neutral"
+              variant="ghost"
+              block
+              @click="logoutConfirm = false"
+              >إلغاء</UButton
+            >
+          </div>
+        </template>
+      </UiAppDialog>
+
+      <nav
+        v-if="!isLoginRoute && authStore.role"
+        class="fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur sm:hidden"
+        aria-label="التنقل السريع"
+      >
+        <div
+          v-if="moreOpen && secondaryItems.length"
+          class="absolute inset-x-3 bottom-full mb-2 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg"
+        >
+          <button
+            v-for="item in secondaryItems"
+            :key="item.to"
+            class="flex w-full items-center gap-2 px-3 py-2.5 text-sm"
+            :class="
+              isActiveTab(item.to)
+                ? 'font-bold text-emerald-600'
+                : 'text-gray-700'
+            "
+            @click="goSecondary(item.to)"
+          >
+            <UIcon :name="item.icon" class="size-5 shrink-0" />
+            {{ item.label }}
+          </button>
+        </div>
+        <div class="grid grid-cols-4">
+          <button
+            v-for="item in primaryItems"
+            :key="item.to"
+            :aria-label="item.label"
+            :aria-current="isActiveTab(item.to) ? 'page' : undefined"
+            class="flex min-h-14 flex-col items-center justify-center gap-0.5 text-[11px] leading-none"
+            :class="
+              isActiveTab(item.to)
+                ? 'font-bold text-emerald-600'
+                : 'text-gray-500'
+            "
+            @click="navigateTo(item.to)"
+          >
+            <UIcon :name="item.icon" class="size-5" />
+            {{ item.label }}
+          </button>
+          <button
+            v-if="secondaryItems.length"
+            aria-label="المزيد"
+            :aria-expanded="moreOpen"
+            class="flex min-h-14 flex-col items-center justify-center gap-0.5 text-[11px] leading-none"
+            :class="moreActive ? 'font-bold text-emerald-600' : 'text-gray-500'"
+            @click="moreOpen = !moreOpen"
+          >
+            <UIcon name="i-lucide-ellipsis" class="size-5" />
+            المزيد
+          </button>
+        </div>
+      </nav>
+      <!-- Spacer so the fixed bar never covers footer content on mobile -->
+      <div
+        v-if="!isLoginRoute && authStore.role"
+        aria-hidden="true"
+        class="h-[calc(3.5rem+env(safe-area-inset-bottom))] sm:hidden"
+      />
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import type { DropdownMenuItem } from "#ui/types";
-
+import type { User } from "firebase/auth";
 const route = useRoute();
 const authStore = useAuth();
+const productsStore = useProductsStore();
+const cashboxStore = useCashbox();
+const invoicesStore = useInvoicesStore();
+const customersStore = useCustomersStore();
+const suppliersStore = useSuppliersStore();
 const { auth } = useFirebase();
 const { notify } = useAppToast();
+useLowStockAlerts();
 
 const logoutConfirm = ref(false);
 const loggingOut = ref(false);
@@ -120,18 +194,53 @@ const todayLine = computed(() =>
   }),
 );
 
-const tabItems = computed(() => [
+const allTabItems = [
   { label: "إنشاء فاتورة", icon: "i-lucide-file-plus", to: "/" },
-  ...(isAdmin.value
-    ? [{ label: "المنتجات", icon: "i-lucide-layout-grid", to: "/products" }]
-    : []),
-  { label: "العملاء", icon: "i-lucide-users", to: "/customers" },
+  { label: "دفتر الديون", icon: "i-lucide-notebook-text", to: "/debts" },
   { label: "الفواتير", icon: "i-lucide-files", to: "/invoices" },
-]);
+  { label: "الخزنة", icon: "i-lucide-vault", to: "/cashbox" },
+  { label: "المنتجات", icon: "i-lucide-layout-grid", to: "/products" },
+  { label: "العملاء", icon: "i-lucide-users", to: "/customers" },
+  { label: "الموردون", icon: "i-lucide-truck", to: "/suppliers" },
+  {
+    label: "فواتير الموردين",
+    icon: "i-lucide-receipt",
+    to: "/supplier-invoices",
+  },
+];
+const tabItems = computed(() => authStore.role === "admin"
+  ? allTabItems
+  : allTabItems.filter((item) => ["/", "/invoices", "/debts", "/products"].includes(item.to)));
 
 function isActiveTab(to: string): boolean {
   return route.path === to;
 }
+
+const PRIMARY_TOS = ["/", "/invoices", "/debts"];
+const primaryItems = computed(() =>
+  authStore.role === "cashier"
+    ? tabItems.value
+    : tabItems.value.filter((t) => PRIMARY_TOS.includes(t.to as string)),
+);
+const secondaryItems = computed(() =>
+  authStore.role === "cashier"
+    ? []
+    : tabItems.value.filter((t) => !PRIMARY_TOS.includes(t.to as string)),
+);
+const moreOpen = ref(false);
+const moreActive = computed(() =>
+  secondaryItems.value.some((t) => isActiveTab(t.to as string)),
+);
+function goSecondary(to: string): void {
+  moreOpen.value = false;
+  navigateTo(to);
+}
+watch(
+  () => route.path,
+  () => {
+    moreOpen.value = false;
+  },
+);
 
 const userMenu = computed<DropdownMenuItem[]>(() => [
   {
@@ -148,10 +257,142 @@ async function logout(): Promise<void> {
     await auth.signOut();
     // FLAG [S9]: clear role cookie on logout (was surviving before).
     authStore.clearSession();
+    clearSensitiveState();
+    resetLowStockAlerts();
     logoutConfirm.value = false;
     notify("لقد تم إغلاق التطبيق بنجاح، إلى اللقاء", "success");
+    await navigateTo("/login", { replace: true });
   } finally {
     loggingOut.value = false;
   }
 }
+function clearSensitiveState(): void {
+  productsStore.clearInventory();
+  cashboxStore.clearCashbox();
+  invoicesStore.list = [];
+  invoicesStore.invoiceToEdit = undefined;
+  invoicesStore.invalidateCache();
+  customersStore.list = [];
+  customersStore.loaded = false;
+  suppliersStore.list = [];
+  suppliersStore.loaded = false;
+  resetLowStockAlerts();
+}
+const toast = useToast();
+auth.languageCode = "ar";
+// The page outlet above is always mounted (pages show skeletons while
+// auth/data resolve), so auth only drives redirects + user data here.
+const isAuthed = ref<boolean>(!!auth.currentUser);
+const isLoginRoute = computed(() => route.path === "/login");
+let authSettled = false;
+let authTimer: ReturnType<typeof setTimeout> | undefined;
+const AUTH_TIMEOUT_MS = 8000;
+
+function redirectForAuth(authed: boolean): void {
+  if (!authed && route.path !== "/login") {
+    void navigateTo("/login", { replace: true });
+  } else if (authed && route.path === "/login") {
+    void navigateTo("/", { replace: true });
+  }
+}
+
+let authEpoch = 0;
+async function applyAuthUser(user: User | null): Promise<void> {
+  const epoch = ++authEpoch;
+  let role: "admin" | "cashier" | null = null;
+  if (user) {
+    try {
+      role = await resolveStaffRole(user);
+    } catch {
+      role = null;
+    }
+  }
+  if (epoch !== authEpoch) return;
+  if (user && !role) {
+    await auth.signOut();
+    return;
+  }
+  if (!user || (authStore.userData?.id && authStore.userData.id !== user.uid) || (authStore.role && authStore.role !== role)) {
+    clearSensitiveState();
+  }
+  authStore.role = role;
+  const authed = !!role;
+  isAuthed.value = authed;
+  reportAuthState(authed); // unblocks pages awaiting useAuthReady()
+  if (user && role) {
+    authStore.userData = {
+      name: user.displayName,
+      email: user.email,
+      phone: user.phoneNumber,
+      avatar: user.photoURL,
+      id: user.uid,
+    };
+  } else {
+    authStore.userData = null;
+  }
+  if (role === "cashier" && !["/", "/login", "/invoices", "/debts", "/products"].includes(route.path)) {
+    void navigateTo("/", { replace: true });
+  }
+  if (!authSettled) {
+    authSettled = true;
+    if (authTimer) clearTimeout(authTimer);
+    redirectForAuth(authed);
+  }
+}
+
+let stopAuthListener: (() => void) | undefined;
+if (import.meta.client) {
+  // Watchdog: if the first callback never fires (offline/blocked storage),
+  // unblock waiting pages so they fall through to /login instead of
+  // skeleton-forever. The listener stays alive and corrects late.
+  authTimer = setTimeout(() => {
+    if (!authSettled) {
+      authSettled = true;
+      const authed = !!auth.currentUser;
+      isAuthed.value = authed;
+      reportAuthState(authed);
+      redirectForAuth(authed);
+    }
+  }, AUTH_TIMEOUT_MS);
+  stopAuthListener = auth.onAuthStateChanged(applyAuthUser);
+}
+onUnmounted(() => {
+  stopAuthListener?.();
+  if (authTimer) clearTimeout(authTimer);
+});
+// Later auth changes (sign-out, revoked token): keep the route in sync.
+watch(isAuthed, (v) => {
+  if (authSettled) redirectForAuth(v);
+  if (v && authStore.role === "admin") {
+    productsStore.ensureInventorySubscription();
+    cashboxStore.ensureCashboxSubscription();
+  } else if (v && authStore.role === "cashier") {
+    productsStore.clearInventory();
+    cashboxStore.clearCashbox();
+  } else {
+    clearSensitiveState();
+  }
+});
+watch(() => route.path, (path) => {
+  if (authStore.role === "cashier" && !["/", "/login", "/invoices", "/debts", "/products"].includes(path)) {
+    void navigateTo("/", { replace: true });
+  }
+});
+// Single toast render path: writers set snackBarText, we show + consume.
+watch(
+  () => authStore.snackBarText,
+  (t) => {
+    if (!t) return;
+    toast.add({
+      title: t,
+      color:
+        authStore.snackBarColor === "error"
+          ? "error"
+          : authStore.snackBarColor === "primary"
+            ? "primary"
+            : "success",
+    });
+    authStore.snackBarText = "";
+  },
+);
 </script>

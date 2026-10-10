@@ -1,75 +1,36 @@
 <template>
-  <UApp>
+  <UApp dir="rtl">
     <UToaster />
-    <div v-if="!initFirebase" dir="rtl">
-      <FormsAuthScreen :is-in-login="true" @success="(v) => (isAuthed = v)" v-if="!isAuthed" />
-      <div id="printableArea" class="printable-area"></div>
-      <NuxtLayout v-if="isAuthed">
-        <NuxtRouteAnnouncer />
-        <NuxtPage />
-      </NuxtLayout>
-    </div>
-    <div v-else class="flex h-screen w-full items-center justify-center gap-3">
-      جاري التحميل...
-      <UIcon name="i-lucide-loader-circle" class="size-5 animate-spin" />
-      <div v-show="false">
-        <NuxtPage />
-      </div>
-    </div>
+    <NuxtLoadingIndicator color="#10b981" />
+    <NuxtLayout>
+      <NuxtRouteAnnouncer />
+      <NuxtPage />
+    </NuxtLayout>
   </UApp>
 </template>
 <script setup lang="ts">
-import type { User } from "firebase/auth";
-
-useSeoMeta({ title: "منشئ الفواتير" });
+useSeoMeta({ title: "قريتي" });
 useHead({
   htmlAttrs: { dir: "rtl", lang: "ar" },
-  link: [{ rel: "manifest", href: "/site.webmanifest" }],
+  link: [
+    { rel: "manifest", href: "/site.webmanifest" },
+    { rel: "preconnect", href: "https://fonts.googleapis.com" },
+    {
+      rel: "preconnect",
+      href: "https://fonts.gstatic.com",
+      crossorigin: "",
+    },
+    {
+      rel: "stylesheet",
+      href: "https://fonts.googleapis.com/css2?family=Baloo+Bhaijaan+2:wght@400..800&display=swap",
+      media: "all",
+    },
+  ],
 });
-const authStore = useAuth();
-const { auth } = useFirebase();
-const toast = useToast();
-auth.languageCode = "ar";
-const initFirebase = ref(true);
-const isAuthed = ref<boolean>(!!auth.currentUser);
-// Single toast render path: writers set snackBarText, we show + consume.
-watch(
-  () => authStore.snackBarText,
-  (t) => {
-    if (!t) return;
-    toast.add({
-      title: t,
-      color: authStore.snackBarColor === "error" ? "error" : authStore.snackBarColor === "primary" ? "primary" : "success",
-    });
-    authStore.snackBarText = "";
-  }
-);
-auth.onAuthStateChanged(
-  (user: User | null) => {
-    setTimeout(() => {
-      isAuthed.value = !!user;
-      initFirebase.value = false;
-      if (user) {
-        authStore.userData = {
-          name: user.displayName,
-          email: user.email,
-          phone: user.phoneNumber,
-          avatar: user.photoURL,
-          id: user.uid,
-        };
-      } else {
-        authStore.userData = null;
-      }
-    }, 100);
-  },
-  (err: unknown) => {
-    initFirebase.value = false;
-    console.error(err);
-  }
-);
 </script>
 <style>
-@import url("https://fonts.googleapis.com/css2?family=Baloo+Bhaijaan+2:wght@400..800&display=swap");
+/* Font loaded via <link> in useHead above (non render-blocking @import
+   removed): preconnect + display=swap avoids blocking first paint. */
 *::-webkit-scrollbar {
   width: 8px;
   height: 8px;

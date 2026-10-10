@@ -11,8 +11,41 @@ export interface Product {
   name: string;
   price: number | null;
   cost_price: number | null;
-  count?: number | null;
+  /** Real on-hand stock. Unset/zero until opening stock is entered. */
+  stock_quantity?: number | null;
+  /** Low-stock alert threshold (default 5 when missing). Fractional allowed. */
+  low_stock_threshold?: number | null;
+  /** Unit the threshold was entered in (display + edit hydration).
+   *  The numeric threshold itself is always stored in base units. */
+  low_stock_unit_id?: string | null;
+  base_unit_id?: string | null;
+  base_unit_name?: string | null;
+  units?: ProductUnit[];
+  /** Soft archive flag: inactive products keep historical integrity. */
+  is_active?: boolean | null;
+  /** Latest inventory movement linked to a stock change. */
+  last_inventory_transaction_id?: string | null;
+  /** Purchase invoice that authorizes the latest purchase stock/cost update. */
+  last_purchase_invoice_id?: string | null;
+  /** All movement documents written for the latest atomic stock change. */
+  last_inventory_transaction_ids?: string[];
+  /** Latest audited cost correction. */
+  last_cost_adjustment_id?: string | null;
   date?: Date | FirestoreTimestampLike | string | null;
+}
+
+export interface ProductUnit {
+  id: string;
+  name: string;
+  factor: number;
+  selling_price: number | null;
+  /** Last purchase unit-cost for THIS unit (reference value, in the unit's
+   *  own denomination). The moving average lives once, in base-unit terms,
+   *  on Product.cost_price — per-unit averages are derived, never stored. */
+  purchase_price?: number | null;
+  is_base?: boolean;
+  can_purchase?: boolean;
+  can_sell?: boolean;
 }
 
 export interface Customer {
@@ -22,11 +55,18 @@ export interface Customer {
 }
 
 export interface InvoiceProductLine {
+  line_id?: string;
   product_id?: string;
   product_name: string;
   product_price: number;
   product_cost_price?: number;
   product_quantity: number;
+  unit_id?: string;
+  unit_name?: string;
+  unit_factor?: number;
+  base_quantity?: number;
+  base_cost_snapshot?: number;
+  cost_groups?: { base_quantity: number; unit_cost: number }[];
   total?: number;
   option?: string;
   order?: number | null;
@@ -45,6 +85,19 @@ export interface Invoice {
   discount_for?: string | null;
   amount_of_animal_feeds?: number | string | null;
   amount_of_mahros?: number | string | null;
+  // HOME delta: paid/remaining (debts feature).
+  paid_amount?: number | string | null;
+  remaining?: number | string | null;
+  // Financial/inventory accounting (optional for legacy docs).
+  customer_id?: string | null;
+  legacy?: boolean;
+  inventory_applied?: boolean;
+  cashbox_applied?: boolean;
+  // Returned quantities per product (maintained transactionally by returns flow).
+  returned?: Record<string, number> | null;
+  return_status?: "none" | "partial" | "full";
+  returned_base_quantity?: number;
+  debt_payment_count?: number;
   created_by?: UserKey | null;
   products: InvoiceProductLine[];
   date?: InvoiceDate;

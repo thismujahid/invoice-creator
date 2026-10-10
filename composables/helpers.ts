@@ -1,22 +1,18 @@
 import type { Invoice, InvoiceProductLine } from "~/types";
 
 export function formatePrice(price: unknown): string {
-  if (price === null || price === undefined || price === "") return "0";
+  if (price === null || price === undefined || price === "") return "0.00";
   const num = Number(price);
-  if (Number.isNaN(num)) return "0";
-  if (!import.meta.client) return String(num);
+  if (!Number.isFinite(num)) return "0.00";
   try {
-    const formatter = new Intl.NumberFormat("ar-US", {
-      currencyDisplay: "symbol",
-      currencySign: "standard",
+    const formatter = new Intl.NumberFormat("en-US", {
       maximumFractionDigits: 2,
       minimumFractionDigits: 2,
-      localeMatcher: "best fit",
       style: "decimal",
     });
-    return formatter.format(num).replace(".00", "");
+    return formatter.format(num);
   } catch {
-    return String(num);
+    return num.toFixed(2);
   }
 }
 
@@ -90,6 +86,23 @@ export function calcLineTotal(form: Pick<InvoiceProductLine, "product_price" | "
   return price * qty;
 }
 
+/** Display name for an invoice line: unit as prefix, option as suffix.
+ *  e.g. unit "مكعب" + product "مرقة دجاج" → "مكعب مرقة دجاج",
+ *  with option → "مكعب مرقة دجاج (حار)". */
+export function formatInvoiceLineName(
+  product_name: unknown,
+  unit_name?: unknown,
+  option?: unknown,
+): string {
+  const product = String(product_name ?? "").trim();
+  const unit = String(unit_name ?? "").trim();
+  const opt = String(option ?? "").trim();
+  let base = product;
+  if (unit) base = product ? `${unit} ${product}` : unit;
+  if (opt) base = base ? `${base} (${opt})` : `(${opt})`;
+  return base;
+}
+
 export function discountAmountFor(invoice: Pick<Invoice, "discount" | "discount_percentage"> & { products?: InvoiceProductLine[] } & Record<string, unknown>): number {
   if (invoice.discount && invoice.discount_percentage) {
     return (calcTotal(invoice as unknown as Invoice) * Number(invoice.discount)) / 100;
@@ -117,7 +130,7 @@ export async function useDownloadPDF(elementId: string, fileName: string): Promi
       printer.replaceChildren(...Array.from(element.childNodes).map((n) => n.cloneNode(true)));
       window.print();
       printer.replaceChildren();
-      useSeoMeta({ title: "منشئ الفواتير" });
+      useSeoMeta({ title: "قريتي" });
     } catch (error) {
       console.error("Error generating PDF:", error);
     }
@@ -132,4 +145,5 @@ export const useHelpers = () => ({
   calcTotal,
   calcLineTotal,
   discountAmountFor,
+  formatInvoiceLineName,
 });
