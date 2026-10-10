@@ -5,14 +5,14 @@
       <UButton color="success" icon="i-lucide-plus" @click="startDraft()">فاتورة مورد جديدة</UButton>
     </header>
     <UAlert v-if="loadError" color="error" variant="soft" :title="loadError"><template #actions><UButton size="xs" color="error" variant="soft" :loading="loading" @click="reload(true)">إعادة المحاولة</UButton></template></UAlert>
-    <div class="grid gap-3 sm:grid-cols-3"><UCard variant="outline"><p class="text-xs text-gray-500">فواتير الصفحة</p><b class="text-xl">{{ pageInvoices.length }}</b></UCard><UCard variant="outline"><p class="text-xs text-gray-500">مشتريات الصفحة</p><b class="text-xl">{{ formatePrice(totalPurchases) }} ج</b></UCard><UCard variant="outline"><p class="text-xs text-gray-500">مستحق الصفحة</p><b class="text-xl text-red-600">{{ formatePrice(totalPayable) }} ج</b></UCard></div>
+    <div class="grid gap-3 sm:grid-cols-3"><UCard variant="outline"><p class="text-xs text-gray-500">فواتير الصفحة</p><b class="text-xl">{{ pageInvoices.length }}</b></UCard><UCard variant="outline"><p class="text-xs text-gray-500">صافي مشتريات الصفحة بعد المرتجعات</p><b class="text-xl">{{ formatePrice(totalPurchases) }} ج</b></UCard><UCard variant="outline"><p class="text-xs text-gray-500">مستحق الصفحة</p><b class="text-xl text-red-600">{{ formatePrice(totalPayable) }} ج</b></UCard></div>
     <div class="flex flex-wrap gap-2"><UInput v-model="search" icon="i-lucide-search" placeholder="بحث بالمورد" class="w-full sm:max-w-sm" /><USelect v-model="statusFilter" :items="[{ label: 'كل الحالات', value: 'all' }, { label: 'غير مسددة', value: 'unpaid' }, { label: 'مسددة جزئيًا', value: 'partial' }, { label: 'مسددة', value: 'paid' }]" value-key="value" label-key="label" class="w-full sm:w-44" /></div>
     <UiAppCardsSkeleton v-if="loading" layout="list" :count="4" />
     <div v-else class="space-y-3">
       <UCard v-for="invoice in visibleInvoices" :key="invoice.id" variant="outline">
         <div class="flex flex-wrap items-start justify-between gap-3">
-          <div class="min-w-0"><div class="flex flex-wrap items-center gap-2"><h2 class="font-bold">فاتورة توريد من {{ invoice.supplier_name || 'مورد غير مسمى' }}</h2><UBadge :color="statusColor(invoice)" variant="soft">{{ statusLabel(invoice) }}</UBadge><UBadge v-if="invoice.pinned" color="warning" variant="soft">مثبتة</UBadge></div><p class="text-sm text-gray-500">{{ sourceLabel(invoice.source) }} · {{ formatDateOnly(invoice.created_at) }} · {{ invoice.items.length }} أصناف</p><div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm"><span>الإجمالي <b>{{ formatePrice(invoice.total_amount) }} ج</b></span><span>مدفوع {{ formatePrice(invoice.paid_amount) }} ج</span><span class="font-bold text-red-600">باقٍ {{ formatePrice(invoice.remaining_amount) }} ج</span><span v-if="invoice.advance_amount" class="font-bold text-blue-700">سلفة لنا {{ formatePrice(invoice.advance_amount) }} ج</span></div></div>
-          <div class="flex flex-wrap gap-1"><UButton size="sm" color="neutral" variant="soft" icon="i-lucide-eye" @click="openDetails(invoice)">عرض</UButton><UButton size="sm" color="neutral" variant="soft" :icon="invoice.pinned ? 'i-lucide-pin-off' : 'i-lucide-pin'" @click="togglePin(invoice)">{{ invoice.pinned ? 'إلغاء التثبيت' : 'تثبيت' }}</UButton><UButton size="sm" color="neutral" variant="soft" icon="i-lucide-copy-plus" @click="startDraft(invoice)">فاتورة جديدة من هذه</UButton><UButton size="sm" v-if="invoice.remaining_amount > 0" color="success" icon="i-lucide-hand-coins" @click="openPayment(invoice)">تسديد</UButton></div>
+          <div class="min-w-0"><div class="flex flex-wrap items-center gap-2"><h2 class="font-bold">فاتورة توريد من {{ invoice.supplier_name || 'مورد غير مسمى' }}</h2><UBadge :color="statusColor(invoice)" variant="soft">{{ statusLabel(invoice) }}</UBadge><UBadge v-if="invoice.return_status" color="warning" variant="soft">مرتجع {{ invoice.return_status === 'full' ? 'كلي' : 'جزئي' }} · {{ formatePrice(invoice.return_total || 0) }} ج</UBadge><UBadge v-if="invoice.pinned" color="warning" variant="soft">مثبتة</UBadge></div><p class="text-sm text-gray-500">{{ sourceLabel(invoice.source) }} · {{ formatDateOnly(invoice.created_at) }} · {{ invoice.items.length }} أصناف</p><div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm"><span>الإجمالي الأصلي <b>{{ formatePrice(invoice.total_amount) }} ج</b></span><span v-if="invoice.return_status">الصافي بعد المرتجعات <b>{{ formatePrice(invoice.total_amount - (invoice.return_total || 0)) }} ج</b></span><span>مدفوع {{ formatePrice(invoice.paid_amount) }} ج</span><span class="font-bold text-red-600">باقٍ {{ formatePrice(invoice.remaining_amount) }} ج</span><span v-if="invoice.advance_amount" class="font-bold text-blue-700">سلفة لنا {{ formatePrice(invoice.advance_amount) }} ج</span></div></div>
+          <div class="flex flex-wrap gap-1"><UButton size="sm" color="neutral" variant="soft" icon="i-lucide-eye" @click="openDetails(invoice)">عرض</UButton><UButton v-if="invoice.return_status !== 'full'" size="sm" color="warning" variant="soft" icon="i-lucide-undo-2" @click="openReturn(invoice)">مرتجع</UButton><UButton size="sm" color="neutral" variant="soft" :icon="invoice.pinned ? 'i-lucide-pin-off' : 'i-lucide-pin'" @click="togglePin(invoice)">{{ invoice.pinned ? 'إلغاء التثبيت' : 'تثبيت' }}</UButton><UButton size="sm" color="neutral" variant="soft" icon="i-lucide-copy-plus" @click="startDraft(invoice)">فاتورة جديدة من هذه</UButton><UButton size="sm" v-if="invoice.remaining_amount > 0" color="success" icon="i-lucide-hand-coins" @click="openPayment(invoice)">تسديد</UButton></div>
         </div>
       </UCard>
       <UEmpty v-if="!loadError && !visibleInvoices.length" icon="i-lucide-receipt" title="لا توجد فواتير موردين" />
@@ -63,7 +63,7 @@
     </UiAppDialog>
 
     <UiAppDialog v-model:open="detailsOpen" :title="`فاتورة ${selectedInvoice?.supplier_name || 'المورد'}`">
-      <div v-if="selectedInvoice" class="space-y-3"><div class="grid grid-cols-2 gap-2 text-sm"><span>التاريخ</span><b>{{ formatDateOnly(selectedInvoice.created_at) }}</b><span>الإجمالي</span><b>{{ formatePrice(selectedInvoice.total_amount) }} ج</b><span>المدفوع</span><b>{{ formatePrice(selectedInvoice.paid_amount) }} ج</b><span>الباقي</span><b class="text-red-600">{{ formatePrice(selectedInvoice.remaining_amount) }} ج</b></div><div class="max-h-[40vh] space-y-2 overflow-y-auto"><UCard v-for="(item, index) in selectedInvoice.items" :key="`${item.product_id}-${index}`" variant="outline"><div class="flex justify-between gap-2 text-sm"><b>{{ item.product_name }}</b><span>{{ item.quantity }} {{ item.unit_name || 'وحدة' }}</span></div><div class="mt-1 text-xs text-gray-500">الوحدة: {{ item.unit_name || 'وحدة' }} · المعامل ×{{ item.unit_factor || 1 }} · سعر الشراء {{ formatePrice(item.unit_cost) }} ج<br>تكلفة الوحدة الأساسية: {{ item.base_unit_cost == null ? '—' : `${formatePrice(item.base_unit_cost)} ج` }} · الكمية الأساسية: {{ item.base_quantity ?? '—' }} · إجمالي السطر <b>{{ formatePrice(item.line_total) }} ج</b></div></UCard></div><div class="no-print flex flex-wrap gap-2"><UButton color="neutral" variant="soft" icon="i-lucide-printer" @click="printInvoice">طباعة الفاتورة</UButton><UButton color="neutral" variant="soft" icon="i-lucide-history" :disabled="!selectedInvoice.payment_ids?.length" @click="loadPayments(selectedInvoice)">سجل السداد</UButton></div></div>
+      <div v-if="selectedInvoice" class="space-y-3"><div class="grid grid-cols-2 gap-2 text-sm"><span>التاريخ</span><b>{{ formatDateOnly(selectedInvoice.created_at) }}</b><span>الإجمالي الأصلي</span><b>{{ formatePrice(selectedInvoice.total_amount) }} ج</b><span>المرتجعات</span><b>{{ formatePrice(selectedInvoice.return_total || 0) }} ج</b><span>الصافي</span><b>{{ formatePrice(selectedInvoice.total_amount - (selectedInvoice.return_total || 0)) }} ج</b><span>المدفوع</span><b>{{ formatePrice(selectedInvoice.paid_amount) }} ج</b><span>الباقي</span><b class="text-red-600">{{ formatePrice(selectedInvoice.remaining_amount) }} ج</b></div><div class="max-h-[40vh] space-y-2 overflow-y-auto"><UCard v-for="(item, index) in selectedInvoice.items" :key="`${item.product_id}-${index}`" variant="outline"><div class="flex justify-between gap-2 text-sm"><b>{{ item.product_name }}</b><span>{{ item.quantity }} {{ item.unit_name || 'وحدة' }}</span></div><div class="mt-1 text-xs text-gray-500">الوحدة: {{ item.unit_name || 'وحدة' }} · المعامل ×{{ item.unit_factor || 1 }} · سعر الشراء {{ formatePrice(item.unit_cost) }} ج<br>تكلفة الوحدة الأساسية: {{ item.base_unit_cost == null ? '—' : `${formatePrice(item.base_unit_cost)} ج` }} · الكمية الأساسية: {{ item.base_quantity ?? '—' }} · إجمالي السطر <b>{{ formatePrice(item.line_total) }} ج</b></div></UCard></div><ReturnHistory v-if="selectedInvoice.return_status" :supplier-returns="selectedReturns" :loading="returnsLoading" :error="returnsError" /><div class="no-print flex flex-wrap gap-2"><UButton color="neutral" variant="soft" icon="i-lucide-printer" @click="printInvoice">طباعة الفاتورة</UButton><UButton color="neutral" variant="soft" icon="i-lucide-history" :disabled="!selectedInvoice.payment_ids?.length" @click="loadPayments(selectedInvoice)">سجل السداد</UButton><UButton v-if="selectedInvoice.return_status !== 'full'" color="warning" variant="soft" icon="i-lucide-undo-2" @click="openReturn(selectedInvoice)">إنشاء مرتجع</UButton></div></div>
       <div v-if="selectedInvoice?.supplier_id && advances.length" class="mt-3 space-y-2 border-t pt-3">
         <h3 class="font-semibold">سلف مستحقة لنا من المورد</h3>
         <div v-for="advance in advances" :key="advance.id" class="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-2 text-sm">
@@ -71,6 +71,27 @@
           <div class="flex gap-2"><UButton v-if="selectedInvoice.remaining_amount > 0" size="xs" color="success" @click="openAdvance(advance, 'apply')">تسوية مع الفاتورة</UButton><UButton size="xs" color="neutral" variant="soft" @click="openAdvance(advance, 'refund')">استرداد نقدي</UButton></div>
         </div>
       </div>
+    </UiAppDialog>
+    <UiAppDialog v-model:open="supplierReturnOpen" title="مرتجع فاتورة مورد" :z-index="70">
+      <div v-if="returnInvoice" class="max-h-[65vh] space-y-3 overflow-y-auto">
+        <p class="text-sm">{{ returnInvoice.supplier_name }} · إجمالي الفاتورة {{ formatePrice(returnInvoice.total_amount) }} ج</p>
+        <div v-for="line in returnLines" :key="line.index" class="rounded-lg border p-3 text-sm">
+          <div class="flex justify-between gap-2"><b>{{ line.name }}</b><span>المتاح من الفاتورة: {{ line.max }} {{ line.unit }}</span></div>
+          <div class="mt-1 text-xs text-gray-500">تكلفة الوحدة الأصلية {{ formatePrice(line.cost) }} ج · المخزون الحالي {{ line.stock }} وحدة أساسية</div>
+          <UInputNumber v-model="line.quantity" :min="0" :max="line.max" :step="1" class="mt-2 w-full" />
+          <div class="mt-1 text-xs">قيمة الصنف: {{ formatePrice(line.quantity * line.cost) }} ج</div>
+        </div>
+        <UEmpty v-if="!returnLines.length" title="لا توجد أصناف قابلة للإرجاع" />
+        <UFormField v-if="returnReceivable > 0 && !returnInvoice.supplier_id" label="المورد الذي سيُسجل له الرصيد المستحق لنا" required>
+          <USelectMenu :model-value="returnSupplier ?? undefined" :items="suppliers.list" label-key="name" by="id" placeholder="اختر المورد" class="w-full" @update:model-value="returnSupplier = $event ?? null" />
+          <UButton size="xs" color="neutral" variant="link" @click="showReturnSupplierModal = true">إضافة مورد</UButton>
+          <FormsSupplier v-model="showReturnSupplierModal" :refresher="reloadSuppliers" @done="onReturnSupplierCreated" />
+        </UFormField>
+        <UFormField label="ملاحظة"><UInput v-model="returnNote" class="w-full" /></UFormField>
+        <UAlert color="info" variant="soft" :title="`قيمة المرتجع: ${formatePrice(returnTotal)} ج · تخفيض المستحق: ${formatePrice(returnPayableReduction)} ج · رصيد لنا: ${formatePrice(returnReceivable)} ج`" />
+        <UAlert v-if="returnError" color="error" variant="soft" :title="returnError" />
+      </div>
+      <template #footer><div class="flex w-full gap-2"><UButton color="warning" :loading="returnBusy" :disabled="!returnCanSubmit" @click="submitSupplierReturn">تأكيد المرتجع</UButton><UButton color="neutral" variant="soft" :disabled="returnBusy" @click="supplierReturnOpen = false">إلغاء</UButton></div></template>
     </UiAppDialog>
     <UiAppDialog v-model:open="advanceOpen" :title="advanceMode === 'apply' ? 'تسوية سلفة المورد' : 'استرداد سلفة المورد'">
       <UFormField label="المبلغ" :error="advanceError || undefined"><UInputNumber v-model="advanceAmount" :min="0.01" :max="advanceMode === 'apply' ? Math.min(advanceTarget?.remaining_amount ?? 0, selectedInvoice?.remaining_amount ?? 0) : advanceTarget?.remaining_amount ?? 0" :step="0.01" class="w-full" /></UFormField>
@@ -80,17 +101,17 @@
       <div v-if="paymentTarget" class="space-y-3"><div class="grid grid-cols-2 gap-2 rounded-lg bg-gray-50 p-3 text-sm"><span>الباقي</span><b>{{ formatePrice(paymentTarget.remaining_amount) }} ج</b><span>رصيد الخزنة</span><b>{{ formatePrice(cashbox.balance) }} ج</b></div><UFormField label="مبلغ الدفعة" :error="paymentError || undefined"><UInputNumber v-model="paymentAmount" :min="0" :max="cashbox.balance" :step="0.01" class="w-full" /></UFormField><p v-if="(paymentAmount || 0) > paymentTarget.remaining_amount" class="text-sm text-blue-700">الزيادة سلفة مستحقة لنا: {{ formatePrice((paymentAmount || 0) - paymentTarget.remaining_amount) }} ج</p><UFormField label="ملاحظة"><UInput v-model="paymentNote" class="w-full" /></UFormField><UAlert v-if="paymentError" color="warning" variant="soft" :title="paymentError" /></div>
       <template #footer><div class="flex w-full gap-2"><UButton color="success" class="flex-1" :loading="paying" :disabled="!!paymentError" @click="submitPayment">تأكيد السداد</UButton><UButton color="neutral" variant="soft" class="flex-1" :disabled="paying" @click="paymentOpen = false">إلغاء</UButton></div></template>
     </UiAppDialog>
-    <UiAppDialog v-model:open="paymentsOpen" title="سجل سداد المورد"><div class="max-h-[60vh] space-y-2 overflow-y-auto"><UCard v-for="payment in payments" :key="payment.id" variant="outline"><div class="flex justify-between"><span>{{ formatDateOnly(payment.created_at) }}</span><b>{{ formatePrice(payment.amount) }} ج</b></div><p v-if="payment.note" class="text-xs text-gray-500">{{ payment.note }}</p></UCard><UEmpty v-if="!payments.length" icon="i-lucide-history" title="لا توجد دفعات مسجلة" /></div></UiAppDialog>
+    <UiAppDialog v-model:open="paymentsOpen" title="سجل سداد المورد"><div class="max-h-[60vh] space-y-2 overflow-y-auto"><UCard v-for="payment in payments" :key="payment.id" variant="outline"><div class="flex justify-between"><span>{{ formatDateOnly(payment.created_at) }}</span><b>{{ formatePrice(payment.amount) }} ج</b></div><p v-if="payment.return_id" class="text-xs text-amber-700">تسوية من مرتجع {{ payment.return_id }}</p><p v-if="payment.note" class="text-xs text-gray-500">{{ payment.note }}</p></UCard><UEmpty v-if="!payments.length" icon="i-lucide-history" title="لا توجد دفعات مسجلة" /></div></UiAppDialog>
     <div v-if="selectedInvoice" class="print-sheet" dir="rtl"><h1>فاتورة مورد</h1><p>{{ selectedInvoice.supplier_name }} · {{ selectedInvoice.invoice_number || selectedInvoice.supplier_ref || '' }}</p><p>{{ formatDateOnly(selectedInvoice.created_at) }}</p><table><thead><tr><th>المنتج</th><th>الوحدة</th><th>الكمية</th><th>تكلفة الوحدة</th><th>الإجمالي</th></tr></thead><tbody><tr v-for="(item, index) in selectedInvoice.items" :key="`${item.product_id}-print-${index}`"><td>{{ item.product_name }}</td><td>{{ item.unit_name || 'وحدة' }}</td><td>{{ item.quantity }}</td><td>{{ formatePrice(item.unit_cost) }}</td><td>{{ formatePrice(item.line_total) }}</td></tr></tbody></table><p>الإجمالي: {{ formatePrice(selectedInvoice.total_amount) }} ج</p><p>المدفوع: {{ formatePrice(selectedInvoice.paid_amount) }} ج · الباقي: {{ formatePrice(selectedInvoice.remaining_amount) }} ج</p></div>
   </div>
 </template>
 
 <script setup lang="ts">
 import type { Product, ProductUnit } from "~/types";
-import type { PurchaseInvoice, PurchaseInvoiceItem, Supplier, SupplierPayment, SupplierAdvance } from "~/types/finance";
+import type { PurchaseInvoice, PurchaseInvoiceItem, Supplier, SupplierPayment, SupplierAdvance, SupplierReturn } from "~/types/finance";
 import type { QueryDocumentSnapshot } from "firebase/firestore";
 import { deriveSupplierInvoiceStatus, supplierInvoiceStatus } from "~/types/finance";
-import { convertUnitPrice, proposedSellingPrice, purchaseLineBaseCost, purchaseLineBaseQuantity, purchasePreviewAverage, purchaseUnitProposals, purchasableUnitsForProduct, round2, round4, toNum, unitPurchasePrice, stockQuantityLabel } from "~/composables/finance";
+import { convertUnitPrice, proposedSellingPrice, purchaseLineBaseCost, purchaseLineBaseQuantity, purchasePreviewAverage, purchaseUnitProposals, purchasableUnitsForProduct, round2, round4, splitSupplierReturn, toNum, unitPurchasePrice, stockQuantityLabel } from "~/composables/finance";
 import { toDateSafe } from "~/types";
 import { useSuppliersStore } from "~/stores/suppliers";
 
@@ -102,6 +123,7 @@ const route = useRoute();
 const productsStore = useProductsStore();
 const suppliers = useSuppliersStore();
 const purchasing = usePurchasing();
+const returnsApi = useSupplierReturns();
 const cashbox = useCashbox();
 const pinnedInvoices = ref<PurchaseInvoice[]>([]);
 const pageInvoices = ref<PurchaseInvoice[]>([]);
@@ -155,10 +177,28 @@ const visibleInvoices = computed(() => [...new Map([...pinnedInvoices.value, ...
   const matchesSupplier = !route.query.supplier || invoice.supplier_id === String(route.query.supplier);
   return matchesSearch && matchesSupplier;
 }));
-const totalPurchases = computed(() => round2(pageInvoices.value.reduce((sum, invoice) => sum + toNum(invoice.total_amount), 0)));
+const totalPurchases = computed(() => round2(pageInvoices.value.reduce((sum, invoice) => sum + toNum(invoice.total_amount) - toNum(invoice.return_total), 0)));
 const totalPayable = computed(() => round2(pageInvoices.value.reduce((sum, invoice) => sum + toNum(invoice.remaining_amount), 0)));
 const detailsOpen = ref(false);
 const selectedInvoice = ref<PurchaseInvoice | null>(null);
+const selectedReturns = ref<SupplierReturn[]>([]);
+const returnsLoading = ref(false);
+const returnsError = ref("");
+interface SupplierReturnLine { index: number; name: string; unit: string; cost: number; factor: number; max: number; stock: number; quantity: number }
+const returnInvoice = ref<PurchaseInvoice | null>(null);
+const supplierReturnOpen = ref(false);
+const returnLines = ref<SupplierReturnLine[]>([]);
+const returnSupplier = ref<Supplier | null>(null);
+const showReturnSupplierModal = ref(false);
+const returnNote = ref("");
+const returnError = ref("");
+const returnBusy = ref(false);
+const returnKey = ref("");
+const returnTotal = computed(() => round2(returnLines.value.reduce((sum, line) => sum + line.quantity * line.cost, 0)));
+const returnSettlement = computed(() => splitSupplierReturn(returnTotal.value, returnInvoice.value?.remaining_amount));
+const returnPayableReduction = computed(() => returnSettlement.value.payableReduction);
+const returnReceivable = computed(() => returnSettlement.value.receivable);
+const returnCanSubmit = computed(() => !returnBusy.value && returnLines.value.some((line) => line.quantity > 0) && returnLines.value.every((line) => Number.isInteger(line.quantity) && line.quantity >= 0 && line.quantity <= line.max) && (!returnReceivable.value || !!(returnInvoice.value?.supplier_id || returnSupplier.value?.id)));
 const advances = ref<SupplierAdvance[]>([]);
 const advanceTarget = ref<SupplierAdvance | null>(null);
 const advanceMode = ref<"apply" | "refund">("apply");
@@ -185,8 +225,8 @@ const paymentError = computed(() => {
   return "";
 });
 function id(): string { return typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`; }
-function statusLabel(invoice: PurchaseInvoice): string { return { paid: "مسددة", partial: "مسددة جزئيًا", unpaid: "غير مسددة" }[supplierInvoiceStatus(invoice)]; }
-function statusColor(invoice: PurchaseInvoice): "success" | "warning" | "error" { return supplierInvoiceStatus(invoice) === "paid" ? "success" : supplierInvoiceStatus(invoice) === "partial" ? "warning" : "error"; }
+function statusLabel(invoice: PurchaseInvoice): string { return invoice.return_status === "full" ? "مرتجعة بالكامل" : { paid: "مسددة", partial: "مسددة جزئيًا", unpaid: "غير مسددة" }[supplierInvoiceStatus(invoice)]; }
+function statusColor(invoice: PurchaseInvoice): "success" | "warning" | "error" { return invoice.return_status === "full" ? "warning" : supplierInvoiceStatus(invoice) === "paid" ? "success" : supplierInvoiceStatus(invoice) === "partial" ? "warning" : "error"; }
 function sourceLabel(source?: string): string { return source === "excel_import" ? "استيراد Excel" : source === "repeat" ? "من فاتورة سابقة" : "يدوية"; }
 function formatDateOnly(value: unknown): string { const date = toDateSafe(value); return date?.toLocaleDateString("ar-EG") ?? "—"; }
 function unitOptions(line: DraftLine): ProductUnit[] { return line.product ? purchasableUnitsForProduct(line.product) : []; }
@@ -300,7 +340,56 @@ async function confirmDraft(): Promise<void> {
     await reload(true);
   } finally { savingDraft.value = false; }
 }
-function openDetails(invoice: PurchaseInvoice): void { selectedInvoice.value = invoice; detailsOpen.value = true; advances.value = []; if (invoice.supplier_id) void purchasing.fetchSupplierAdvances(invoice.supplier_id).then((items) => { if (selectedInvoice.value?.id === invoice.id) advances.value = items; }); }
+function openDetails(invoice: PurchaseInvoice): void {
+  selectedInvoice.value = invoice;
+  detailsOpen.value = true;
+  advances.value = [];
+  selectedReturns.value = [];
+  returnsError.value = "";
+  if (invoice.supplier_id) void purchasing.fetchSupplierAdvances(invoice.supplier_id).then((items) => { if (selectedInvoice.value?.id === invoice.id) advances.value = items; });
+  if (invoice.return_status && invoice.id) {
+    returnsLoading.value = true;
+    void returnsApi.fetchForInvoice(invoice.id).then((items) => { if (selectedInvoice.value?.id === invoice.id) selectedReturns.value = items; }).catch(() => { returnsError.value = "تعذر تحميل سجل المرتجعات."; }).finally(() => { returnsLoading.value = false; });
+  }
+}
+function openReturn(invoice: PurchaseInvoice): void {
+  returnInvoice.value = invoice;
+  returnKey.value = id();
+  returnSupplier.value = null;
+  returnNote.value = "";
+  returnError.value = "";
+  returnLines.value = invoice.items.map((item, index) => ({
+    index,
+    name: item.product_name,
+    unit: item.unit_name || "وحدة",
+    cost: toNum(item.unit_cost),
+    factor: toNum(item.unit_factor) || 1,
+    max: Math.max(0, toNum(item.quantity) - toNum(invoice.returned_quantities?.[String(index)])),
+    stock: toNum(productsStore.productsById.get(item.product_id)?.stock_quantity),
+    quantity: 0,
+  })).filter((line) => line.max > 0);
+  supplierReturnOpen.value = true;
+}
+function onReturnSupplierCreated(supplier: Supplier | null | undefined): void {
+  if (supplier?.id) returnSupplier.value = supplier;
+}
+async function submitSupplierReturn(): Promise<void> {
+  if (!returnInvoice.value?.id || !returnCanSubmit.value) return;
+  returnBusy.value = true;
+  returnError.value = "";
+  try {
+    const result = await returnsApi.createReturn({ id: returnKey.value, invoice_id: returnInvoice.value.id, items: returnLines.value.filter((line) => line.quantity > 0).map((line) => ({ line_index: line.index, quantity: line.quantity })), supplier_id: returnSupplier.value?.id, note: returnNote.value.trim() || null });
+    if (!result.ok) { returnError.value = result.error; return; }
+    const invoiceId = returnInvoice.value.id;
+    supplierReturnOpen.value = false;
+    notify(`تم تسجيل المرتجع بقيمة ${formatePrice(result.total)} ج.`, "success");
+    await reload(true);
+    if (selectedInvoice.value?.id === invoiceId) {
+      const fresh = await purchasing.fetchPurchaseInvoice(invoiceId);
+      if (fresh) openDetails(fresh);
+    }
+  } finally { returnBusy.value = false; }
+}
 function openAdvance(advance: SupplierAdvance, mode: "apply" | "refund"): void { advanceTarget.value = advance; advanceMode.value = mode; advanceAmount.value = mode === "apply" ? Math.min(advance.remaining_amount, selectedInvoice.value?.remaining_amount ?? 0) : advance.remaining_amount; advanceKey.value = id(); advanceOpen.value = true; }
 async function confirmAdvance(): Promise<void> { if (!advanceTarget.value?.id || advanceError.value || advanceBusy.value) return; advanceBusy.value = true; try { const result = await purchasing.settleSupplierAdvance({ advanceId: advanceTarget.value.id, invoiceId: advanceMode.value === "apply" ? selectedInvoice.value?.id : undefined, amount: Number(advanceAmount.value), mode: advanceMode.value, key: advanceKey.value }); if (!result.ok) { notify(result.error, "error"); return; } notify("تمت تسوية سلفة المورد.", "success"); advanceOpen.value = false; if (selectedInvoice.value?.supplier_id) advances.value = await purchasing.fetchSupplierAdvances(selectedInvoice.value.supplier_id); await reload(true); if (selectedInvoice.value?.id) selectedInvoice.value = await purchasing.fetchPurchaseInvoice(selectedInvoice.value.id); } finally { advanceBusy.value = false; } }
 function printInvoice(): void { if (import.meta.client) window.print(); }

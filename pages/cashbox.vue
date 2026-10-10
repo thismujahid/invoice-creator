@@ -770,11 +770,14 @@
         <Invoice
           :invoice-data="referenceInvoice"
           :view-mode="true"
+          :returns="referenceReturns"
           @close="referenceOpen = false"
         />
+        <ReturnHistory v-if="referenceReturns.length" class="mt-4" :customer-returns="referenceReturns" />
       </div>
       <div v-else-if="referencePurchase" class="max-h-[75vh] overflow-y-auto">
         <SupplierInvoice :invoice="referencePurchase" />
+        <ReturnHistory v-if="referenceReturn" class="mt-4" :supplier-returns="[referenceReturn]" />
       </div>
     </UiAppDialog>
   </div>
@@ -786,6 +789,7 @@ import { CASH_TYPE_LABELS } from "~/types/finance";
 import type { RepairRow } from "~/composables/useInventoryCostRepair";
 import { REPAIR_STATUS_LABELS } from "~/composables/useInventoryCostRepair";
 import { toDateSafe } from "~/types";
+import { netSalesOf } from "~/composables/invoiceStats";
 import { ADMIN_EMAIL } from "~/constants/auth";
 import {
   Timestamp,
@@ -804,7 +808,7 @@ import {
   type Unsubscribe,
 } from "firebase/firestore";
 import type { Invoice } from "~/types";
-import type { CashTransaction, PurchaseInvoice } from "~/types/finance";
+import type { CashTransaction, InvoiceReturn, PurchaseInvoice, SupplierReturn } from "~/types/finance";
 
 definePageMeta({ title: "الخزنة" });
 const { formatePrice } = useHelpers();
@@ -821,6 +825,8 @@ const referenceError = ref("");
 const referenceTitle = ref("");
 const referenceInvoice = ref<Invoice | null>(null);
 const referencePurchase = ref<PurchaseInvoice | null>(null);
+const referenceReturn = ref<SupplierReturn | null>(null);
+const referenceReturns = ref<InvoiceReturn[]>([]);
 const resolvedReferenceNames = ref<Record<string, string>>({});
 
 // Cost repair review state (§12).
@@ -1214,7 +1220,7 @@ const reportError = ref(false);
 const summaryError = ref(false);
 const reportReady = computed(() => statsReady.value && (reportPeriod.value === "all" || reportLoaded.value) && !reportError.value);
 const reportStats = computed(() => reportPeriod.value === "all" ? stats.value : reportMonthStats.value);
-const netSales = computed(() => round2(reportStats.value.sales - reportStats.value.returns));
+const netSales = computed(() => netSalesOf({ total_sales: reportStats.value.sales, returns_total: reportStats.value.returns }));
 const receivablesInvoices = ref(0);
 const receivablesLoans = ref(0);
 const receivablesSupplierAdvances = ref(0);
@@ -1551,6 +1557,8 @@ function refLabel(t: CashTransaction): string {
     return `سلفة ${name || "عميل"}`;
   }
   if (t.type === "invoice_refund") return `مرتجع فاتورة ${name || "عميل"}`;
+  if (t.type === "customer_credit_payout") return `صرف رصيد ${name || "عميل"}`;
+  if (t.type === "supplier_advance_refund" && t.return_id) return `تحصيل مرتجع مورد ${name || "مورد"}`;
   if (t.type === "supplier_return") return `مرتجع للمورد ${name || "منتج"}`;
   if (t.type === "inventory_adjustment") return `تسوية مخزون ${name || "منتج"}`;
   if (t.invoice_id || t.reference_type === "invoice")
@@ -1613,7 +1621,7 @@ async function resolveMissingReferenceNames(
         groupTransactions
           .map(
             (transaction) =>
-              transaction.reference_id ||
+              (transaction.type === "invoice_refund" ? transaction.invoice_id : transaction.reference_id) ||
               (group.isSupplier
                 ? transaction.purchase_invoice_id
                 : transaction.invoice_id),
@@ -1638,7 +1646,7 @@ async function resolveMissingReferenceNames(
           if (!partyName) continue;
           for (const transaction of groupTransactions) {
             const invoiceId =
-              transaction.reference_id ||
+              (transaction.type === "invoice_refund" ? transaction.invoice_id : transaction.reference_id) ||
               (group.isSupplier
                 ? transaction.purchase_invoice_id
                 : transaction.invoice_id);
@@ -1671,15 +1679,16 @@ async function viewReference(transaction: CashTransaction): Promise<void> {
   const isPurchase =
     transaction.reference_type === "supplier_invoice" ||
     (!transaction.invoice_id && !!transaction.purchase_invoice_id);
-  const id =
-    transaction.reference_id ||
-    (isPurchase ? transaction.purchase_invoice_id : transaction.invoice_id);
+  const id = transaction.type === "invoice_refund" ? transaction.invoice_id :
+    transaction.reference_id || (isPurchase ? transaction.purchase_invoice_id : transaction.invoice_id);
   if (!id) return;
   referenceOpen.value = true;
   referenceLoading.value = true;
   referenceError.value = "";
   referenceInvoice.value = null;
   referencePurchase.value = null;
+  referenceReturn.value = null;
+  referenceReturns.value = [];
   referenceTitle.value = refLabel(transaction);
   try {
     const snap = await getDoc(
@@ -1699,6 +1708,26 @@ async function viewReference(transaction: CashTransaction): Promise<void> {
         id: snap.id,
         ...(snap.data() as object),
       } as Invoice;
+    if (!isPurchase) {
+      const returns = await getDocs(query(collection(db, "invoice_returns"), where("invoice_id", "==", id)));
+      referenceReturns.value = returns.docs.map((item) => ({ id: item.id, ...(item.data() as object) }) as InvoiceReturn);
+    }
+    if (isPurchase && transaction.return_id) {
+      try {
+        const returnSnapshot = await getDoc(doc(db, "supplier_returns", transaction.return_id));
+        if (returnSnapshot.exists()) {
+          const record = { id: returnSnapshot.id, ...(returnSnapshot.data() as object) } as SupplierReturn;
+          const cash = await getDocs(query(collection(db, "cash_transactions"), where("return_id", "==", transaction.return_id)));
+          record.cash_received = round2(cash.docs.reduce((sum, movement) => {
+            const data = movement.data();
+            return sum + (data.type === "supplier_advance_refund" && data.direction === "in" ? toNum(data.amount) : 0);
+          }, 0));
+          referenceReturn.value = record;
+        }
+      } catch (error) {
+        console.error(error);
+      }
+    }
   } catch {
     referenceError.value = "تعذر تحميل الفاتورة.";
   } finally {

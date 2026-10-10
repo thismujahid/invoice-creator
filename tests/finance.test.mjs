@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  allocateCustomerCredit,
   applyStockGroup,
   allocateSupplierCash,
   convertUnitPrice,
@@ -16,11 +17,13 @@ import {
   restoreGroupsForEdit,
   sellableUnitsForProduct,
   stockQuantityLabel,
+  splitSupplierReturn,
+  splitCustomerReturn,
   unitSellingPrice,
   unitsForProduct,
 } from "../composables/finance.ts";
 import { deriveSupplierInvoiceStatus, supplierInvoiceStatus } from "../types/finance.ts";
-import { invoiceDayKey, invoiceMonthKey, invoicePaymentStatus, invoiceStatsDelta, invoiceStatsOf } from "../composables/invoiceStats.ts";
+import { cairoDayStart, invoiceDayKey, invoiceMonthKey, invoicePaymentStatus, invoiceStatsDelta, invoiceStatsOf, netCollectedOf, netSalesOf } from "../composables/invoiceStats.ts";
 import { formatePrice } from "../composables/helpers.ts";
 
 test("stock label uses the second unit and base remainder only", () => {
@@ -39,6 +42,56 @@ test("stock label uses the second unit and base remainder only", () => {
 test("supplier cash above invoice total becomes a separate advance", () => {
   assert.deepEqual(allocateSupplierCash(100, 150), { applied: 100, advance: 50, remaining: 0 });
   assert.deepEqual(allocateSupplierCash(100, 40), { applied: 40, advance: 0, remaining: 60 });
+});
+
+test("supplier returns reduce payable first and leave the rest as a receivable", () => {
+  assert.deepEqual(splitSupplierReturn(40, 100), { payableReduction: 40, receivable: 0 });
+  assert.deepEqual(splitSupplierReturn(100, 40), { payableReduction: 40, receivable: 60 });
+  assert.deepEqual(splitSupplierReturn(25, 0), { payableReduction: 0, receivable: 25 });
+});
+
+test("sales and cash reports use net returns without treating debt relief as cash", () => {
+  const sale = invoiceStatsOf({ products: [{ product_price: 5, product_quantity: 4, product_cost_price: 3 }], paid_amount: 20, remaining: 0 });
+  assert.equal(netSalesOf({ ...sale, returns_total: 10 }), 10);
+  assert.equal(netCollectedOf(sale.total_paid, 10), 10);
+  const debtRelief = invoiceStatsOf({ products: [{ product_price: 5, product_quantity: 4, product_cost_price: 3 }], paid_amount: 10, remaining: 10 });
+  assert.equal(netSalesOf({ ...debtRelief, returns_total: 10 }), 10);
+  assert.equal(netCollectedOf(debtRelief.total_paid, 0), 10);
+});
+
+test("customer credit settles an invoice without inflating cash collections or reducing sales", () => {
+  const stats = invoiceStatsOf({ products: [{ product_price: 50, product_quantity: 2, product_cost_price: 30 }], paid_amount: 100, credit_used: 50, remaining: 0 });
+  assert.equal(stats.total_sales, 100);
+  assert.equal(stats.total_paid, 50);
+  assert.equal(stats.outstanding_customer_debt, 0);
+  assert.equal(netCollectedOf(stats.total_paid, 0), 50);
+});
+
+test("customer credit settles the oldest invoice and loan up to the available balance", () => {
+  const obligations = [
+    { id: "loan", type: "loan", remaining: 40, date: new Date("2026-10-02") },
+    { id: "invoice", type: "invoice", remaining: 30, date: new Date("2026-10-01") },
+  ];
+  assert.deepEqual(allocateCustomerCredit(50, obligations), [
+    { type: "invoice", reference_id: "invoice", amount: 30 },
+    { type: "loan", reference_id: "loan", amount: 20 },
+  ]);
+  assert.deepEqual(allocateCustomerCredit(100, obligations), [
+    { type: "invoice", reference_id: "invoice", amount: 30 },
+    { type: "loan", reference_id: "loan", amount: 40 },
+  ]);
+  assert.deepEqual(allocateCustomerCredit(0, obligations), []);
+});
+
+test("customer return can reduce debt, restore spent credit, and defer or pay the rest", () => {
+  assert.deepEqual(splitCustomerReturn(80, 20, 30, 0, 10), { debtReduction: 20, creditRestored: 30, cashRefund: 10, creditIssued: 20, settlement: 30 });
+  assert.deepEqual(splitCustomerReturn(20, 0, 0, 0, 0), { debtReduction: 0, creditRestored: 0, cashRefund: 0, creditIssued: 20, settlement: 20 });
+  assert.throws(() => splitCustomerReturn(20, 0, 0, 0, 21));
+});
+
+test("daily cash refunds use Cairo calendar bounds across time offsets", () => {
+  assert.equal(cairoDayStart("2026-01-10").toISOString(), "2026-01-09T22:00:00.000Z");
+  assert.equal(cairoDayStart("2026-10-10").toISOString(), "2026-10-09T21:00:00.000Z");
 });
 
 test("money display retains exactly two decimal places", () => {

@@ -382,8 +382,15 @@
                 />
               </UFormField>
             </div>
+            <div v-if="invoiceData.customer_id && !invoiceData.id" class="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm">
+              <div class="flex justify-between gap-2"><span>رصيد متاح للعميل</span><strong>{{ creditLoading ? 'جار التحميل...' : `${formatePrice(creditBalance)} ج` }}</strong></div>
+              <UFormField v-if="creditBalance" label="استخدام من رصيد العميل" class="mt-2">
+                <UInputNumber v-model="invoiceData.credit_used" :min="0" :max="Math.min(creditBalance, totalOfInvoice)" :step="0.01" class="w-full" />
+              </UFormField>
+              <p class="mt-1 text-xs text-emerald-800">يُحتسب كسداد من رصيد سابق، ولا يُخفّض قيمة المبيعات.</p>
+            </div>
             <div class="grid grid-cols-1 gap-3">
-              <UFormField label="المبلغ المدفوع">
+              <UFormField label="النقد المدفوع">
                 <UInput
                   :model-value="paidInput"
                   type="number"
@@ -395,7 +402,7 @@
                   @update:model-value="
                     (v) => {
                       blockUpdatePaidAmount = true;
-                      invoiceData.paid_amount = v === '' ? null : Number(v);
+                      invoiceData.paid_amount = v === '' ? null : Number(v) + Number(invoiceData.credit_used || 0);
                     }
                   "
                 >
@@ -606,6 +613,7 @@ function emptyInvoice(): Invoice {
     created_by: (authStore.currentUserKey as string) || "su",
     // HOME delta: paid/remaining (debts feature).
     paid_amount: 0,
+    credit_used: 0,
     remaining: 0,
     products: [emptyLine()],
     date: new Date(),
@@ -617,6 +625,26 @@ const invoiceData = ref<Invoice>(emptyInvoice());
 
 // HOME delta: paid follows invoice total until the user types manually.
 const blockUpdatePaidAmount = ref(false);
+const creditBalance = ref(0);
+const creditLoading = ref(false);
+let creditRequest = 0;
+watch(() => invoiceData.value.customer_id, async (id) => {
+  const request = ++creditRequest;
+  creditBalance.value = 0;
+  invoiceData.value.credit_used = 0;
+  if (!id || invoiceData.value.id) return;
+  creditLoading.value = true;
+  try {
+    const result = await callStaff<{ customerId: string }, { balance: number }>("getCustomerCredit", { customerId: id });
+    if (request === creditRequest) creditBalance.value = result.balance;
+  } catch { if (request === creditRequest) notify("تعذر تحميل رصيد العميل.", "error"); }
+  finally { if (request === creditRequest) creditLoading.value = false; }
+});
+watch(() => invoiceData.value.credit_used, (value, previous) => {
+  const next = Number(value || 0);
+  if (!Number.isFinite(next) || next < 0 || next > Math.min(creditBalance.value, totalOfInvoice.value)) { invoiceData.value.credit_used = previous || 0; return; }
+  if (blockUpdatePaidAmount.value) invoiceData.value.paid_amount = Math.min(totalOfInvoice.value, round2(Number(invoiceData.value.paid_amount || 0) + next - Number(previous || 0)));
+});
 const discountAmount = computed(() => {
   if (invoiceData.value.discount && invoiceData.value.discount_percentage) {
     return (
@@ -628,6 +656,9 @@ const discountAmount = computed(() => {
 const totalOfInvoice = computed(
   () => calcTotal(invoiceData.value) - discountAmount.value,
 );
+watch(totalOfInvoice, (total) => {
+  if (Number(invoiceData.value.credit_used || 0) > total) invoiceData.value.credit_used = Math.max(0, round2(total));
+});
 watch(
   () => [
     invoiceData.value.products,
@@ -1113,7 +1144,7 @@ const discountInput = computed(() => {
 // HOME delta: paid input bridge (same pattern as discount).
 const paidInput = computed(() => {
   const p = invoiceData.value.paid_amount;
-  return p === null || p === undefined || p === "" ? "" : String(p);
+  return p === null || p === undefined || p === "" ? "" : String(round2(Number(p) - Number(invoiceData.value.credit_used || 0)));
 });
 async function loadCustomers(): Promise<void> {
   loadingCustomers.value = true;

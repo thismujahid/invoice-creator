@@ -684,12 +684,12 @@ export const usePurchasing = defineStore("purchasing", () => {
           const paid = round2(toNum(invoice.paid_amount) + amount);
           const remaining = round2(toNum(invoice.remaining_amount) - amount);
           tx.update(invoiceRef, { paid_amount: paid, remaining_amount: remaining, status: deriveSupplierInvoiceStatus(paid, remaining), payment_ids: [...((invoice.payment_ids as string[]) ?? []), input.key] });
-          tx.set(doc(db, "supplier_payments", input.key), { purchase_invoice_id: input.invoiceId, advance_id: input.advanceId, amount, cash_amount: 0, note: "تسوية من سلفة المورد", created_by: by(), created_at: now });
+          tx.set(doc(db, "supplier_payments", input.key), { purchase_invoice_id: input.invoiceId, advance_id: input.advanceId, return_id: advance.source_return_id ?? null, amount, cash_amount: 0, note: advance.source_return_id ? "تسوية من رصيد مرتجع المورد" : "تسوية من سلفة المورد", created_by: by(), created_at: now });
         }
         if (cashRef && cashSnap) {
           nextCash = round2(toNum(cashSnap.data()?.balance) + amount);
           tx.set(cashRef, { balance: nextCash, updated_at: now }, { merge: true });
-          tx.set(doc(db, "cash_transactions", input.key), { type: "supplier_advance_refund", direction: "in", amount, reference_type: "supplier_invoice", reference_id: advance.purchase_invoice_id, reference_label: `استرداد سلفة من ${String(advance.supplier_name || "مورد")}`, purchase_invoice_id: advance.purchase_invoice_id, created_by: by(), created_at: now });
+          tx.set(doc(db, "cash_transactions", input.key), { type: "supplier_advance_refund", direction: "in", amount, reference_type: "supplier_invoice", reference_id: advance.purchase_invoice_id, reference_label: `استرداد سلفة من ${String(advance.supplier_name || "مورد")}`, purchase_invoice_id: advance.purchase_invoice_id, return_id: advance.source_return_id ?? null, created_by: by(), created_at: now });
         }
         tx.set(movementRef, { advance_id: input.advanceId, supplier_id: advance.supplier_id, invoice_id: input.invoiceId ?? null, mode: input.mode, amount, created_by: by(), created_at: now });
       });

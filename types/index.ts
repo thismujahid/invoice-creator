@@ -76,6 +76,7 @@ export type InvoiceDate = Date | FirestoreTimestampLike | string | null;
 
 export interface Invoice {
   id?: string;
+  edit_revision?: string;
   customer_name: string | null;
   customer_phone?: string | number | null;
   debt?: number | string | null;
@@ -87,6 +88,8 @@ export interface Invoice {
   amount_of_mahros?: number | string | null;
   // HOME delta: paid/remaining (debts feature).
   paid_amount?: number | string | null;
+  credit_used?: number;
+  credit_restored?: number;
   remaining?: number | string | null;
   // Financial/inventory accounting (optional for legacy docs).
   customer_id?: string | null;

@@ -33,7 +33,12 @@ import {
 } from "../composables/finance.ts";
 import { deriveSupplierInvoiceStatus } from "../types/finance.ts";
 import { invoiceStatsOf } from "../composables/invoiceStats.ts";
-const { safeProduct, saleAmounts } = createRequire(import.meta.url)("../functions/staffMath.cjs");
+const { safeProduct, saleAmounts, splitCustomerReturn } = createRequire(import.meta.url)("../functions/staffMath.cjs");
+
+test("server return settlement preserves cash and customer credit separately", () => {
+  assert.deepEqual(splitCustomerReturn(80, 20, 30, 0, 10), { debtReduction: 20, creditRestored: 30, cashRefund: 10, creditIssued: 20, settlement: 30 });
+  assert.throws(() => splitCustomerReturn(20, 0, 0, 0, 21));
+});
 
 test("cashier catalog excludes cost and purchase prices", () => {
   const product = safeProduct("p1", {

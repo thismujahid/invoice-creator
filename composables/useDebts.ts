@@ -25,6 +25,7 @@ export interface CustomerDebt {
   invoiceDebt: number;
   loanDebt: number;
   totalDebt: number;
+  creditBalance: number;
   unpaidCount: number;
 }
 
@@ -44,11 +45,27 @@ export const useDebts = defineStore("debts", () => {
   /** Debt book from LIGHT summaries only — never preloads full invoices (#5).
    *  Each summary is a tiny doc maintained transactionally by every flow. */
   async function fetchDebtsBook(): Promise<CustomerDebt[]> {
-    const [sumSnap, loans] = await Promise.all([
+    const [sumSnap, loans, credits, customers] = await Promise.all([
       getDocs(query(collection(db, "invoice_debt_summaries"), where("remaining", ">", 0))),
       readFrom<CustomerLoan>("customer_loans", { remaining_gt_zero: true }),
+      getDocs(query(collection(db, "customer_credits"), where("balance", ">", 0))),
+      getDocs(collection(db, "customers")),
     ]);
     const map = new Map<string, CustomerDebt>();
+    const customersById = new Map(customers.docs.map((customer) => [customer.id, customer.data()]));
+    const customersByIdentity = new Map<string, string | null>();
+    for (const customer of customers.docs) {
+      const data = customer.data();
+      const phone = normalizePhone(data.phone);
+      if (!phone) continue;
+      const identity = `${String(data.name ?? "").trim()}|${phone}`;
+      customersByIdentity.set(identity, customersByIdentity.has(identity) ? null : customer.id);
+    }
+    const resolvedCustomerId = (o: { customer_id?: string | null; customer_phone?: string | number | null; customer_name?: string | null; phone?: string | number | null; name?: string }): string | null => {
+      if (o.customer_id) return o.customer_id;
+      const phone = normalizePhone(o.customer_phone ?? o.phone);
+      return phone ? customersByIdentity.get(`${String(o.customer_name ?? o.name ?? "").trim()}|${phone}`) ?? null : null;
+    };
     const ensure = (
       key: string,
       o: { customer_id?: string | null; name?: string | null; phone?: string | number | null },
@@ -65,6 +82,7 @@ export const useDebts = defineStore("debts", () => {
           invoiceDebt: 0,
           loanDebt: 0,
           totalDebt: 0,
+          creditBalance: 0,
           unpaidCount: 0,
         };
         map.set(key, e);
@@ -75,13 +93,14 @@ export const useDebts = defineStore("debts", () => {
       const s = d.data() as Record<string, unknown>;
       const rem = round2(toNum(s.remaining));
       if (!(rem > 0)) continue;
-      const key = customerKeyOf({
+      const customerId = resolvedCustomerId({
         customer_id: (s.customer_id as string) || null,
         customer_phone: s.customer_phone as string | number | null,
         customer_name: s.customer_name as string | null,
       });
+      const key = customerKeyOf({ customer_id: customerId, customer_phone: s.customer_phone as string | number | null, customer_name: s.customer_name as string | null });
       const e = ensure(key, {
-        customer_id: (s.customer_id as string) || null,
+        customer_id: customerId,
         name: s.customer_name as string | null,
         phone: (s.customer_phone as string | number | null) ?? null,
       });
@@ -101,8 +120,9 @@ export const useDebts = defineStore("debts", () => {
     for (const loan of loans) {
       const rem = round2(toNum(loan.remaining));
       if (!(rem > 0)) continue;
-      const key = customerKeyOf({ customer_id: loan.customer_id, phone: loan.customer_phone, name: loan.customer_name });
-      const e = ensure(key, { customer_id: loan.customer_id, name: loan.customer_name, phone: loan.customer_phone ?? null });
+      const customerId = resolvedCustomerId({ customer_id: loan.customer_id, phone: loan.customer_phone, name: loan.customer_name });
+      const key = customerKeyOf({ customer_id: customerId, phone: loan.customer_phone, name: loan.customer_name });
+      const e = ensure(key, { customer_id: customerId, name: loan.customer_name, phone: loan.customer_phone ?? null });
       e.loans.push({
         kind: "loan",
         id: loan.id as string,
@@ -114,6 +134,13 @@ export const useDebts = defineStore("debts", () => {
         ref: { note: loan.note ?? null },
       });
       e.loanDebt = round2(e.loanDebt + rem);
+    }
+    for (const credit of credits.docs) {
+      const customer = customersById.get(credit.id);
+      if (!customer) continue;
+      const key = customerKeyOf({ customer_id: credit.id });
+      const entry = ensure(key, { customer_id: credit.id, name: customer.name, phone: customer.phone });
+      entry.creditBalance = round2(toNum(credit.data().balance));
     }
     const out = [...map.values()].map((e) => ({ ...e, totalDebt: round2(e.invoiceDebt + e.loanDebt) }));
     out.sort((a, b) => b.totalDebt - a.totalDebt);

@@ -7,9 +7,10 @@ const adminEmail = "mohamed.mojahead@gmail.com";
 const resetCollections = [
   "invoices", "invoice_debt_summaries", "invoice_returns", "customer_loans",
   "debt_payments", "supplier_payments", "supplier_advances",
-  "supplier_advance_transactions", "purchase_invoices",
+  "supplier_advance_transactions", "purchase_invoices", "supplier_returns",
   "inventory_transactions", "inventory_cost_adjustments", "cash_transactions",
   "operation_requests",
+  "customer_credits", "customer_credit_transactions",
   "customer_summaries", "supplier_summaries", "store_stats",
   "invoice_stats_daily", "invoice_stats_monthly",
 ];

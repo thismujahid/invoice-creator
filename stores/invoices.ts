@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { and, collection, doc, getDocs, limit as fsLimit, orderBy, or, query, startAfter, Timestamp, where, type Query, type QueryDocumentSnapshot } from "firebase/firestore";
 import type { Invoice } from "~/types";
+import type { InvoiceReturn } from "~/types/finance";
 import { toDateSafe } from "~/types";
 import { applyStockGroup, invoiceEditCashOutflowError, invoiceEditCustomerChangeError, invoiceEditPaymentError, invoiceEditStockChanges, invoiceHasReturnHistory, invoiceTotals, lineBaseQuantity, lineUnitFactor, merchandiseProfitOf, round2, round4, toNum } from "~/composables/finance";
 import { summarizeInvoice, writeDebtSummary } from "~/composables/debtSummaries";
@@ -310,6 +311,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
       if (pendingCreate?.fingerprint !== fingerprint) pendingCreate = { fingerprint, requestId: crypto.randomUUID() };
       const result = await callStaff<Omit<Invoice, "id"> & { requestId: string }, { id: string }>("createStaffSale", {
         ...payload,
+        paid_amount: round2(toNum(payload.paid_amount) - toNum(payload.credit_used)),
         requestId: pendingCreate.requestId,
       });
       pendingCreate = null;
@@ -359,6 +361,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
         const invSnap = await tx.get(invRef);
         if (!invSnap.exists()) throw new Error("VALIDATION:الفاتورة غير موجودة.");
         const orig = invSnap.data() as Record<string, unknown>;
+        if (toNum(orig.credit_used) > 0) throw new Error("VALIDATION:لا يمكن تعديل فاتورة استُخدم فيها رصيد العميل. استخدم المرتجع والتسوية.");
         const oldLines = (Array.isArray(orig.products) ? orig.products : []) as Invoice["products"];
         const returnRecords = await Promise.all(returnRefs.map((ref) => tx.get(ref)));
         const cashHistory = await Promise.all(cashHistoryRefs.map((ref) => tx.get(ref)));
@@ -640,12 +643,14 @@ export const useInvoicesStore = defineStore("invoices", () => {
     }
   };
 
-  const exportInvoicesToExcel = async (invoices: Invoice[] = []): Promise<string> => {
+  const exportInvoicesToExcel = async (invoices: Invoice[] = [], returns: InvoiceReturn[] = []): Promise<string> => {
     try {
       if (!invoices.length) return "⚠️ لا توجد فواتير للتصدير.";
       // Lazy-load xlsx (~851KB) only when the user actually exports,
       // so it never blocks initial page load.
       const XLSX = await import("xlsx/dist/xlsx.full.min.js");
+      const returnsByInvoice = new Map<string, number>();
+      for (const record of returns) returnsByInvoice.set(record.invoice_id, round2((returnsByInvoice.get(record.invoice_id) ?? 0) + Number(record.total_refund || 0)));
 
       const formatted = invoices.map((inv) => {
         const products = Array.isArray(inv.products) ? inv.products : [];
@@ -661,6 +666,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
           ? (netTotal * (Number(inv.discount) || 0)) / 100
           : Number(inv.discount) || 0;
         const totalAfterDiscount = netTotal - discountValue + (Number(inv.delivery_price) || 0);
+        const invoiceTotal = totalAfterDiscount + Number(inv.debt || 0) + Number(inv.amount_of_mahros || 0) + Number(inv.amount_of_animal_feeds || 0);
         const profit = merchandiseProfitOf(inv);
         const productsList = products
           .map((p, i) => {
@@ -687,8 +693,10 @@ export const useInvoicesStore = defineStore("invoices", () => {
           "نوع الخصم": inv.discount_percentage ? "نسبة مئوية" : "مبلغ ثابت",
           "صافي الفاتورة": netTotal || 0,
           "إجمالي التكلفة": totalCost || 0,
-          "إجمالي الفاتورة":
-            totalAfterDiscount + Number(inv.debt || 0) + Number(inv.amount_of_mahros || 0) + Number(inv.amount_of_animal_feeds || 0),
+          "إجمالي الفاتورة": invoiceTotal,
+          "حالة المرتجع": inv.return_status === "full" ? "كلي" : inv.return_status === "partial" ? "جزئي" : "لا يوجد",
+          "إجمالي المرتجعات": returnsByInvoice.get(inv.id || "") ?? 0,
+          "الصافي بعد المرتجعات": round2(invoiceTotal - (returnsByInvoice.get(inv.id || "") ?? 0)),
           الربح: profit || 0,
           المنتجات: productsList,
         };
@@ -697,7 +705,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
       const worksheet = XLSX.utils.json_to_sheet(formatted);
       const workbook = XLSX.utils.book_new();
       const rowCount = formatted.length + 1;
-      const sumColumns = ["صافي الفاتورة", "إجمالي الفاتورة", "إجمالي التكلفة", "الربح"];
+      const sumColumns = ["صافي الفاتورة", "إجمالي الفاتورة", "إجمالي المرتجعات", "الصافي بعد المرتجعات", "إجمالي التكلفة", "الربح"];
       const headerKeys = Object.keys(formatted[0] ?? {});
       const headerMap: Record<string, string> = {};
       headerKeys.forEach((key, i) => {
@@ -713,6 +721,23 @@ export const useInvoicesStore = defineStore("invoices", () => {
       range.e.r = totalRowIndex - 1;
       worksheet["!ref"] = XLSX.utils.encode_range(range);
       XLSX.utils.book_append_sheet(workbook, worksheet, "الفواتير");
+      if (returns.length) {
+        const returnRows = returns.flatMap((record) => (record.items ?? []).map((item, index) => ({
+          "رقم الفاتورة": record.invoice_id,
+          "رقم المرتجع": record.id || "",
+          التاريخ: toDateSafe(record.created_at)?.toLocaleString("ar-EG", { timeZone: "Africa/Cairo" }) ?? "",
+          المنتج: item.product_name,
+          الكمية: item.quantity,
+          الوحدة: item.unit_name || "وحدة",
+          "قيمة الصنف": item.refund_amount,
+          "إجمالي المرتجع": index === 0 ? record.total_refund : "",
+          "تخفيض الدين": index === 0 ? record.debt_reduction ?? 0 : "",
+          "المردود نقدًا": index === 0 ? record.cash_refund ?? 0 : "",
+          "رصيد محفوظ للعميل": index === 0 ? round2(toNum(record.credit_issued) + toNum(record.credit_restored)) : "",
+          ملاحظة: record.note || "",
+        })));
+        XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(returnRows), "المرتجعات");
+      }
 
       const excelBuffer = XLSX.write(workbook, { bookType: "xlsx", type: "array" }) as ArrayBuffer;
       const blob = new Blob([excelBuffer], {

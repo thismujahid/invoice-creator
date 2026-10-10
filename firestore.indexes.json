@@ -9,6 +9,14 @@
       ]
     },
     {
+      "collectionGroup": "invoice_returns",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "created_at", "order": "ASCENDING" },
+        { "fieldPath": "cash_refund", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "invoices",
       "queryScope": "COLLECTION",
       "fields": [

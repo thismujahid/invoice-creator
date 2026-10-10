@@ -5,7 +5,7 @@
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
       <h2 class="text-lg font-bold text-gray-900">الفواتير</h2>
       <!-- HOME delta: debts actions (pay-all + totals gate) + export. -->
-      <div class="flex flex-wrap gap-2">
+      <div v-if="activeTab === 'sales'" class="flex flex-wrap gap-2">
         <UButton
           v-if="isFilteredInvoicesContainsDebts"
           icon="i-lucide-hand-coins"
@@ -26,6 +26,11 @@
         >
       </div>
     </div>
+    <div class="mb-4 flex gap-2 border-b border-gray-200 pb-2" role="tablist" aria-label="أقسام الفواتير">
+      <UButton role="tab" :aria-selected="activeTab === 'sales'" :color="activeTab === 'sales' ? 'success' : 'neutral'" :variant="activeTab === 'sales' ? 'solid' : 'soft'" @click="activeTab = 'sales'">فواتير البيع</UButton>
+      <UButton role="tab" :aria-selected="activeTab === 'returns'" :color="activeTab === 'returns' ? 'success' : 'neutral'" :variant="activeTab === 'returns' ? 'solid' : 'soft'" @click="activeTab = 'returns'">سجل المرتجعات</UButton>
+    </div>
+    <div v-show="activeTab === 'sales'">
     <div class="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
       <UInput
         v-model="searchText"
@@ -61,15 +66,19 @@
       </div>
     </div>
     <UiAppStatsSkeleton v-if="statsLoading" />
+    <UAlert v-else-if="statsError" color="error" variant="soft" class="mb-3" title="تعذر تحميل مؤشرات المبيعات.">
+      <template #actions><UButton size="xs" color="error" variant="soft" @click="loadInvoiceStats">إعادة المحاولة</UButton></template>
+    </UAlert>
     <UAlert v-else-if="!statsReady" color="warning" variant="soft" class="mb-3" title="إجماليات الفواتير تحتاج تهيئة من أدوات المدير في صفحة الخزنة." />
     <div v-else class="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-5">
       <UCard variant="outline">
         <div class="flex items-center justify-between gap-2">
           <div class="min-w-0">
             <div class="truncate text-base font-bold sm:text-lg">
-              {{ formatePrice(invoiceStats.total_sales) }}
+              {{ formatePrice(netSalesOf(invoiceStats)) }}
             </div>
-            <div class="text-xs text-gray-500">إجمالي المبيعات{{ selectedDate ? " في اليوم المحدد" : "" }}</div>
+            <div class="text-xs text-gray-500">صافي المبيعات بعد المرتجعات{{ selectedDate ? " في اليوم المحدد" : "" }}</div>
+            <div v-if="invoiceStats.returns_total" class="text-xs text-gray-400">الأصلي {{ formatePrice(invoiceStats.total_sales) }} ج · المرتجعات {{ formatePrice(invoiceStats.returns_total) }} ج</div>
           </div>
           <UIcon
             name="i-lucide-banknote"
@@ -123,9 +132,9 @@
         <div class="flex items-center justify-between gap-2">
           <div class="min-w-0">
             <div class="truncate text-base font-bold sm:text-lg">
-              {{ formatePrice(invoiceStats.total_paid) }}
+              {{ formatePrice(netCollectedOf(invoiceStats.total_paid, cashRefundTotal)) }}
             </div>
-            <div class="text-xs text-gray-500">إجمالي المدفوع</div>
+            <div class="text-xs text-gray-500">صافي المدفوع بعد رد النقد</div>
           </div>
           <UIcon name="i-lucide-wallet" class="size-8 shrink-0 text-blue-500" />
         </div>
@@ -182,12 +191,12 @@
             >
               <td class="p-2 font-medium">
                 {{ row.name }}
-                <UBadge v-if="row.returnBadge" color="warning" variant="soft" size="xs" class="ms-1">{{ row.returnBadge }}</UBadge>
+                <UBadge v-if="row.returnBadge" color="warning" variant="soft" size="xs" class="ms-1">{{ row.returnBadge }} · {{ formatePrice(row.returnTotal) }} ج</UBadge>
                 <UBadge v-if="row.hasPreviousBalance" color="info" variant="soft" size="xs" class="ms-1">يشمل رصيدًا سابقًا</UBadge>
               </td>
               <td class="p-2 text-gray-600" dir="ltr">{{ row.phone }}</td>
               <td class="p-2">{{ row.products_count }}</td>
-              <td class="p-2 font-semibold">{{ row.total }}</td>
+              <td class="p-2 font-semibold">{{ row.total }}<span v-if="row.returnBadge" class="block text-xs font-normal text-gray-500">الأصلي {{ row.originalTotal }}</span></td>
               <td class="p-2 text-red-600">{{ formatePrice(row.debt) }}</td>
               <td class="p-2 font-semibold text-emerald-600">
                 {{ row.profit }}
@@ -219,7 +228,7 @@
                       @click="copyInvoiceForEdit(row.invoice, true)"
                       class="flex items-center justify-center"
                   /></UTooltip>
-                  <UTooltip text="تعديل الفاتورة"
+                  <UTooltip v-if="!row.invoice.credit_used" text="تعديل الفاتورة"
                     ><UButton
                       icon="i-lucide-pencil"
                       color="success"
@@ -236,7 +245,7 @@
                       variant="soft"
                       size="xs"
                       aria-label="عرض الفاتورة"
-                      @click="viewRow = row"
+                      @click="openView(row)"
                       class="flex items-center justify-center"
                     /></UTooltip>
                   <UTooltip text="إنشاء مرتجع"
@@ -276,18 +285,18 @@
           v-for="row in paginateArray"
           :key="row.id"
           variant="outline"
-          @click="viewRow = row"
+          @click="openView(row)"
         >
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0">
               <div class="truncate font-bold">{{ row.name }}</div>
-              <UBadge v-if="row.returnBadge" color="warning" variant="soft" size="xs" class="mt-0.5">{{ row.returnBadge }}</UBadge>
+              <UBadge v-if="row.returnBadge" color="warning" variant="soft" size="xs" class="mt-0.5">{{ row.returnBadge }} · {{ formatePrice(row.returnTotal) }} ج</UBadge>
               <UBadge v-if="row.hasPreviousBalance" color="info" variant="soft" size="xs" class="mt-0.5">{{ "يشمل رصيدًا سابقًا" }}</UBadge>
               <div class="text-xs text-gray-500" dir="ltr">{{ row.phone }}</div>
               <div class="mt-1 text-xs text-gray-500">
                 {{ row.created_at }} • {{ row.products_count }} منتجات
               </div>
-              <div class="mt-1 font-bold text-emerald-700">{{ row.total }}</div>
+              <div class="mt-1 font-bold text-emerald-700">{{ row.total }}<span v-if="row.returnBadge" class="block text-xs font-normal text-gray-500">الأصلي {{ row.originalTotal }}</span></div>
               <div
                 v-if="row.debt"
                 class="mt-0.5 text-xs font-semibold text-red-600"
@@ -319,6 +328,7 @@
                 class="flex items-center justify-center"
               />
               <UButton
+                v-if="!row.invoice.credit_used"
                 icon="i-lucide-pencil"
                 color="success"
                 variant="soft"
@@ -365,9 +375,11 @@
         v-if="viewRow"
         class="invoice-creator-view max-h-[80vh] overflow-auto"
       >
-        <Invoice
+        <USkeleton v-if="viewReturnsLoading" class="h-64 w-full" />
+        <Invoice v-else
           class="mx-auto"
           :view-mode="true"
+          :returns="viewReturns"
           :invoice-data="{
             ...viewRow.invoice,
             date: viewRow.created_at_object,
@@ -375,6 +387,7 @@
           }"
           @close="viewRow = null"
         />
+        <ReturnHistory v-if="viewRow.returnBadge && !viewReturnsLoading" class="mt-4" :customer-returns="viewReturns" :error="viewReturnsError" />
       </div>
     </UiAppDialog>
     <!-- Delete confirm -->
@@ -403,34 +416,39 @@
       </template>
     </UiAppDialog>
     <!-- Create return -->
-    <UiAppDialog v-model:open="returnOpen" title="إنشاء مرتجع">
-      <div v-if="returnInvoice" class="space-y-3">
-        <p class="text-sm text-gray-500">
-          الفاتورة: <strong>{{ returnInvoice.customer_name }}</strong>
-          — المتبقي الحالي: <strong>{{ formatePrice(outstandingDebtOf(returnInvoice)) }}</strong>
-        </p>
-        <div v-for="r in returnRows" :key="r.key" class="rounded-lg border border-gray-200 p-2.5">
-          <div class="mb-1.5 flex items-center justify-between gap-2">
-            <div class="min-w-0 text-sm font-bold">{{ formatInvoiceLineName(r.product_name, r.unit_name) }}</div>
-            <div class="shrink-0 text-xs text-gray-500">{{ r.unit_name }} • سعر البيع: {{ formatePrice(r.unit_price) }} • المتاح: {{ r.maxQty }}</div>
-          </div>
-          <UInputNumber v-model="r.qty" :min="0" :max="r.maxQty" :step="1" size="lg" class="w-full" />
-          <div class="mt-1 text-xs text-gray-500">قيمة الاسترداد: {{ formatePrice(previewRefund(r)) }}</div>
+    <UiAppDialog v-model:open="returnOpen" title="إنشاء مرتجع" width="sm:max-w-3xl">
+      <div v-if="returnInvoice" class="max-h-[70vh] space-y-4 overflow-y-auto" dir="rtl">
+        <div class="grid gap-2 rounded-xl bg-gray-50 p-3 text-sm sm:grid-cols-3">
+          <div><span class="block text-xs text-gray-500">العميل</span><strong>{{ returnInvoice.customer_name }}</strong></div>
+          <div><span class="block text-xs text-gray-500">الدين على الفاتورة</span><strong>{{ formatePrice(outstandingDebtOf(returnInvoice)) }} ج</strong></div>
+          <div><span class="block text-xs text-gray-500">رصيد محفوظ للعميل</span><strong>{{ formatePrice(returnCreditBalance) }} ج</strong></div>
         </div>
+        <div class="space-y-2"><h3 class="text-sm font-bold">الأصناف المراد إرجاعها</h3>
+        <div v-for="r in returnRows" :key="r.key" class="grid items-center gap-2 rounded-xl border border-gray-200 p-3 sm:grid-cols-[minmax(0,1fr)_9rem_7rem]">
+          <div class="min-w-0"><div class="font-semibold">{{ formatInvoiceLineName(r.product_name, r.unit_name) }}</div><div class="text-xs text-gray-500">المتاح {{ r.maxQty }} · سعر البيع {{ formatePrice(r.unit_price) }} ج</div></div>
+          <UFormField label="الكمية"><UInputNumber v-model="r.qty" :min="0" :max="r.maxQty" :step="1" size="lg" class="w-full" /></UFormField>
+          <div class="text-sm"><span class="block text-xs text-gray-500">قيمة المرتجع</span><strong>{{ formatePrice(previewRefund(r)) }} ج</strong></div>
+        </div></div>
         <UEmpty v-if="!returnRows.length" icon="i-lucide-undo-2" title="لا توجد أصناف قابلة للإرجاع" />
-        <UFormField label="ملاحظة">
-          <UInput v-model="returnNote" placeholder="اختياري" size="lg" class="w-full" />
-        </UFormField>
-        <UAlert color="info" variant="soft" :title="`الإجمالي المسترد: ${formatePrice(returnPreviewTotal)} — تخفيض الدين: ${formatePrice(returnPreviewSplit.debtReduction)} — نقدي: ${formatePrice(returnPreviewSplit.cashRefund)}`" />
+        <div class="space-y-3 rounded-xl border border-blue-100 bg-blue-50 p-3">
+          <h3 class="text-sm font-bold">تسوية المرتجع</h3>
+          <div class="grid gap-2 text-sm sm:grid-cols-2"><div>إجمالي المرتجع <strong class="float-end">{{ formatePrice(returnPreviewTotal) }} ج</strong></div><div>تخفيض دين الفاتورة <strong class="float-end">{{ formatePrice(returnPreviewSplit.debtReduction) }} ج</strong></div><div v-if="returnPreviewSplit.creditRestored">إعادة رصيد استُخدم في الشراء <strong class="float-end">{{ formatePrice(returnPreviewSplit.creditRestored) }} ج</strong></div><div>المتاح للرد نقدًا أو حفظه <strong class="float-end">{{ formatePrice(returnPreviewSplit.settlement) }} ج</strong></div></div>
+          <UFormField label="المبلغ الذي سيُرد نقدًا الآن"><UInputNumber v-model="returnCashRefund" :min="0" :max="returnPreviewSplit.settlement" :step="0.01" class="w-full" /></UFormField>
+          <p class="text-sm font-semibold text-emerald-800">سيُحفظ للعميل: {{ formatePrice(returnPreviewSplit.creditIssued + returnPreviewSplit.creditRestored) }} ج · النقد الخارج: {{ formatePrice(returnCashRefund || 0) }} ج</p>
+          <p class="text-xs text-gray-600">يمكن استخدام الرصيد في فاتورة لاحقة دون تغيير قيمة المبيعات.</p>
+        </div>
+        <UFormField label="ملاحظة"><UInput v-model="returnNote" placeholder="اختياري" size="lg" class="w-full" /></UFormField>
         <p v-if="returnError" class="text-sm font-semibold text-red-600">{{ returnError }}</p>
       </div>
       <template #footer>
         <div class="flex w-full gap-2">
-          <UButton color="warning" class="min-h-11 flex-1" :loading="returnBusy" :disabled="!returnRows.length" icon="i-lucide-undo-2" @click="submitReturn">تأكيد المرتجع</UButton>
+          <UButton color="warning" class="min-h-11 flex-1" :loading="returnBusy" :disabled="!returnRows.some((row) => row.qty > 0) || returnCashRefund > returnPreviewSplit.settlement" icon="i-lucide-undo-2" @click="submitReturn">تأكيد المرتجع</UButton>
           <UButton color="neutral" variant="soft" class="min-h-11 flex-1" :disabled="returnBusy" @click="returnOpen = false">إلغاء</UButton>
         </div>
       </template>
     </UiAppDialog>
+    </div>
+    <ReturnJournal v-if="activeTab === 'returns'" />
   </div>
   <template #fallback><UiAppTableSkeleton /></template>
   </ClientOnly>
@@ -440,11 +458,13 @@
 import type { Invoice } from "~/types";
 import { toDateSafe } from "~/types";
 import type { ReturnRow } from "~/composables/useInvoiceReturns";
+import type { InvoiceReturn } from "~/types/finance";
 import type { QueryDocumentSnapshot } from "firebase/firestore";
-import { doc, getDoc } from "firebase/firestore";
-import { invoiceDayKey } from "~/composables/invoiceStats";
+import { collection, doc, getAggregateFromServer, getDoc, query, sum, where } from "firebase/firestore";
+import { cairoDayStart, invoiceDayKey, netCollectedOf, netSalesOf } from "~/composables/invoiceStats";
 
 definePageMeta({ title: "الفواتير" });
+const activeTab = ref<"sales" | "returns">("sales");
 const route = useRoute();
 const authStore = useAuth();
 const { db } = useFirebase();
@@ -505,38 +525,60 @@ const exporting = ref(false);
 const deleting = ref(false);
 const statsLoading = ref(true);
 const statsReady = ref(false);
-const invoiceStats = ref({ total_sales: 0, total_paid: 0, outstanding_customer_debt: 0, total_profit: 0, invoice_count: 0 });
+const statsError = ref(false);
+const invoiceStats = ref({ total_sales: 0, returns_total: 0, total_paid: 0, outstanding_customer_debt: 0, total_profit: 0, invoice_count: 0 });
+const cashRefundTotal = ref(0);
+let statsRequest = 0;
 
 async function loadInvoiceStats(): Promise<void> {
+  const request = ++statsRequest;
   statsLoading.value = true;
+  statsError.value = false;
   try {
     const statsRef = selectedDate.value
       ? doc(db, "invoice_stats_daily", invoiceDayKey({ date: selectedDate.value }) as string)
       : doc(db, "store_stats", "current");
     const snapshot = await getDoc(statsRef);
+    if (request !== statsRequest) return;
     if (!snapshot.exists()) {
       statsReady.value = false;
-      invoiceStats.value = { total_sales: 0, total_paid: 0, outstanding_customer_debt: 0, total_profit: 0, invoice_count: 0 };
+      invoiceStats.value = { total_sales: 0, returns_total: 0, total_paid: 0, outstanding_customer_debt: 0, total_profit: 0, invoice_count: 0 };
+      cashRefundTotal.value = 0;
       return;
     }
     const data = snapshot.data();
     statsReady.value = selectedDate.value !== null || data.initialized === true;
     if (!statsReady.value) {
-      invoiceStats.value = { total_sales: 0, total_paid: 0, outstanding_customer_debt: 0, total_profit: 0, invoice_count: 0 };
+      invoiceStats.value = { total_sales: 0, returns_total: 0, total_paid: 0, outstanding_customer_debt: 0, total_profit: 0, invoice_count: 0 };
+      cashRefundTotal.value = 0;
       return;
     }
     invoiceStats.value = {
       total_sales: Number(data.total_sales) || 0,
+      returns_total: Number(data.returns_total) || 0,
       total_paid: Number(data.total_paid) || 0,
       outstanding_customer_debt: Number(data.outstanding_customer_debt ?? data.outstanding_debt) || 0,
       total_profit: Number(data.total_profit) || 0,
       invoice_count: Math.max(0, Math.floor(Number(data.invoice_count) || 0)),
     };
+    const returns = collection(db, "invoice_returns");
+    const dayKey = selectedDate.value ? invoiceDayKey({ date: selectedDate.value }) : null;
+    let returnsQuery = query(returns);
+    if (dayKey) {
+      const nextDay = new Date(Date.UTC(Number(dayKey.slice(0, 4)), Number(dayKey.slice(5, 7)) - 1, Number(dayKey.slice(8, 10)) + 1)).toISOString().slice(0, 10);
+      returnsQuery = query(returns, where("created_at", ">=", cairoDayStart(dayKey)), where("created_at", "<", cairoDayStart(nextDay)));
+    }
+    const refunds = await getAggregateFromServer(returnsQuery, { cashRefund: sum("cash_refund") });
+    if (request !== statsRequest) return;
+    cashRefundTotal.value = Number(refunds.data().cashRefund) || 0;
   } catch (error) {
+    if (request !== statsRequest) return;
     console.error(error);
     statsReady.value = false;
+    statsError.value = true;
+    cashRefundTotal.value = 0;
   } finally {
-    statsLoading.value = false;
+    if (request === statsRequest) statsLoading.value = false;
   }
 }
 
@@ -632,10 +674,16 @@ function formatTimestamp(
   return `${formattedDate} ${formattedTime}`;
 }
 const { formatePrice, calcTotal, formatInvoiceLineName } = useHelpers();
-const { round2, lineRefundValue, netRatioOf, splitRefund, outstandingDebtOf, lineBaseQuantity, merchandiseProfitOf } = useFinance();
+const { round2, lineRefundValue, netRatioOf, splitCustomerReturn, outstandingDebtOf, lineBaseQuantity, merchandiseProfitOf } = useFinance();
 const invoicesStore = useInvoicesStore();
 const customerStore = useCustomersStore();
 const returnsApi = useInvoiceReturns();
+const returnTotals = ref<Record<string, number>>({});
+const returnProfitAdjustments = ref<Record<string, number>>({});
+const viewReturns = ref<InvoiceReturn[]>([]);
+const viewReturnsLoading = ref(false);
+const viewReturnsError = ref("");
+let viewReturnsRequest = 0;
 const productsStore = useProductsStore();
 const debtsApi = useDebts();
 const { notify: notifyToast } = useAppToast();
@@ -671,11 +719,13 @@ const paginateArray = computed(() => {
       name: invoice.customer_name,
       phone: invoice.customer_phone,
       products_count: invoice.products?.length || 0,
-      total: formatePrice(calcTotal(invoice) - discountAmount(invoice)),
+      total: formatePrice(round2(calcTotal(invoice) - discountAmount(invoice) - (returnTotals.value[invoice.id || ""] ?? 0))),
+      originalTotal: formatePrice(calcTotal(invoice) - discountAmount(invoice)),
       // HOME delta: debt + profit columns replace the creator column.
       debt: outstandingDebtOf(invoice),
-      profit: formatePrice(calcInvTotal(invoice)),
+      profit: formatePrice(round2(calcInvTotal(invoice) - (returnProfitAdjustments.value[invoice.id || ""] ?? 0))),
       returnBadge: returnBadgeFor(invoice),
+      returnTotal: returnTotals.value[invoice.id || ""] ?? 0,
       hasPreviousBalance: Number(invoice.debt ?? 0) > 0,
       created_at: formatTimestamp(
         (invoice.date as { seconds?: number })?.seconds,
@@ -721,6 +771,25 @@ async function loadInvoices(reset = false) {
     if (reset) { currentPage.value = 1; invoiceCursors.value = [null]; }
     const page = await invoicesStore.fetchInvoicePage(invoiceFilters(), invoiceCursors.value[currentPage.value - 1] ?? null, currentPerPage.value);
     invoicesStore.list = page.items;
+    try {
+      const records = await returnsApi.fetchForInvoices(page.items.map((invoice) => invoice.id || ""));
+      const totals: Record<string, number> = {};
+      const profits: Record<string, number> = {};
+      for (const record of records) {
+        totals[record.invoice_id] = round2((totals[record.invoice_id] ?? 0) + toNum(record.total_refund));
+        if (record.items?.length && record.items.every((item) => Number.isFinite(Number(item.original_unit_cost)) && Number.isFinite(Number(item.base_quantity ?? item.quantity)))) {
+          const returnedCost = record.items.reduce((sum, item) => sum + Number(item.original_unit_cost) * Number(item.base_quantity ?? item.quantity), 0);
+          profits[record.invoice_id] = round2((profits[record.invoice_id] ?? 0) + toNum(record.total_refund) - returnedCost);
+        }
+      }
+      returnTotals.value = totals;
+      returnProfitAdjustments.value = profits;
+    } catch (error) {
+      console.error(error);
+      returnTotals.value = {};
+      returnProfitAdjustments.value = {};
+      loadError.value = "تعذر تحميل قيم المرتجعات. حدّث الصفحة للمحاولة مجددًا.";
+    }
     hasMoreInvoices.value = page.hasMore;
     if (page.cursor) invoiceCursors.value[currentPage.value] = page.cursor;
     if (page.error) loadError.value = page.error;
@@ -750,6 +819,7 @@ type InvoiceRow = {
   debt: string | number | null;
   profit: string;
   returnBadge: string;
+  returnTotal: number;
   hasPreviousBalance: boolean;
   created_at: string;
   invoice: Invoice;
@@ -761,6 +831,23 @@ function returnBadgeFor(inv: Invoice): string {
   return "";
 }
 const viewRow = ref<InvoiceRow | null>(null);
+async function openView(row: InvoiceRow): Promise<void> {
+  viewRow.value = row;
+  viewReturns.value = [];
+  viewReturnsError.value = "";
+  viewReturnsLoading.value = false;
+  const request = ++viewReturnsRequest;
+  if (!row.returnBadge || !row.id) return;
+  viewReturnsLoading.value = true;
+  try {
+    const records = await returnsApi.fetchForInvoices([row.id]);
+    if (request === viewReturnsRequest) viewReturns.value = records.sort((a, b) => (toDateSafe(b.created_at)?.getTime() ?? 0) - (toDateSafe(a.created_at)?.getTime() ?? 0));
+  } catch {
+    if (request === viewReturnsRequest) viewReturnsError.value = "تعذر تحميل سجل المرتجعات.";
+  } finally {
+    if (request === viewReturnsRequest) viewReturnsLoading.value = false;
+  }
+}
 const viewOpen = computed({
   get: () => viewRow.value !== null,
   set: (v: boolean) => {
@@ -799,7 +886,8 @@ async function handleSuccess(isSuccess: boolean) {
     const allFiltered = await invoicesStore.fetchInvoicesForExport(invoiceFilters());
     const queryText = searchText.value.trim().toLocaleLowerCase();
     const matching = queryText ? allFiltered.filter((invoice) => `${invoice.customer_name ?? ""} ${invoice.customer_phone ?? ""}`.toLocaleLowerCase().includes(queryText)) : allFiltered;
-    const res = await invoicesStore.exportInvoicesToExcel(matching);
+    const records = await returnsApi.fetchForInvoices(matching.map((invoice) => invoice.id || ""));
+    const res = await invoicesStore.exportInvoicesToExcel(matching, records);
     authStore.snackBarText = res;
     authStore.snackBarColor = "success";
   } catch (err) {
@@ -815,6 +903,8 @@ const returnRows = ref<ReturnRow[]>([]);
 const returnNote = ref("");
 const returnError = ref("");
 const returnBusy = ref(false);
+const returnCashRefund = ref(0);
+const returnCreditBalance = ref(0);
 const returnOpen = computed({
   get: () => returnInvoice.value !== null,
   set: (v: boolean) => {
@@ -824,10 +914,18 @@ const returnOpen = computed({
 async function openReturn(inv: Invoice): Promise<void> {
   returnError.value = "";
   returnNote.value = "";
+  returnCashRefund.value = 0;
+  returnCreditBalance.value = 0;
   returnInvoice.value = inv;
   returnRows.value = [];
   const prev = await returnsApi.fetchReturnsForInvoice(inv.id as string);
   returnRows.value = returnsApi.buildReturnRows(inv, prev);
+  if (inv.customer_id) {
+    try {
+      const credit = await callStaff<{ customerId: string }, { balance: number }>("getCustomerCredit", { customerId: inv.customer_id });
+      if (returnInvoice.value?.id === inv.id) returnCreditBalance.value = credit.balance;
+    } catch { returnError.value = "تعذر تحميل رصيد العميل. أعد فتح المرتجع."; }
+  }
 }
 /** Exact preview refund for a cost-group row: spread over its own lines. */
 function rowRefundValue(r: ReturnRow, ratio: number): number {
@@ -847,11 +945,11 @@ function previewRefund(r: ReturnRow): number {
   return rowRefundValue(r, netRatioOf(returnInvoice.value));
 }
 const returnPreviewSplit = computed(() => {
-  if (!returnInvoice.value) return { debtReduction: 0, cashRefund: 0, total: 0 };
+  if (!returnInvoice.value) return { debtReduction: 0, creditRestored: 0, creditIssued: 0, settlement: 0, total: 0 };
   const ratio = netRatioOf(returnInvoice.value);
   const total = round2(returnRows.value.reduce((s, r) => s + rowRefundValue(r, ratio), 0));
-  const split = splitRefund(total, outstandingDebtOf(returnInvoice.value));
-  return { ...split, total };
+  const split = splitCustomerReturn(total, outstandingDebtOf(returnInvoice.value), Number(returnInvoice.value.credit_used || 0), Number(returnInvoice.value.credit_restored || 0), 0);
+  return { ...split, cashRefund: Number(returnCashRefund.value || 0), creditIssued: Math.max(0, round2(split.settlement - Number(returnCashRefund.value || 0))), total };
 });
 const returnPreviewTotal = computed(() => returnPreviewSplit.value.total);
 async function submitReturn(): Promise<void> {
@@ -865,13 +963,14 @@ async function submitReturn(): Promise<void> {
           .map((r) => ({ rowKey: r.key, quantity: Math.min(Math.trunc(round2(toNum(r.qty))), r.maxQty) }))
           .filter((i) => i.quantity > 0),
         returnNote.value.trim() || null,
+        Number(returnCashRefund.value || 0),
       );
     if (!res.ok) {
       returnError.value = res.error;
       return;
     }
     notifyToast(
-      `تم تسجيل المرتجع — تخفيض الدين: ${formatePrice(res.debtReduction)}، نقدي: ${formatePrice(res.cashRefund)}.`,
+      `تم تسجيل المرتجع — تخفيض الدين: ${formatePrice(res.debtReduction)}، نقدي: ${formatePrice(res.cashRefund)}، رصيد للعميل: ${formatePrice(res.creditIssued + res.creditRestored)}.`,
       "success",
     );
     returnInvoice.value = null;

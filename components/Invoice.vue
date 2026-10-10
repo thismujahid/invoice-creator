@@ -41,6 +41,13 @@
             <td>{{ row["سعر الوحدة"] }}</td>
             <td class="font-semibold">{{ row.الإجمالي }}</td>
           </tr>
+          <tr v-for="(row, i) in returnedProducts" :key="`return-${i}`" class="no-print text-red-700">
+            <td>-{{ row.quantity }}</td>
+            <td class="text-start">مرتجع · {{ row.name }}</td>
+            <td></td>
+            <td>{{ formatePrice(row.unitPrice) }}</td>
+            <td class="font-semibold">-{{ formatePrice(row.amount) }}</td>
+          </tr>
         </tbody>
       </table>
       <div class="sticky bottom-0 z-10 bg-white pt-1">
@@ -57,18 +64,27 @@
             <span>{{ invoiceData.discount_percentage ? `${invoiceData.discount}%` : formatePrice(invoiceData.discount) }}</span>
           </div>
           <div class="text-sm font-bold">
-            <strong>الإجمالي {{ invoiceData.discount ? "النهائي" : "" }}/</strong>
+            <strong v-if="hasReturns" class="no-print">الإجمالي الأصلي/</strong>
+            <strong :class="hasReturns ? 'print-only' : ''">الإجمالي {{ invoiceData.discount ? "النهائي" : "" }}/</strong>
             <span>{{ formatePrice(calcTotal(invoiceData) - discountAmount) }}</span>
           </div>
+          <div v-if="hasReturns" class="no-print text-red-700"><strong>المرتجعات/</strong><span>-{{ formatePrice(returnTotal) }}</span></div>
+          <div v-if="hasReturns" class="no-print text-sm font-bold"><strong>الصافي بعد المرتجعات/</strong><span>{{ formatePrice(calcTotal(invoiceData) - discountAmount - returnTotal) }}</span></div>
           <!-- paid / remaining rows: 0 is a valid financial value, never hide it. -->
           <div v-if="invoiceData.paid_amount !== null && invoiceData.paid_amount !== undefined">
             <strong>المدفوع/</strong>
             <span>{{ formatePrice(invoiceData.paid_amount) }}</span>
           </div>
-          <div v-if="invoiceData.paid_amount !== null && invoiceData.paid_amount !== undefined">
+          <div v-if="invoiceData.credit_used"><strong>من رصيد العميل/</strong><span>{{ formatePrice(invoiceData.credit_used) }}</span></div>
+          <div v-if="invoiceData.credit_used"><strong>نقد مدفوع/</strong><span>{{ formatePrice(Number(invoiceData.paid_amount || 0) - Number(invoiceData.credit_used || 0)) }}</span></div>
+          <div v-if="hasReturns && cashRefundTotal" class="no-print text-red-700"><strong>نقد مردود/</strong><span>-{{ formatePrice(cashRefundTotal) }}</span></div>
+          <div v-if="hasReturns && invoiceData.paid_amount !== null && invoiceData.paid_amount !== undefined" class="no-print"><strong>صافي النقد المحصل/</strong><span>{{ formatePrice(netCollectedOf(Number(invoiceData.paid_amount) - Number(invoiceData.credit_used || 0), cashRefundTotal)) }}</span></div>
+          <div v-if="hasReturns && creditAddedTotal" class="no-print"><strong>رصيد أُضيف للعميل/</strong><span>{{ formatePrice(creditAddedTotal) }}</span></div>
+          <div v-if="invoiceData.paid_amount !== null && invoiceData.paid_amount !== undefined" :class="hasReturns ? 'print-only' : ''">
             <strong>المتبقي/</strong>
             <span>{{ formatePrice((calcTotal(invoiceData) - discountAmount) - Number(invoiceData.paid_amount ?? 0)) }}</span>
           </div>
+          <div v-if="hasReturns" class="no-print"><strong>المتبقي الحالي/</strong><span>{{ formatePrice(invoiceData.remaining ?? Math.max(0, calcTotal(invoiceData) - discountAmount - returnTotal - Number(invoiceData.paid_amount ?? 0) + cashRefundTotal)) }}</span></div>
         </div>
       </div>
       <div class="no-print mt-3 flex gap-2 pb-1">
@@ -121,11 +137,14 @@
 
 <script setup lang="ts">
 import type { Invoice, InvoiceProductLine } from "~/types";
+import type { InvoiceReturn } from "~/types/finance";
+import { netCollectedOf } from "~/composables/invoiceStats";
 
 const props = defineProps<{
   invoiceData: Invoice;
   viewMode?: boolean;
   isForAdmin?: boolean;
+  returns?: InvoiceReturn[];
 }>();
 const { formatDate, calcTotal, formatTime12Hour, formatePrice, useDownloadPDF, formatInvoiceLineName } = useHelpers();
 const { notify } = useAppToast();
@@ -149,6 +168,16 @@ const mappedProducts = computed(() => {
     };
   });
 });
+const hasReturns = computed(() => !!props.viewMode && !!props.returns?.length);
+const returnTotal = computed(() => (props.returns ?? []).reduce((sum, item) => sum + Number(item.total_refund || 0), 0));
+const cashRefundTotal = computed(() => (props.returns ?? []).reduce((sum, item) => sum + Number(item.cash_refund || 0), 0));
+const creditAddedTotal = computed(() => (props.returns ?? []).reduce((sum, item) => sum + Number(item.credit_issued || 0) + Number(item.credit_restored || 0), 0));
+const returnedProducts = computed(() => hasReturns.value ? (props.returns ?? []).flatMap((record) => (record.items ?? []).map((item) => ({
+  name: formatInvoiceLineName(item.product_name, item.unit_name),
+  quantity: item.quantity,
+  unitPrice: item.quantity ? item.refund_amount / item.quantity : 0,
+  amount: item.refund_amount,
+}))) : []);
 const costConfirmOpen = ref(false);
 const costConfirmed = ref(false);
 const pendingSaveOnly = ref<boolean | undefined>(undefined);
@@ -315,9 +344,18 @@ defineExpose({ startPrint });
 .inv-footer > div:not(:last-of-type) {
   border-bottom: 1px dashed rgba(128, 128, 128, 0.163);
 }
+.print-only {
+  display: none !important;
+}
 @media print {
   .no-print {
     display: none !important;
+  }
+  strong.print-only {
+    display: inline !important;
+  }
+  .inv-footer > div.print-only {
+    display: flex !important;
   }
 }
 </style>

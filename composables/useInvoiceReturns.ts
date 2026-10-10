@@ -1,7 +1,7 @@
 import { collection, doc, getDocs, limit as fsLimit, orderBy, query, where } from "firebase/firestore";
 import type { InvoiceReturn, InvoiceReturnItem } from "~/types/finance";
 import type { Invoice } from "~/types";
-import { applyStockGroup, lineBaseQuantity, lineRefundValue, lineUnitFactor, netRatioOf, outstandingDebtOf, round2, round4, splitRefund, toNum } from "./finance";
+import { applyStockGroup, lineBaseQuantity, lineRefundValue, lineUnitFactor, netRatioOf, outstandingDebtOf, round2, round4, splitCustomerReturn, toNum } from "./finance";
 import { summarizeInvoice, writeDebtSummary } from "./debtSummaries";
 import { writeCustomerSummaryDelta, writeInvoiceStatsDelta } from "./performanceSummaries";
 
@@ -58,6 +58,16 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
       console.error(e);
       return [];
     }
+  }
+
+  async function fetchForInvoices(invoiceIds: string[]): Promise<InvoiceReturn[]> {
+    const ids = [...new Set(invoiceIds.filter(Boolean))];
+    const result: InvoiceReturn[] = [];
+    for (let index = 0; index < ids.length; index += 30) {
+      const snapshot = await getDocs(query(collection(db, "invoice_returns"), where("invoice_id", "in", ids.slice(index, index + 30))));
+      result.push(...snapshot.docs.map((item) => ({ id: item.id, ...(item.data() as object) }) as InvoiceReturn));
+    }
+    return result;
   }
 
   /** Build returnable rows for an invoice: sold per (product,price) minus
@@ -189,7 +199,8 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
     invoice: Invoice,
     items: ReturnLineInput[],
     note?: string | null,
-  ): Promise<{ ok: true; id: string; debtReduction: number; cashRefund: number } | { ok: false; error: string }> {
+    cashRefundRequested = 0,
+  ): Promise<{ ok: true; id: string; debtReduction: number; cashRefund: number; creditIssued: number; creditRestored: number } | { ok: false; error: string }> {
     if (!invoice.id) return { ok: false, error: "الفاتورة غير صالحة." };
     const wanted = items.filter((i) => i.rowKey && toNum(i.quantity) > 0);
     if (!wanted.length) return { ok: false, error: "حدد صنفاً واحداً على الأقل بكمية أكبر من صفر." };
@@ -199,6 +210,8 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
       let returnId = "";
       let debtReduction = 0;
       let cashRefund = 0;
+      let creditIssued = 0;
+      let creditRestored = 0;
       await runTx(async (tx) => {
         // 1. Fresh invoice + previous returns (anti over-return).
         const invRef = doc(db, "invoices", invoice.id as string);
@@ -261,9 +274,14 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
         // 3. Debt-first split against CURRENT remaining (shared legacy rule:
         //    legacy invoices without paid state count as paid → full cash).
         const remainingDebt = outstandingDebtOf(fresh);
-        const split = splitRefund(totalRefund, remainingDebt);
-        debtReduction = split.debtReduction;
-        cashRefund = split.cashRefund;
+        let settlement;
+        try { settlement = splitCustomerReturn(totalRefund, remainingDebt, toNum(fresh.credit_used), toNum(fresh.credit_restored), cashRefundRequested); }
+        catch { throw new Error("VALIDATION:مبلغ الرد النقدي يتجاوز المستحق للعميل."); }
+        debtReduction = settlement.debtReduction;
+        creditRestored = settlement.creditRestored;
+        cashRefund = settlement.cashRefund;
+        creditIssued = settlement.creditIssued;
+        if ((creditIssued > 0 || creditRestored > 0) && !fresh.customer_id) throw new Error("VALIDATION:اربط الفاتورة بعميل قبل حفظ رصيد له.");
         // 4. Stock + products must exist.
         const stocks = new Map<string, { stock: number; cost: number }>();
         for (const it of retItems) {
@@ -285,6 +303,8 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
           cashBal = round2(Number(cSnap.data()?.balance || 0));
           if (cashBal < cashRefund) throw new Error("VALIDATION:رصيد الخزنة لا يكفي للمبلغ المسترد نقداً.");
         }
+        const creditRef = fresh.customer_id ? doc(db, "customer_credits", fresh.customer_id) : null;
+        const creditSnap = creditRef && (creditIssued > 0 || creditRestored > 0) ? await tx.get(creditRef) : null;
         const now = serverTimestamp();
         const returnDate = new Date();
         const by = (authStore.currentUserKey as string) || null;
@@ -298,6 +318,8 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
           total_refund: totalRefund,
           debt_reduction: debtReduction,
           cash_refund: cashRefund,
+          credit_issued: creditIssued,
+          credit_restored: creditRestored,
           note: note ?? null,
           created_by: by,
           created_at: now,
@@ -359,7 +381,12 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
           returned: mergedReturned,
           returned_base_quantity: returnedBaseQuantity,
           return_status: updatedReturnStatus,
+          credit_restored: round2(toNum(fresh.credit_restored) + creditRestored),
         });
+        if (creditRef && (creditIssued > 0 || creditRestored > 0)) {
+          tx.set(creditRef, { balance: round2(toNum(creditSnap?.data()?.balance) + creditIssued + creditRestored), updated_at: now }, { merge: true });
+          tx.set(doc(collection(db, "customer_credit_transactions")), { customer_id: fresh.customer_id, invoice_id: invoice.id, return_id: returnId, type: "issued", amount: round2(creditIssued + creditRestored), created_by: by, created_at: now });
+        }
         writeDebtSummary(tx, db, {
           invoice_id: invoice.id as string,
           customer_id: (fresh.customer_id as string) || null,
@@ -376,7 +403,7 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
           returned_base_quantity: returnedBaseQuantity,
           return_status: updatedReturnStatus,
         }, { count: 1, total: totalRefund, profit: round2(totalRefund - returnedCost) }, returnDate);
-        writeCustomerSummaryDelta(tx, db, fresh, { outstanding_debt: -debtReduction });
+        writeCustomerSummaryDelta(tx, db, fresh, { total_sales: -totalRefund, outstanding_debt: -debtReduction });
         if (cashRefund > 0) {
           const cRef = doc(db, "cashbox", "current");
           tx.set(cRef, { balance: round2(cashBal - cashRefund), updated_at: now }, { merge: true });
@@ -396,7 +423,7 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
         }
       });
       useProductsStore().invalidateCache();
-      return { ok: true, id: returnId, debtReduction, cashRefund };
+      return { ok: true, id: returnId, debtReduction, cashRefund, creditIssued, creditRestored };
     } catch (e) {
       if (e instanceof Error && e.message.startsWith("VALIDATION:")) {
         return { ok: false, error: e.message.slice("VALIDATION:".length) };
@@ -406,5 +433,5 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
     }
   }
 
-  return { byId, fetchRecentReturns, fetchReturnsForInvoice, buildReturnRows, createReturn };
+  return { byId, fetchRecentReturns, fetchReturnsForInvoice, fetchForInvoices, buildReturnRows, createReturn };
 });

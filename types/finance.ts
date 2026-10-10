@@ -14,6 +14,7 @@ export type CashTransactionType =
   | "invoice_sale"
   | "invoice_payment"
   | "invoice_refund"
+  | "customer_credit_payout"
   | "invoice_edit_adjustment"
   | "customer_loan"
   | "loan_payment"
@@ -37,7 +38,7 @@ export interface CashTransaction {
   product_id?: string | null;
   purchase_invoice_id?: string | null;
   debt_payment_id?: string | null;
-  reference_type?: "invoice" | "supplier_invoice" | "loan" | "return" | "product" | "manual" | null;
+  reference_type?: "invoice" | "supplier_invoice" | "loan" | "return" | "customer_credit" | "product" | "manual" | null;
   reference_id?: string | null;
   reference_label?: string | null;
   note?: string | null;
@@ -52,6 +53,7 @@ export const CASH_TYPE_LABELS: Record<CashTransactionType, string> = {
   invoice_sale: "بيع فاتورة",
   invoice_payment: "تحصيل باقي فاتورة",
   invoice_refund: "مرتجع فاتورة",
+  customer_credit_payout: "صرف رصيد عميل",
   invoice_edit_adjustment: "تسوية تعديل فاتورة",
   customer_loan: "سلفة لعميل",
   loan_payment: "تحصيل سلفة",
@@ -69,6 +71,7 @@ export type InventoryTransactionType =
   | "purchase"
   | "sale"
   | "refund"
+  | "supplier_return"
   | "manual_adjustment";
 
 export interface InventoryTransaction {
@@ -127,6 +130,9 @@ export interface PurchaseInvoice {
   status?: SupplierInvoiceStatus;
   payment_ids?: string[];
   advance_amount?: number;
+  return_total?: number;
+  return_status?: "partial" | "full";
+  returned_quantities?: Record<string, number>;
   note?: string | null;
   created_by?: string | null;
   created_at?: Timestamp | unknown;
@@ -139,6 +145,7 @@ export interface SupplierAdvance {
   purchase_invoice_id: string;
   amount: number;
   remaining_amount: number;
+  source_return_id?: string | null;
   created_at?: Timestamp | unknown;
 }
 
@@ -182,6 +189,7 @@ export interface SupplierPayment {
   amount: number;
   cash_amount?: number;
   advance_amount?: number;
+  return_id?: string | null;
   note?: string | null;
   created_by?: string | null;
   created_at?: Timestamp | unknown;
@@ -227,6 +235,36 @@ export interface InvoiceReturn {
   total_refund: number;
   debt_reduction?: number;
   cash_refund?: number;
+  credit_issued?: number;
+  credit_restored?: number;
+  note?: string | null;
+  created_by?: string | null;
+  created_at?: Timestamp | unknown;
+}
+
+export interface SupplierReturnItem {
+  line_index: number;
+  product_id: string;
+  product_name: string;
+  quantity: number;
+  unit_name: string | null;
+  unit_factor: number;
+  base_quantity: number;
+  unit_cost: number;
+  amount: number;
+}
+
+export interface SupplierReturn {
+  id?: string;
+  purchase_invoice_id: string;
+  supplier_id: string | null;
+  supplier_name: string;
+  items: SupplierReturnItem[];
+  total_return: number;
+  payable_reduction: number;
+  receivable_amount: number;
+  cash_received?: number;
+  request_fingerprint?: string;
   note?: string | null;
   created_by?: string | null;
   created_at?: Timestamp | unknown;
@@ -258,6 +296,8 @@ export interface DebtPayment {
   id?: string;
   customer_id: string;
   amount: number;
+  source?: "cash" | "credit";
+  cash_amount?: number;
   allocations: DebtPaymentAllocation[];
   note?: string | null;
   created_by?: string | null;
