@@ -56,7 +56,14 @@ export default defineEventHandler(async (event) => {
     runtime = import.meta.dev
       ? await import(pathToFileURL(resolve(process.cwd(), "functions/runtime.cjs")).href)
       : await import("../../../functions/runtime.cjs");
-  } catch {
+  } catch (error) {
+    console.error("Staff service initialization failed", {
+      type: error?.constructor?.name || typeof error,
+      code: typeof error?.code === "string" ? error.code : undefined,
+      module: error?.code === "ERR_REQUIRE_ESM" ? String(error.message).split("\n", 1)[0].slice(0, 300) : undefined,
+      node: process.version,
+      requireEsm: process.features?.require_module,
+    });
     throw createError({ statusCode: 503, statusMessage: "The staff service is unavailable." });
   }
 
