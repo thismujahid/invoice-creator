@@ -23,6 +23,11 @@ export default defineNuxtConfig({
     colorMode: false,
   },
   nitro: {
+    vercel: {
+      functions: {
+        runtime: "nodejs24.x",
+      },
+    },
     prerender: {
       autoSubfolderIndex: true,
       crawlLinks: true,
