@@ -21,7 +21,7 @@
           <span class="hidden shrink-0 text-xs text-gray-400 md:block">{{
             todayLine
           }}</span>
-          <UDropdownMenu v-if="!isLoginRoute && authStore.role" :items="userMenu">
+          <UDropdownMenu v-if="showChrome" :items="userMenu">
             <div
               class="flex shrink-0 cursor-pointer items-center gap-2 rounded-full py-1 pe-1 ps-1"
             >
@@ -46,7 +46,7 @@
         class="mx-auto flex w-full max-w-6xl min-w-0 flex-1 items-start gap-3 px-3 py-4 md:px-4"
       >
         <aside
-          v-if="!isLoginRoute && authStore.role"
+          v-if="showChrome"
           class="sticky top-18 bottom-none z-20 hidden w-38 shrink-0 flex-col items-center rounded-lg border border-gray-200 bg-white py-3 md:py-0 shadow-sm sm:flex"
           aria-label="التنقل الرئيسي"
         >
@@ -104,7 +104,7 @@
       </UiAppDialog>
 
       <nav
-        v-if="!isLoginRoute && authStore.role"
+        v-if="showChrome"
         class="fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur sm:hidden"
         aria-label="التنقل السريع"
       >
@@ -159,7 +159,7 @@
       </nav>
       <!-- Spacer so the fixed bar never covers footer content on mobile -->
       <div
-        v-if="!isLoginRoute && authStore.role"
+        v-if="showChrome"
         aria-hidden="true"
         class="h-[calc(3.5rem+env(safe-area-inset-bottom))] sm:hidden"
       />
@@ -183,6 +183,22 @@ useLowStockAlerts();
 
 const logoutConfirm = ref(false);
 const loggingOut = ref(false);
+
+// Hydration gate: authStore.role is null during SSR and only resolves on the
+// client. Rendering role-gated chrome (dropdown/aside/bottom nav) directly
+// from it makes the first client render differ from SSR HTML (hydration
+// node mismatch, and with teleported components a fatal
+// "Cannot read properties of null (reading 'insertBefore')" 500).
+// `hydrated` is false on the server AND during hydration, so both render the
+// same hidden state; the chrome appears via a normal post-mount update.
+const hydrated = ref(false);
+onMounted(() => {
+  hydrated.value = true;
+});
+const isLoginRoute = computed(() => route.path === "/login");
+const showChrome = computed(
+  () => hydrated.value && !isLoginRoute.value && !!authStore.role,
+);
 
 const currentPageTitle = computed(() => (route.meta.title as string) || "");
 const todayLine = computed(() =>
@@ -275,7 +291,6 @@ auth.languageCode = "ar";
 // The page outlet above is always mounted (pages show skeletons while
 // auth/data resolve), so auth only drives redirects + user data here.
 const isAuthed = ref<boolean>(!!auth.currentUser);
-const isLoginRoute = computed(() => route.path === "/login");
 let authSettled = false;
 let authTimer: ReturnType<typeof setTimeout> | undefined;
 const AUTH_TIMEOUT_MS = 8000;

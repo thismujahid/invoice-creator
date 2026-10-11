@@ -1,34 +1,41 @@
 <template>
-  <USlideover
-    v-if="isMobile"
-    :open="open"
-    :title="title"
-    :description="description"
-    :ui="layerUi"
-    @update:open="emit('update:open', $event)"
-  >
-    <template #body>
-      <slot />
-    </template>
-    <template v-if="$slots.footer" #footer>
-      <slot name="footer" />
-    </template>
-  </USlideover>
-  <UModal
-    v-else
-    :open="open"
-    :title="title"
-    :description="description"
-    :ui="layerUi"
-    @update:open="emit('update:open', $event)"
-  >
-    <template #body>
-      <slot />
-    </template>
-    <template v-if="$slots.footer" #footer>
-      <slot name="footer" />
-    </template>
-  </UModal>
+  <!-- ClientOnly: USlideover/UModal teleport their overlay into <body>.
+    Server renders a placeholder anchor; the real dialog mounts only on the
+    client. Rendering them during SSR (and swapping UModal<->USlideover on
+    hydration when the viewport is mobile) corrupts the teleport anchor and
+    crashes hydration with "Cannot read properties of null (insertBefore)". -->
+  <ClientOnly>
+    <USlideover
+      v-if="isMobile"
+      :open="open"
+      :title="title"
+      :description="description"
+      :ui="layerUi"
+      @update:open="emit('update:open', $event)"
+    >
+      <template #body>
+        <slot />
+      </template>
+      <template v-if="$slots.footer" #footer>
+        <slot name="footer" />
+      </template>
+    </USlideover>
+    <UModal
+      v-else
+      :open="open"
+      :title="title"
+      :description="description"
+      :ui="layerUi"
+      @update:open="emit('update:open', $event)"
+    >
+      <template #body>
+        <slot />
+      </template>
+      <template v-if="$slots.footer" #footer>
+        <slot name="footer" />
+      </template>
+    </UModal>
+  </ClientOnly>
 </template>
 
 <script setup lang="ts">

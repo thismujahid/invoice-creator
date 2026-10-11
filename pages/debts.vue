@@ -461,7 +461,11 @@ import { toDateSafe } from "~/types";
 import { doc } from "firebase/firestore";
 
 definePageMeta({ title: "دفتر الديون" });
-const isAdmin = computed(() => useAuth().role === "admin");
+// Hydration gate (see pages/index.vue): role is null on the server, so an
+// ungated `v-if="!isAdmin"` renders the cashier branch during SSR and the
+// admin branch on first client render -> hydration mismatch / 500.
+const hydrated = ref(false);
+const isAdmin = computed(() => hydrated.value && useAuth().role === "admin");
 const route = useRoute();
 const { formatePrice, useDownloadPDF } = useHelpers();
 const { round2, loanStatusOf, normalizePhone, normalizeName } = useFinance();
@@ -888,6 +892,7 @@ async function printDebtsStatement(): Promise<void> {
 }
 
 onMounted(async () => {
+  hydrated.value = true;
   const authed = await useAuthReady();
   if (!authed) return; // layout redirects to /login
   if (!isAdmin.value) return;

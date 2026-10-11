@@ -15,21 +15,21 @@
     "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
-    "@nuxt/ui": "^4.11.2",
-    "@pinia/nuxt": "^0.11.3",
-    "@vite-pwa/nuxt": "^1.1.0",
-    "firebase": "^12.6.0",
+    "@nuxt/ui": "^4.11.3",
+    "@pinia/nuxt": "^1.0.2",
+    "@vite-pwa/nuxt": "^1.1.1",
+    "firebase": "^13.0.0",
     "firebase-admin": "^14.5.0",
     "firebase-functions": "^7.4.0",
-    "nuxt": "^4.2.2",
-    "pinia": "^3.0.4",
-    "vue": "^3.5.25",
-    "vue-router": "^4.6.3",
+    "nuxt": "^4.6.1",
+    "pinia": "^4.0.3",
+    "vue": "^3.5.43",
+    "vue-router": "^5.4.0",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@iconify-json/lucide": "^1.2.142",
-    "typescript": "^5.9.3",
-    "vue-tsc": "^3.3.11"
+    "typescript": "^7.0.2",
+    "vue-tsc": "^3.3.13"
   }
 }

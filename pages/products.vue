@@ -575,7 +575,10 @@ const { round2, round4, toNum, movingAverageCost, proposedSellingPrice, isLowSto
   useFinance();
 const productFormState = ref(false);
 const productsStore = useProductsStore();
-const isAdmin = computed(() => useAuth().role === "admin");
+// Hydration gate (see pages/index.vue): keeps SSR + first client render
+// identical by hiding admin-only controls until post-mount.
+const hydrated = ref(false);
+const isAdmin = computed(() => hydrated.value && useAuth().role === "admin");
 const loading = ref(true);
 const loadError = ref("");
 const deleting = ref(false);
@@ -1074,6 +1077,7 @@ function createInvoiceFromSelectedProducts(): void {
   void navigateTo("/");
 }
 onMounted(async () => {
+  hydrated.value = true;
   const authed = await useAuthReady();
   if (!authed) {
     loading.value = false;

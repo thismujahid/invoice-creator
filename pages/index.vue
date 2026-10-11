@@ -1,6 +1,9 @@
 <template>
-  <CashierSale v-if="authStore.role === 'cashier'" />
-  <template v-else-if="authStore.role === 'admin'">
+  <!-- `hydrated` keeps the SSR HTML and the first client render identical
+    (skeleton): authStore.role is null on the server, so branching on it
+    directly causes hydration node mismatch / insertBefore 500s. -->
+  <CashierSale v-if="hydrated && authStore.role === 'cashier'" />
+  <template v-else-if="hydrated && authStore.role === 'admin'">
   <div class="invoice-creator-view" id="editor-area">
     <div class="flex flex-col gap-4">
       <UCard variant="outline" class="w-full">
@@ -574,6 +577,8 @@ const invoices = useInvoicesStore();
 const customers = useCustomersStore();
 const authStore = useAuth();
 const { notify } = useAppToast();
+// False on the server and during hydration -> skeleton; true post-mount.
+const hydrated = ref(false);
 const updating = ref(false);
 const saving = ref(false);
 const previewOpen = ref(false);
@@ -1230,6 +1235,7 @@ async function updateInvoiceData(): Promise<void> {
   }
 }
 onMounted(async () => {
+  hydrated.value = true;
   const authed = await useAuthReady();
   if (!authed) {
     loadingCustomers.value = false;

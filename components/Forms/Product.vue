@@ -49,9 +49,7 @@
                 <span class="font-normal text-gray-400">(الوحدة الأساسية)</span>
               </span>
               <span class="mt-0.5 block text-gray-500">
-                سعر البيع {{ baseSalePrice == null ? "—" : `${formatePrice(baseSalePrice)} ج` }}
-                <template v-if="isEditMode">· متوسط التكلفة {{ avgBaseText }}</template>
-                · آخر سعر شراء {{ basePurchasePrice == null ? "—" : `${formatePrice(basePurchasePrice)} ج` }}
+                <template v-if="isEditMode">التكلفة {{ avgBaseText }} · </template>سعر البيع {{ baseSalePrice == null ? "—" : `${formatePrice(baseSalePrice)} ج` }}<span v-if="isEditMode && baseSalePrice != null"> · هامش الربح {{ baseMarginText }}</span>
               </span>
             </div>
             <div class="flex shrink-0 gap-1">
@@ -73,15 +71,12 @@
             class="flex items-center justify-between gap-2 rounded-lg border border-gray-100 p-2"
           >
             <div class="min-w-0 text-xs">
-              <span class="font-bold">{{ unit.name?.trim() || "وحدة جديدة" }} × {{ unit.factor }} {{ productForm.base_unit_name?.trim() || "وحدة" }}</span>
+              <span class="font-bold">{{ unit.name?.trim() || "وحدة جديدة" }} = {{ unit.factor }} {{ productForm.base_unit_name?.trim() || "وحدة" }}</span>
               <span class="text-gray-400">
-                معامل التحويل ×{{ unit.factor }} · {{ unitUsageLabel(unit.usage) }}
+                · {{ unitUsageLabel(unit.usage) }}
               </span>
               <span class="mt-0.5 block text-gray-500">
-                سعر البيع {{ !unit.can_sell ? "لا تباع" : unit.selling_price == null ? "—" : `${formatePrice(unit.selling_price)} ج` }}
-                <template v-if="isEditMode">· متوسط التكلفة {{ unitAvgText(unit) }}</template>
-                · آخر سعر شراء {{ unit.purchase_price == null ? "—" : `${formatePrice(unit.purchase_price)} ج` }}
-                <span v-if="isEditMode && unit.can_sell && unit.selling_price != null">· هامش الربح {{ unitMarginText(unit) }}</span>
+                <template v-if="isEditMode">التكلفة {{ unitAvgText(unit) }} · </template>سعر البيع {{ !unit.can_sell ? "لا تباع" : unit.selling_price == null ? "—" : `${formatePrice(unit.selling_price)} ج` }}<span v-if="isEditMode && unit.can_sell && unit.selling_price != null"> · هامش الربح {{ unitMarginText(unit) }}</span>
               </span>
             </div>
             <div class="flex shrink-0 gap-1">
@@ -362,6 +357,12 @@ function unitMarginText(unit: { selling_price: unknown; factor: unknown }): stri
   const rate = (Number(unit.selling_price) - avg) / avg;
   return `${Math.round(rate * 10000) / 100}%`;
 }
+// Base unit margin (factor 1) for the base row's cost/price/margin line.
+const baseMarginText = computed(() =>
+  baseSalePrice.value == null
+    ? "—"
+    : unitMarginText({ selling_price: baseSalePrice.value, factor: 1 }),
+);
 // Unit editor modal: one draft edited in a focused dialog (mobile-friendly
 // slideover) instead of cramped inline grid inputs.
 type UnitDraft = EditableProductUnit & { key: number | "base" | "new"; isBase: boolean };
