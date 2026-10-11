@@ -28,6 +28,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@iconify-json/lucide": "^1.2.142",
     "typescript": "^5.9.3",
     "vue-tsc": "^3.3.11"
   }
