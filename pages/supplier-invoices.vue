@@ -5,7 +5,8 @@
       <UButton color="success" icon="i-lucide-plus" @click="startDraft()">فاتورة مورد جديدة</UButton>
     </header>
     <UAlert v-if="loadError" color="error" variant="soft" :title="loadError"><template #actions><UButton size="xs" color="error" variant="soft" :loading="loading" @click="reload(true)">إعادة المحاولة</UButton></template></UAlert>
-    <div class="grid gap-3 sm:grid-cols-3"><UCard variant="outline"><p class="text-xs text-gray-500">فواتير الصفحة</p><b class="text-xl">{{ pageInvoices.length }}</b></UCard><UCard variant="outline"><p class="text-xs text-gray-500">صافي مشتريات الصفحة بعد المرتجعات</p><b class="text-xl">{{ formatePrice(totalPurchases) }} ج</b></UCard><UCard variant="outline"><p class="text-xs text-gray-500">مستحق الصفحة</p><b class="text-xl text-red-600">{{ formatePrice(totalPayable) }} ج</b></UCard></div>
+    <UAlert v-if="supplierFilterId" color="info" variant="soft" :title="`عرض فواتير المورد: ${supplierFilterName || supplierFilterId}`"><template #actions><UButton size="xs" color="neutral" variant="soft" @click="clearSupplierFilter">عرض كل الفواتير</UButton></template></UAlert>
+    <div class="grid gap-3 sm:grid-cols-3"><UCard variant="outline"><p class="text-xs text-gray-500">فواتير الصفحة</p><b class="text-xl">{{ visibleInvoices.length }}</b></UCard><UCard variant="outline"><p class="text-xs text-gray-500">صافي مشتريات الصفحة بعد المرتجعات</p><b class="text-xl">{{ formatePrice(totalPurchases) }} ج</b></UCard><UCard variant="outline"><p class="text-xs text-gray-500">مستحق الصفحة</p><b class="text-xl text-red-600">{{ formatePrice(totalPayable) }} ج</b></UCard></div>
     <div class="flex flex-wrap gap-2"><UInput v-model="search" icon="i-lucide-search" placeholder="بحث بالمورد" class="w-full sm:max-w-sm" /><USelect v-model="statusFilter" :items="[{ label: 'كل الحالات', value: 'all' }, { label: 'غير مسددة', value: 'unpaid' }, { label: 'مسددة جزئيًا', value: 'partial' }, { label: 'مسددة', value: 'paid' }]" value-key="value" label-key="label" class="w-full sm:w-44" /></div>
     <UiAppCardsSkeleton v-if="loading" layout="list" :count="4" />
     <div v-else class="space-y-3">
@@ -139,6 +140,20 @@ const loading = ref(true);
 const loadError = ref("");
 const search = ref("");
 const statusFilter = ref("all");
+// Normalized supplier deep-link (?supplier=<id>): single source for the
+// server query, the client filter, and the "new invoice" preselect, so a
+// supplier-card click always scopes this page to that supplier's invoices.
+const supplierFilterId = computed(() => {
+  const raw = route.query.supplier;
+  return typeof raw === "string" && raw.trim() ? raw.trim() : "";
+});
+const supplierFilterName = computed(() => suppliers.list.find((supplier) => supplier.id === supplierFilterId.value)?.name ?? "");
+function clearSupplierFilter(): void {
+  const q = { ...route.query };
+  delete q.supplier;
+  delete q.new;
+  void navigateTo({ path: route.path, query: q }, { replace: true });
+}
 const draftOpen = ref(false);
 const draftSource = ref<PurchaseInvoice | null>(null);
 const draftLines = ref<DraftLine[]>([]);
@@ -179,11 +194,11 @@ const draftMessage = computed(() => draftError.value);
 const visibleInvoices = computed(() => [...new Map([...pinnedInvoices.value, ...pageInvoices.value].map((invoice) => [invoice.id, invoice])).values()].filter((invoice) => {
   const query = search.value.trim().toLocaleLowerCase();
   const matchesSearch = !query || `${invoice.supplier_name ?? ""} ${invoice.invoice_number ?? ""} ${invoice.supplier_ref ?? ""}`.toLocaleLowerCase().includes(query);
-  const matchesSupplier = !route.query.supplier || invoice.supplier_id === String(route.query.supplier);
+  const matchesSupplier = !supplierFilterId.value || invoice.supplier_id === supplierFilterId.value;
   return matchesSearch && matchesSupplier;
 }));
-const totalPurchases = computed(() => round2(pageInvoices.value.reduce((sum, invoice) => sum + toNum(invoice.total_amount) - toNum(invoice.return_total), 0)));
-const totalPayable = computed(() => round2(pageInvoices.value.reduce((sum, invoice) => sum + toNum(invoice.remaining_amount), 0)));
+const totalPurchases = computed(() => round2(visibleInvoices.value.reduce((sum, invoice) => sum + toNum(invoice.total_amount) - toNum(invoice.return_total), 0)));
+const totalPayable = computed(() => round2(visibleInvoices.value.reduce((sum, invoice) => sum + toNum(invoice.remaining_amount), 0)));
 const detailsOpen = ref(false);
 const selectedInvoice = ref<PurchaseInvoice | null>(null);
 const selectedReturns = ref<SupplierReturn[]>([]);
@@ -274,7 +289,7 @@ function openUnitFromSnapshot(productId: string, name: string, unitId?: string |
 }
 function startDraft(source?: PurchaseInvoice): void {
   draftSource.value = source ?? null;
-  const querySupplierId = !source && route.query.supplier ? String(route.query.supplier) : null;
+  const querySupplierId = !source && supplierFilterId.value ? supplierFilterId.value : null;
   draftSupplier.value = source?.supplier_id
     ? suppliers.list.find((supplier) => supplier.id === source.supplier_id)
     : querySupplierId
@@ -407,7 +422,7 @@ async function reload(reset = false): Promise<void> {
   loadError.value = "";
   try {
     if (reset) { pageNumber.value = 1; pageCursors.value = [null]; }
-    const page = await purchasing.fetchPurchaseInvoices({ supplierId: route.query.supplier ? String(route.query.supplier) : null, status: statusFilter.value as "all" | "paid" | "partial" | "unpaid", pageSize: 25, cursor: pageCursors.value[pageNumber.value - 1] });
+    const page = await purchasing.fetchPurchaseInvoices({ supplierId: supplierFilterId.value || null, status: statusFilter.value as "all" | "paid" | "partial" | "unpaid", pageSize: 25, cursor: pageCursors.value[pageNumber.value - 1] });
     pageInvoices.value = page.items;
     pinnedInvoices.value = page.pinned;
     hasMore.value = page.hasMore;
@@ -420,7 +435,7 @@ async function reload(reset = false): Promise<void> {
 async function nextPage(): Promise<void> { if (!hasMore.value || loading.value) return; pageNumber.value += 1; await reload(); }
 async function previousPage(): Promise<void> { if (pageNumber.value <= 1 || loading.value) return; pageNumber.value -= 1; await reload(); }
 watch(statusFilter, () => { void reload(true); });
-watch(() => route.query.supplier, () => { void reload(true); });
+watch(supplierFilterId, () => { void reload(true); });
 onMounted(async () => {
   const authed = await useAuthReady();
   if (!authed) return; // layout redirects to /login

@@ -35,8 +35,15 @@
             >إضافة وحدة</UButton
           >
         </div>
-        <p v-if="errors.base_sale || errors.base_purchase || errors.base_unit_name" class="text-xs text-red-600">
-          {{ errors.base_sale || errors.base_purchase || errors.base_unit_name }}
+        <p
+          v-if="
+            errors.base_sale || errors.base_purchase || errors.base_unit_name
+          "
+          class="text-xs text-red-600"
+        >
+          {{
+            errors.base_sale || errors.base_purchase || errors.base_unit_name
+          }}
         </p>
         <!-- Unit lines: compact text display (responsive) + edit/delete only -->
         <div class="space-y-2">
@@ -49,7 +56,16 @@
                 <span class="font-normal text-gray-400">(الوحدة الأساسية)</span>
               </span>
               <span class="mt-0.5 block text-gray-500">
-                <template v-if="isEditMode">التكلفة {{ avgBaseText }} · </template>سعر البيع {{ baseSalePrice == null ? "—" : `${formatePrice(baseSalePrice)} ج` }}<span v-if="isEditMode && baseSalePrice != null"> · هامش الربح {{ baseMarginText }}</span>
+                <template v-if="isEditMode"
+                  >التكلفة {{ avgBaseText }} · </template
+                >سعر البيع
+                {{
+                  baseSalePrice == null
+                    ? "—"
+                    : `${formatePrice(baseSalePrice)} ج`
+                }}<span v-if="isEditMode && baseSalePrice != null">
+                  · هامش الربح {{ baseMarginText }}</span
+                >
               </span>
             </div>
             <div class="flex shrink-0 gap-1">
@@ -71,12 +87,30 @@
             class="flex items-center justify-between gap-2 rounded-lg border border-gray-100 p-2"
           >
             <div class="min-w-0 text-xs">
-              <span class="font-bold">{{ unit.name?.trim() || "وحدة جديدة" }} = {{ unit.factor }} {{ productForm.base_unit_name?.trim() || "وحدة" }}</span>
+              <span class="font-bold"
+                >{{ unit.name?.trim() || "وحدة جديدة" }} = {{ unit.factor }}
+                {{ productForm.base_unit_name?.trim() || "وحدة" }}</span
+              >
               <span class="text-gray-400">
                 · {{ unitUsageLabel(unit.usage) }}
               </span>
               <span class="mt-0.5 block text-gray-500">
-                <template v-if="isEditMode">التكلفة {{ unitAvgText(unit) }} · </template>سعر البيع {{ !unit.can_sell ? "لا تباع" : unit.selling_price == null ? "—" : `${formatePrice(unit.selling_price)} ج` }}<span v-if="isEditMode && unit.can_sell && unit.selling_price != null"> · هامش الربح {{ unitMarginText(unit) }}</span>
+                <template v-if="isEditMode"
+                  >التكلفة {{ unitAvgText(unit) }} · </template
+                >سعر البيع
+                {{
+                  !unit.can_sell
+                    ? "لا تباع"
+                    : unit.selling_price == null
+                      ? "—"
+                      : `${formatePrice(unit.selling_price)} ج`
+                }}<span
+                  v-if="
+                    isEditMode && unit.can_sell && unit.selling_price != null
+                  "
+                >
+                  · هامش الربح {{ unitMarginText(unit) }}</span
+                >
               </span>
             </div>
             <div class="flex shrink-0 gap-1">
@@ -106,10 +140,7 @@
           {{ errors.units }}
         </p>
       </div>
-      <UFormField
-        label="مؤشر نقص المخزون"
-        :error="errors.low_stock_threshold"
-      >
+      <UFormField label="مؤشر نقص المخزون" :error="errors.low_stock_threshold">
         <div class="flex gap-2">
           <USelect
             v-model="thresholdUnitId"
@@ -147,11 +178,15 @@
               :disabled="saving || (unitDraft.isBase && baseUnitLocked)"
             />
           </UFormField>
-          <UFormField v-if="!unitDraft.isBase" label="تحتوي وحدات أساسية" required>
+          <UFormField
+            v-if="!unitDraft.isBase"
+            label="تحتوي وحدات أساسية"
+            required
+          >
             <UInputNumber
               v-model="unitDraft.factor"
-              :min="2"
-              :step="1"
+              :min="1"
+              :step="0.01"
               size="lg"
               class="w-full"
               dir="ltr"
@@ -192,7 +227,11 @@
           </UFormField>
           <UFormField v-else label="سعر الشراء (مرجعي، يُدار بالشراء)">
             <UInput
-              :model-value="unitDraft.purchase_price == null ? '—' : formatePrice(unitDraft.purchase_price)"
+              :model-value="
+                unitDraft.purchase_price == null
+                  ? '—'
+                  : formatePrice(unitDraft.purchase_price)
+              "
               readonly
               size="lg"
               class="w-full"
@@ -337,20 +376,31 @@ function unitUsageLabel(usage: unknown): string {
 }
 // Canonical display: average cost derived from base average (never stored per-unit).
 const avgBaseValue = computed(() => {
-  const raw = (productForm.value.cost_price ?? basePurchasePrice.value) as unknown;
+  const raw = (productForm.value.cost_price ??
+    basePurchasePrice.value) as unknown;
   if (raw === null || raw === undefined || raw === "") return null;
   const v = Number(raw);
   return Number.isFinite(v) ? v : null;
 });
-const avgBaseText = computed(() => (avgBaseValue.value === null ? "—" : `${formatePrice(avgBaseValue.value)} ج`));
+const avgBaseText = computed(() =>
+  avgBaseValue.value === null ? "—" : `${formatePrice(avgBaseValue.value)} ج`,
+);
 function unitAvgText(unit: { factor: unknown }): string {
   if (avgBaseValue.value === null) return "—";
   const f = Number(unit.factor);
   if (!Number.isFinite(f) || f <= 0) return "—";
   return `${formatePrice(avgBaseValue.value * f)} ج`;
 }
-function unitMarginText(unit: { selling_price: unknown; factor: unknown }): string {
-  if (avgBaseValue.value === null || unit.selling_price === null || unit.selling_price === undefined) return "—";
+function unitMarginText(unit: {
+  selling_price: unknown;
+  factor: unknown;
+}): string {
+  if (
+    avgBaseValue.value === null ||
+    unit.selling_price === null ||
+    unit.selling_price === undefined
+  )
+    return "—";
   const f = Number(unit.factor);
   const avg = avgBaseValue.value * (Number.isFinite(f) && f > 0 ? f : 1);
   if (!(avg > 0)) return "—";
@@ -365,7 +415,10 @@ const baseMarginText = computed(() =>
 );
 // Unit editor modal: one draft edited in a focused dialog (mobile-friendly
 // slideover) instead of cramped inline grid inputs.
-type UnitDraft = EditableProductUnit & { key: number | "base" | "new"; isBase: boolean };
+type UnitDraft = EditableProductUnit & {
+  key: number | "base" | "new";
+  isBase: boolean;
+};
 const unitModalOpen = ref(false);
 const unitModalError = ref("");
 const unitDraft = ref<UnitDraft>({
@@ -439,8 +492,12 @@ function confirmUnitModal(): void {
     unitModalError.value = "اسم الوحدة مطلوب.";
     return;
   }
-  if (!d.isBase && (!Number.isInteger(Number(d.factor)) || !(Number(d.factor) > 1))) {
-    unitModalError.value = "معامل التحويل يجب أن يكون رقمًا صحيحًا أكبر من 1.";
+  if (
+    !d.isBase &&
+    (!Number.isFinite(Number(d.factor)) || !(Number(d.factor) > 1))
+  ) {
+    unitModalError.value =
+      "معامل التحويل يجب أن يكون أكبر من 1 (يسمح بالكسور مثل 1.5).";
     return;
   }
   if (
@@ -584,9 +641,8 @@ function validate(): boolean {
         Number(unit.purchase_price) < 0);
     if (
       !unit.name.trim() ||
-      !Number.isInteger(Number(unit.factor)) ||
-      !(Number(unit.factor) > 1) ||
       !Number.isFinite(Number(unit.factor)) ||
+      !(Number(unit.factor) > 1) ||
       unitIds.has(unit.id) ||
       badPurchase ||
       (unit.can_sell &&
@@ -697,18 +753,23 @@ async function saveProduct() {
 watch(
   () => props.edit,
   () => {
-    const edit = props.edit as (Product & { count?: number | null }) | undefined;
+    const edit = props.edit as
+      | (Product & { count?: number | null })
+      | undefined;
     const { count: _legacyCount, ...editable } = edit ?? {};
     void _legacyCount;
     productForm.value = edit
-      ? { low_stock_threshold: 5, base_unit_name: "وحدة", ...editable } as Product
+      ? ({
+          low_stock_threshold: 5,
+          base_unit_name: "وحدة",
+          ...editable,
+        } as Product)
       : emptyForm();
     const editUnits = props.edit?.units ?? [];
     const baseEntry =
       editUnits.find((unit) => unit.is_base) ??
       editUnits.find((unit) => unit.id === props.edit?.base_unit_id);
-    baseSalePrice.value =
-      baseEntry?.selling_price ?? props.edit?.price ?? null;
+    baseSalePrice.value = baseEntry?.selling_price ?? props.edit?.price ?? null;
     basePurchasePrice.value =
       baseEntry?.purchase_price ?? props.edit?.cost_price ?? null;
     additionalUnits.value =

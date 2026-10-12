@@ -288,7 +288,6 @@
         />
         <UPagination
           v-model:page="page"
-          dir="ltr"
           :total="filtered.length"
           :items-per-page="perPage"
           :sibling-count="1"
@@ -297,9 +296,17 @@
       </div>
     </template>
 
-    <UiAppDialog v-model:open="detailsOpen" :title="`سجل عمليات ${selected?.name || ''}`">
+    <UiAppDialog
+      v-model:open="detailsOpen"
+      :title="`سجل عمليات ${selected?.name || ''}`"
+    >
       <div v-if="selected" class="max-h-[75vh] overflow-y-auto">
-        <CustomerDebtTimeline :customer-id="selected.customer_id" :total-debt="selected.totalDebt" :credit-balance="selected.creditBalance" @view-invoice="viewInvoice" />
+        <CustomerDebtTimeline
+          :customer-id="selected.customer_id"
+          :total-debt="selected.totalDebt"
+          :credit-balance="selected.creditBalance"
+          @view-invoice="viewInvoice"
+        />
       </div>
     </UiAppDialog>
 

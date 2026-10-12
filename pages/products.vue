@@ -3,7 +3,8 @@
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
       <h2 class="text-lg font-bold text-gray-900">المنتجات</h2>
       <div class="flex flex-wrap items-center gap-2">
-        <UButton v-if="isAdmin"
+        <UButton
+          v-if="isAdmin"
           color="info"
           variant="soft"
           icon="i-lucide-file-up"
@@ -18,7 +19,8 @@
           >المنتجات قليلة الكمية ({{ lowStockCount }})</UButton
         >
         <!-- HOME delta: no products export (as in home branch). -->
-        <FormsProduct v-if="isAdmin"
+        <FormsProduct
+          v-if="isAdmin"
           @close="productForm = undefined"
           :refresher="loadProds"
           v-model="productFormState"
@@ -30,13 +32,25 @@
         </FormsProduct>
       </div>
     </div>
-    <UAlert v-if="productsStore.syncError || loadError" color="error" variant="soft" :title="loadError || 'تعذر تحميل المنتجات.'" class="mb-3"><template #actions><UButton size="xs" color="error" variant="soft" @click="retryProducts">إعادة المحاولة</UButton></template></UAlert>
+    <UAlert
+      v-if="productsStore.syncError || loadError"
+      color="error"
+      variant="soft"
+      :title="loadError || 'تعذر تحميل المنتجات.'"
+      class="mb-3"
+      ><template #actions
+        ><UButton size="xs" color="error" variant="soft" @click="retryProducts"
+          >إعادة المحاولة</UButton
+        ></template
+      ></UAlert
+    >
     <ProductsLowStockDialog
       v-model:open="shortagesOpen"
       :products="productsStore.list"
       :show-cost="false"
     />
-    <ProductsPurchaseImportDialog v-if="isAdmin"
+    <ProductsPurchaseImportDialog
+      v-if="isAdmin"
       v-model:open="importOpen"
       :products="productsStore.list"
       :cash-balance="cashBalance"
@@ -50,7 +64,10 @@
         size="lg"
         class="w-full sm:max-w-xs"
       />
-      <div v-if="isAdmin && selectProducts.length > 0" class="flex flex-wrap gap-2">
+      <div
+        v-if="isAdmin && selectProducts.length > 0"
+        class="flex flex-wrap gap-2"
+      >
         <UButton
           icon="i-lucide-file-plus"
           color="success"
@@ -89,7 +106,13 @@
         </UiAppDialog>
       </div>
     </div>
-    <UiAppTableSkeleton v-if="loading || (!productsStore.inventoryReady && productsStore.inventorySyncState === 'loading')" />
+    <UiAppTableSkeleton
+      v-if="
+        loading ||
+        (!productsStore.inventoryReady &&
+          productsStore.inventorySyncState === 'loading')
+      "
+    />
     <template v-else>
       <!-- Desktop table -->
       <div class="hidden overflow-x-auto md:block">
@@ -124,7 +147,17 @@
               >
                 {{ p.stock_label }}
               </td>
-              <td class="p-2"><div class="flex flex-wrap gap-1"><UBadge v-for="unit in p.selling_units" :key="unit.id" color="neutral" variant="soft">{{ unit.name }}: {{ unit.price }}</UBadge></div></td>
+              <td class="p-2">
+                <div class="flex flex-wrap gap-1">
+                  <UBadge
+                    v-for="unit in p.selling_units"
+                    :key="unit.id"
+                    color="neutral"
+                    variant="soft"
+                    >{{ unit.name }}: {{ unit.price }}</UBadge
+                  >
+                </div>
+              </td>
               <td v-if="isAdmin" class="p-2" @click.stop>
                 <div class="flex gap-2">
                   <UButton
@@ -187,7 +220,8 @@
         >
           <div class="flex items-center justify-between gap-2">
             <div class="flex min-w-0 items-center gap-2">
-              <UCheckbox v-if="isAdmin"
+              <UCheckbox
+                v-if="isAdmin"
                 :model-value="p.id ? isSelected({ id: p.id }) : false"
                 @click.stop
                 @update:model-value="p.id && toggleSelect({ id: p.id })"
@@ -200,7 +234,15 @@
                 >
                   {{ p.stock_label }}
                 </div>
-                <div class="flex flex-wrap gap-1"><UBadge v-for="unit in p.selling_units" :key="unit.id" color="neutral" variant="soft">{{ unit.name }}: {{ unit.price }}</UBadge></div>
+                <div class="flex flex-wrap gap-1">
+                  <UBadge
+                    v-for="unit in p.selling_units"
+                    :key="unit.id"
+                    color="neutral"
+                    variant="soft"
+                    >{{ unit.name }}: {{ unit.price }}</UBadge
+                  >
+                </div>
               </div>
             </div>
             <div v-if="isAdmin" class="flex shrink-0 gap-1.5" @click.stop>
@@ -258,7 +300,6 @@
         class="w-24"
       />
       <UPagination
-        dir="ltr"
         v-model:page="currentPage"
         :total="prodsList.length"
         :items-per-page="currentPerPage"
@@ -268,14 +309,23 @@
     </div>
     <UiAppDialog v-model:open="deleteOpen" title="أرشفة / حذف المنتج">
       <p class="mb-2 text-gray-600">
-        {{ confirmDelete?.name }} — الأرشفة تحفظ السجل المحاسبي (مفضلة للمنتجات ذات الفواتير/الحركات).
+        {{ confirmDelete?.name }} — الأرشفة تحفظ السجل المحاسبي (مفضلة للمنتجات
+        ذات الفواتير/الحركات).
       </p>
       <p v-if="deleteStock > 0" class="mb-4 text-xs text-gray-500">
-        المخزون المتبقي: {{ deleteTarget ? stockQuantityLabel(deleteTarget) : '—' }} — الحذف لا ينشئ نقدًا؛ إرجاع المورد عملية مالية مستقلة.
+        المخزون المتبقي:
+        {{ deleteTarget ? stockQuantityLabel(deleteTarget) : "—" }} — الحذف لا
+        ينشئ نقدًا؛ إرجاع المورد عملية مالية مستقلة.
       </p>
       <template #footer>
         <div class="flex w-full flex-col gap-2">
-          <UButton color="warning" block :loading="deleting" @click="archiveConfirmed">أرشفة (موصى به)</UButton>
+          <UButton
+            color="warning"
+            block
+            :loading="deleting"
+            @click="archiveConfirmed"
+            >أرشفة (موصى به)</UButton
+          >
           <UButton
             color="error"
             variant="soft"
@@ -307,7 +357,15 @@
           :title="`المخزون الحالي: ${purchaseCountText}`"
         />
         <UFormField v-if="purchaseUnits.length > 1" label="وحدة الشراء">
-          <USelectMenu :model-value="purchaseUnit" :items="purchaseUnits" label-key="name" by="id" :search-input="false" class="w-full" @update:model-value="(unit) => selectPurchaseUnit(unit)" />
+          <USelectMenu
+            :model-value="purchaseUnit"
+            :items="purchaseUnits"
+            label-key="name"
+            by="id"
+            :search-input="false"
+            class="w-full"
+            @update:model-value="(unit) => selectPurchaseUnit(unit)"
+          />
         </UFormField>
         <UFormField
           label="الكمية المشتراة"
@@ -337,8 +395,7 @@
         </UFormField>
         <div class="space-y-1 rounded-lg bg-gray-50 p-3 text-sm">
           <div class="flex justify-between">
-            <span>إجمالي الشراء</span
-            ><b>{{ formatePrice(purchaseTotal) }} ج</b>
+            <span>إجمالي الشراء</span><b>{{ formatePrice(purchaseTotal) }} ج</b>
           </div>
           <div class="flex justify-between">
             <span>رصيد الخزنة</span><b>{{ formatePrice(cashBalance) }} ج</b>
@@ -355,14 +412,25 @@
               @update:model-value="setPurchasePaid"
             />
           </div>
-          <p v-if="purchasePaidError" class="text-xs text-red-600">{{ purchasePaidError }}</p>
+          <p v-if="purchasePaidError" class="text-xs text-red-600">
+            {{ purchasePaidError }}
+          </p>
           <div class="flex justify-between">
             <span>الباقي المستحق</span
             ><b class="text-amber-700"
-              >{{ formatePrice(Math.max(0, purchaseTotal - (purchasePaid ?? 0))) }} ج</b
+              >{{
+                formatePrice(Math.max(0, purchaseTotal - (purchasePaid ?? 0)))
+              }}
+              ج</b
             >
           </div>
-          <div v-if="(purchasePaid ?? 0) > purchaseTotal" class="flex justify-between text-blue-700"><span>سلفة مستحقة لنا</span><b>{{ formatePrice((purchasePaid ?? 0) - purchaseTotal) }} ج</b></div>
+          <div
+            v-if="(purchasePaid ?? 0) > purchaseTotal"
+            class="flex justify-between text-blue-700"
+          >
+            <span>سلفة مستحقة لنا</span
+            ><b>{{ formatePrice((purchasePaid ?? 0) - purchaseTotal) }} ج</b>
+          </div>
         </div>
         <!-- Selling-price policy: shown only when the new average exceeds price -->
         <div
@@ -391,11 +459,30 @@
               }}</span
             >
           </div>
-          <div v-if="purchaseProposals.length > 1" class="space-y-1 rounded-lg bg-white/70 p-2 text-xs">
+          <div
+            v-if="purchaseProposals.length > 1"
+            class="space-y-1 rounded-lg bg-white/70 p-2 text-xs"
+          >
             <div class="font-bold">المقترح لكل وحدة قابلة للبيع:</div>
-            <div v-for="p in purchaseProposals" :key="p.unitId" class="flex justify-between gap-2">
-              <span>{{ p.unitName }} ×{{ p.factor }}: {{ p.oldPrice === null ? "—" : formatePrice(p.oldPrice) }} → {{ p.proposed === null ? "يدوي" : formatePrice(p.proposed) }} ج</span>
-              <span class="text-gray-500">هامش {{ p.rate === null ? "—" : `${Math.round(p.rate * 10000) / 100}%` }}</span>
+            <div
+              v-for="p in purchaseProposals"
+              :key="p.unitId"
+              class="flex justify-between gap-2"
+            >
+              <span
+                >{{ p.unitName }} ×{{ p.factor }}:
+                {{ p.oldPrice === null ? "—" : formatePrice(p.oldPrice) }} →
+                {{
+                  p.proposed === null ? "يدوي" : formatePrice(p.proposed)
+                }}
+                ج</span
+              >
+              <span class="text-gray-500"
+                >هامش
+                {{
+                  p.rate === null ? "—" : `${Math.round(p.rate * 10000) / 100}%`
+                }}</span
+              >
             </div>
           </div>
           <URadioGroup
@@ -439,11 +526,18 @@
               label-key="name"
               by="id"
               placeholder="اختر المورد"
-              :search-input="{ placeholder: 'بحث عن مورد...', icon: 'i-lucide-search' }"
+              :search-input="{
+                placeholder: 'بحث عن مورد...',
+                icon: 'i-lucide-search',
+              }"
               class="w-full"
               @update:model-value="(s) => onPickPurchaseSupplier(s)"
             />
-            <FormsSupplier v-model="showSupplierModal" :refresher="reloadPurchaseSuppliers" @done="onPurchaseSupplierCreated" />
+            <FormsSupplier
+              v-model="showSupplierModal"
+              :refresher="reloadPurchaseSuppliers"
+              @done="onPurchaseSupplierCreated"
+            />
           </UFormField>
           <UFormField label="مرجع فاتورة المورد (اختياري)">
             <UInput
@@ -571,8 +665,25 @@ import { toDateSafe } from "~/types";
 definePageMeta({ title: "المنتجات" });
 const searchText = ref<string>("");
 const { formatePrice } = useHelpers();
-const { round2, round4, toNum, movingAverageCost, proposedSellingPrice, isLowStock, unitsForProduct, sellableUnitsForProduct, unitSellingPrice, purchasableUnitsForProduct, convertUnitPrice, unitPurchasePrice, purchaseLineBaseQuantity, purchaseLineBaseCost, purchasePreviewAverage, purchaseUnitProposals, stockQuantityLabel } =
-  useFinance();
+const {
+  round2,
+  round4,
+  toNum,
+  movingAverageCost,
+  proposedSellingPrice,
+  isLowStock,
+  unitsForProduct,
+  sellableUnitsForProduct,
+  unitSellingPrice,
+  purchasableUnitsForProduct,
+  convertUnitPrice,
+  unitPurchasePrice,
+  purchaseLineBaseQuantity,
+  purchaseLineBaseCost,
+  purchasePreviewAverage,
+  purchaseUnitProposals,
+  stockQuantityLabel,
+} = useFinance();
 const productFormState = ref(false);
 const productsStore = useProductsStore();
 // Hydration gate (see pages/index.vue): keeps SSR + first client render
@@ -596,11 +707,18 @@ const purchaseUnits = computed<ProductUnit[]>(() => {
   const product = prodsList.value.find((item) => item.id === purchaseId.value);
   return product ? purchasableUnitsForProduct(product) : [];
 });
-const purchaseUnit = computed(() => purchaseUnits.value.find((unit) => unit.id === purchaseUnitId.value) ?? purchaseUnits.value[0]);
+const purchaseUnit = computed(
+  () =>
+    purchaseUnits.value.find((unit) => unit.id === purchaseUnitId.value) ??
+    purchaseUnits.value[0],
+);
 function selectPurchaseUnit(unit?: ProductUnit): void {
   if (!unit) return;
-  const currentUnit = purchaseUnits.value.find((candidate) => candidate.id === purchaseUnitId.value);
-  const currentFactor = Number(currentUnit?.factor) > 0 ? Number(currentUnit?.factor) : 1;
+  const currentUnit = purchaseUnits.value.find(
+    (candidate) => candidate.id === purchaseUnitId.value,
+  );
+  const currentFactor =
+    Number(currentUnit?.factor) > 0 ? Number(currentUnit?.factor) : 1;
   purchaseUnitId.value = unit.id;
   const product = prodsList.value.find((item) => item.id === purchaseId.value);
   // سعر الشراء يتبع الوحدة المختارة نفسها (آخر سعر شراء مسجل عليها)،
@@ -610,7 +728,11 @@ function selectPurchaseUnit(unit?: ProductUnit): void {
     purchaseCost.value = unitLastCost;
     return;
   }
-  purchaseCost.value = convertUnitPrice(purchaseCost.value ?? purchaseCurrentCost.value, currentFactor, unit.factor);
+  purchaseCost.value = convertUnitPrice(
+    purchaseCost.value ?? purchaseCurrentCost.value,
+    currentFactor,
+    unit.factor,
+  );
 }
 const priceChoice = ref<"proposed" | "custom">("proposed");
 const purchasePrice = ref<number | undefined>(undefined);
@@ -634,13 +756,16 @@ function onPickPurchaseSupplier(s: Supplier | null | undefined): void {
     showSupplierModal.value = true;
     return;
   }
-  purchaseSupplier.value = suppliersStore.list.find((item) => item.id === s.id) ?? s;
+  purchaseSupplier.value =
+    suppliersStore.list.find((item) => item.id === s.id) ?? s;
 }
 async function reloadPurchaseSuppliers(): Promise<void> {
   await suppliersStore.fetchSuppliers(true);
 }
 function onPurchaseSupplierCreated(s: Supplier | null | undefined): void {
-  if (s?.id) purchaseSupplier.value = suppliersStore.list.find((item) => item.id === s.id) ?? s;
+  if (s?.id)
+    purchaseSupplier.value =
+      suppliersStore.list.find((item) => item.id === s.id) ?? s;
 }
 const purchaseSupplierRef = ref("");
 const purchaseKey = ref("");
@@ -654,7 +779,14 @@ const purchaseCount = computed(
     null,
 );
 const purchaseCountText = computed(() =>
-  stockQuantityLabel(prodsList.value.find((p) => p.id === purchaseId.value) ?? { name: "", price: null, cost_price: null }, purchaseCount.value),
+  stockQuantityLabel(
+    prodsList.value.find((p) => p.id === purchaseId.value) ?? {
+      name: "",
+      price: null,
+      cost_price: null,
+    },
+    purchaseCount.value,
+  ),
 );
 // Shortages dialog state (dialog content lands in S4).
 const shortagesOpen = ref(false);
@@ -691,9 +823,14 @@ const paginateArray = computed(() => {
       const sellingUnits = sellableUnitsForProduct(prod).map((unit) => ({
         id: unit.id,
         name: unit.name,
-        price: unit.selling_price == null && !unit.is_base && unit.id !== prod.base_unit_id
-          ? "غير محدد"
-          : unitSellingPrice(prod, unit) == null ? "غير محدد" : `${formatePrice(unitSellingPrice(prod, unit))} ج`,
+        price:
+          unit.selling_price == null &&
+          !unit.is_base &&
+          unit.id !== prod.base_unit_id
+            ? "غير محدد"
+            : unitSellingPrice(prod, unit) == null
+              ? "غير محدد"
+              : `${formatePrice(unitSellingPrice(prod, unit))} ج`,
       }));
       return {
         id: prod.id,
@@ -730,7 +867,8 @@ const stockSubmitError = ref("");
 const purchaseQtyError = computed(() => {
   if (purchaseQty.value === undefined || purchaseQty.value === null) return "";
   if (!(purchaseQty.value > 0)) return "الكمية يجب أن تكون أكبر من صفر.";
-  if (!Number.isInteger(purchaseQty.value)) return "الكمية يجب أن تكون رقمًا صحيحًا.";
+  if (!Number.isInteger(purchaseQty.value))
+    return "الكمية يجب أن تكون رقمًا صحيحًا.";
   return "";
 });
 const purchaseCostError = computed(() => {
@@ -747,7 +885,10 @@ const purchasePaidError = computed(() => {
   if (purchasePaid.value === undefined || purchasePaid.value === null)
     return "";
   if (!(purchasePaid.value >= 0)) return "المدفوع غير صالح.";
-  if (purchasePaid.value - purchaseTotal.value > 1e-9 && !purchaseSupplier.value?.id)
+  if (
+    purchasePaid.value - purchaseTotal.value > 1e-9 &&
+    !purchaseSupplier.value?.id
+  )
     return "اختر المورد لتسجيل الزيادة كسلفة.";
   if (purchasePaid.value - cashBalance.value > 1e-9)
     return "المدفوع يتجاوز رصيد الخزنة المتاح.";
@@ -756,7 +897,8 @@ const purchasePaidError = computed(() => {
 const adjustNewError = computed(() => {
   if (adjustNew.value === undefined || adjustNew.value === null) return "";
   if (!(adjustNew.value >= 0)) return "الكمية الجديدة غير صالحة.";
-  if (!Number.isInteger(adjustNew.value)) return "الكمية يجب أن تكون رقمًا صحيحًا.";
+  if (!Number.isInteger(adjustNew.value))
+    return "الكمية يجب أن تكون رقمًا صحيحًا.";
   return "";
 });
 const purchaseTotal = computed(() =>
@@ -771,16 +913,41 @@ function setPurchasePaid(value: number | undefined): void {
   purchasePaid.value = value;
 }
 // Live pricing-policy preview: SAME canonical helpers as the transaction.
-const purchaseProduct = computed(() => prodsList.value.find((p) => p.id === purchaseId.value));
-const purchaseCurrentCost = computed(() => toNum(purchaseProduct.value?.cost_price));
-const purchaseCurrentPrice = computed(() => toNum(purchaseProduct.value?.price));
-const purchaseBaseQty = computed(() => purchaseLineBaseQuantity(purchaseQty.value ?? 0, purchaseUnit.value?.factor ?? 1));
-const purchaseBaseCost = computed(() => purchaseLineBaseCost(purchaseCost.value ?? 0, purchaseUnit.value?.factor ?? 1));
+const purchaseProduct = computed(() =>
+  prodsList.value.find((p) => p.id === purchaseId.value),
+);
+const purchaseCurrentCost = computed(() =>
+  toNum(purchaseProduct.value?.cost_price),
+);
+const purchaseCurrentPrice = computed(() =>
+  toNum(purchaseProduct.value?.price),
+);
+const purchaseBaseQty = computed(() =>
+  purchaseLineBaseQuantity(
+    purchaseQty.value ?? 0,
+    purchaseUnit.value?.factor ?? 1,
+  ),
+);
+const purchaseBaseCost = computed(() =>
+  purchaseLineBaseCost(
+    purchaseCost.value ?? 0,
+    purchaseUnit.value?.factor ?? 1,
+  ),
+);
 const purchasePreviewAvg = computed(() =>
-  round4(purchasePreviewAverage(purchaseProduct.value?.stock_quantity, purchaseCurrentCost.value, purchaseBaseQty.value, purchaseBaseCost.value)),
+  round4(
+    purchasePreviewAverage(
+      purchaseProduct.value?.stock_quantity,
+      purchaseCurrentCost.value,
+      purchaseBaseQty.value,
+      purchaseBaseCost.value,
+    ),
+  ),
 );
 const purchaseProposals = computed(() =>
-  purchaseProduct.value ? purchaseUnitProposals(purchaseProduct.value, purchasePreviewAvg.value) : [],
+  purchaseProduct.value
+    ? purchaseUnitProposals(purchaseProduct.value, purchasePreviewAvg.value)
+    : [],
 );
 const purchasePreview = computed(() =>
   proposedSellingPrice(
@@ -830,7 +997,14 @@ const adjustCount = computed(
     null,
 );
 const adjustCountText = computed(() =>
-  stockQuantityLabel(prodsList.value.find((p) => p.id === adjustId.value) ?? { name: "", price: null, cost_price: null }, adjustCount.value),
+  stockQuantityLabel(
+    prodsList.value.find((p) => p.id === adjustId.value) ?? {
+      name: "",
+      price: null,
+      cost_price: null,
+    },
+    adjustCount.value,
+  ),
 );
 function openPurchase(id?: string): void {
   if (!id) return;
@@ -838,8 +1012,12 @@ function openPurchase(id?: string): void {
   purchaseId.value = id;
   purchaseQty.value = undefined;
   const purchaseOptions = p ? purchasableUnitsForProduct(p) : [];
-  const baseUnit = purchaseOptions.find((unit) => unit.is_base) ?? purchaseOptions[0];
-  purchaseCost.value = (p && baseUnit ? unitPurchasePrice(p, baseUnit) : null) ?? p?.cost_price ?? undefined;
+  const baseUnit =
+    purchaseOptions.find((unit) => unit.is_base) ?? purchaseOptions[0];
+  purchaseCost.value =
+    (p && baseUnit ? unitPurchasePrice(p, baseUnit) : null) ??
+    p?.cost_price ??
+    undefined;
   purchaseUnitId.value = baseUnit?.id ?? "";
   priceChoice.value = "proposed";
   purchasePrice.value = undefined;
@@ -891,10 +1069,9 @@ async function doPurchase(): Promise<void> {
         }
       : pricePolicyApplies.value
         ? {
-          mode: "proposed" as const,
-          approvedProposed:
-              purchasePreview.value.proposed ?? 0,
-          price: purchasePrice.value ?? purchasePreview.value.proposed ?? 0,
+            mode: "proposed" as const,
+            approvedProposed: purchasePreview.value.proposed ?? 0,
+            price: purchasePrice.value ?? purchasePreview.value.proposed ?? 0,
           }
         : { mode: "keep" as const };
   if (pricePolicyApplies.value && purchasePrice.value === undefined) {
@@ -1011,9 +1188,13 @@ async function retryProducts(): Promise<void> {
   if (isAdmin.value) productsStore.ensureInventorySubscription();
   loading.value = true;
   loadError.value = "";
-  try { await productsStore.fetchProducts(undefined, true); }
-  catch { loadError.value = "تعذر تحميل المنتجات. حاول مرة أخرى."; }
-  finally { loading.value = false; }
+  try {
+    await productsStore.fetchProducts(undefined, true);
+  } catch {
+    loadError.value = "تعذر تحميل المنتجات. حاول مرة أخرى.";
+  } finally {
+    loading.value = false;
+  }
 }
 async function archiveConfirmed(): Promise<void> {
   const id = confirmDelete.value?.id;

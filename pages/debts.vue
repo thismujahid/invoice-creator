@@ -64,11 +64,26 @@
           <thead>
             <tr class="border-b border-gray-200 text-gray-500">
               <th class="p-2 text-start font-medium">العميل</th>
-              <th class="p-2 text-start font-medium" title="إجمالي المتبقي من الفواتير × عددها">الفواتير وقيمتها</th>
+              <th
+                class="p-2 text-start font-medium"
+                title="إجمالي المتبقي من الفواتير × عددها"
+              >
+                الفواتير وقيمتها
+              </th>
               <th class="p-2 text-start font-medium">سلف</th>
               <th class="p-2 text-start font-medium">له</th>
-              <th class="p-2 text-start font-medium" title="الصافي المتوقع عند خصم رصيد العميل">بعد التسوية</th>
-              <th class="p-2 text-start font-medium" title="إجمالي الفواتير والسلف قبل التسوية">عام</th>
+              <th
+                class="p-2 text-start font-medium"
+                title="الصافي المتوقع عند خصم رصيد العميل"
+              >
+                بعد التسوية
+              </th>
+              <th
+                class="p-2 text-start font-medium"
+                title="إجمالي الفواتير والسلف قبل التسوية"
+              >
+                عام
+              </th>
               <th class="p-2 text-start font-medium">الأدوات</th>
             </tr>
           </thead>
@@ -78,12 +93,45 @@
               :key="c.key"
               class="border-b border-gray-100 last:border-0 hover:bg-gray-50"
             >
-              <td class="p-2 font-medium">{{ c.name }}<span class="mt-0.5 block text-end text-xs font-normal text-gray-500" dir="ltr">{{ c.phone ?? "—" }}</span></td>
-              <td class="p-2 font-semibold" dir="ltr">{{ formatePrice(c.invoiceDebt) }} ج × {{ c.unpaidCount }}</td>
+              <td class="p-2 font-medium">
+                {{ c.name
+                }}<span
+                  class="mt-0.5 block text-end text-xs font-normal text-gray-500"
+                  dir="ltr"
+                  >{{ c.phone ?? "—" }}</span
+                >
+              </td>
+              <td class="p-2 font-semibold" dir="ltr">
+                {{ formatePrice(c.invoiceDebt) }} ج × {{ c.unpaidCount }}
+              </td>
               <td class="p-2">{{ formatePrice(c.loanDebt) }}</td>
-              <td class="p-2 font-bold text-emerald-700">{{ formatePrice(c.creditBalance) }}</td>
-              <td class="p-2 font-bold" :class="c.totalDebt > c.creditBalance ? 'text-red-600' : c.totalDebt < c.creditBalance ? 'text-emerald-700' : 'text-gray-600'">{{ c.totalDebt > c.creditBalance ? 'عليه' : c.totalDebt < c.creditBalance ? 'له' : 'متوازن' }} {{ formatePrice(Math.abs(round2(c.totalDebt - c.creditBalance))) }}</td>
-              <td class="p-2 font-bold text-red-600">{{ formatePrice(c.totalDebt) }}</td>
+              <td class="p-2 font-bold text-emerald-700">
+                {{ formatePrice(c.creditBalance) }}
+              </td>
+              <td
+                class="p-2 font-bold"
+                :class="
+                  c.totalDebt > c.creditBalance
+                    ? 'text-red-600'
+                    : c.totalDebt < c.creditBalance
+                      ? 'text-emerald-700'
+                      : 'text-gray-600'
+                "
+              >
+                {{
+                  c.totalDebt > c.creditBalance
+                    ? "عليه"
+                    : c.totalDebt < c.creditBalance
+                      ? "له"
+                      : "متوازن"
+                }}
+                {{
+                  formatePrice(Math.abs(round2(c.totalDebt - c.creditBalance)))
+                }}
+              </td>
+              <td class="p-2 font-bold text-red-600">
+                {{ formatePrice(c.totalDebt) }}
+              </td>
               <td class="p-2">
                 <div class="flex gap-1.5">
                   <UTooltip text="سجل عمليات العميل"
@@ -106,7 +154,14 @@
                       @click="openPay(c)"
                       class="flex items-center justify-center"
                   /></UTooltip>
-                  <CustomerCreditSettlement :customer-id="c.customer_id" :customer-name="c.name" :credit-balance="c.creditBalance" :total-debt="c.totalDebt" :obligations="[...c.invoices, ...c.loans]" @settled="reload" />
+                  <CustomerCreditSettlement
+                    :customer-id="c.customer_id"
+                    :customer-name="c.name"
+                    :credit-balance="c.creditBalance"
+                    :total-debt="c.totalDebt"
+                    :obligations="[...c.invoices, ...c.loans]"
+                    @settled="reload"
+                  />
                   <UTooltip text="إضافة سلفة"
                     ><UButton
                       icon="mdi-plus"
@@ -164,7 +219,14 @@
                 @click="openPay(c)"
                 class="flex items-center justify-center"
               />
-              <CustomerCreditSettlement :customer-id="c.customer_id" :customer-name="c.name" :credit-balance="c.creditBalance" :total-debt="c.totalDebt" :obligations="[...c.invoices, ...c.loans]" @settled="reload" />
+              <CustomerCreditSettlement
+                :customer-id="c.customer_id"
+                :customer-name="c.name"
+                :credit-balance="c.creditBalance"
+                :total-debt="c.totalDebt"
+                :obligations="[...c.invoices, ...c.loans]"
+                @settled="reload"
+              />
               <UButton
                 icon="i-lucide-plus"
                 color="info"
@@ -177,11 +239,47 @@
             </div>
           </div>
           <div class="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-            <div>الفواتير: <b dir="ltr">{{ formatePrice(c.invoiceDebt) }} ج × {{ c.unpaidCount }}</b></div>
-            <div>سلف: <b>{{ formatePrice(c.loanDebt) }}</b></div>
-            <div>له: <b class="text-emerald-700">{{ formatePrice(c.creditBalance) }}</b></div>
-            <div>عام: <b class="text-red-600">{{ formatePrice(c.totalDebt) }}</b></div>
-            <div class="col-span-2 font-bold" :class="c.totalDebt > c.creditBalance ? 'text-red-600' : c.totalDebt < c.creditBalance ? 'text-emerald-700' : 'text-gray-600'">بعد التسوية: {{ c.totalDebt > c.creditBalance ? 'عليه' : c.totalDebt < c.creditBalance ? 'له' : 'متوازن' }} {{ formatePrice(Math.abs(round2(c.totalDebt - c.creditBalance))) }} ج</div>
+            <div>
+              الفواتير:
+              <b dir="ltr"
+                >{{ formatePrice(c.invoiceDebt) }} ج × {{ c.unpaidCount }}</b
+              >
+            </div>
+            <div>
+              سلف: <b>{{ formatePrice(c.loanDebt) }}</b>
+            </div>
+            <div>
+              له:
+              <b class="text-emerald-700">{{
+                formatePrice(c.creditBalance)
+              }}</b>
+            </div>
+            <div>
+              عام: <b class="text-red-600">{{ formatePrice(c.totalDebt) }}</b>
+            </div>
+            <div
+              class="col-span-2 font-bold"
+              :class="
+                c.totalDebt > c.creditBalance
+                  ? 'text-red-600'
+                  : c.totalDebt < c.creditBalance
+                    ? 'text-emerald-700'
+                    : 'text-gray-600'
+              "
+            >
+              بعد التسوية:
+              {{
+                c.totalDebt > c.creditBalance
+                  ? "عليه"
+                  : c.totalDebt < c.creditBalance
+                    ? "له"
+                    : "متوازن"
+              }}
+              {{
+                formatePrice(Math.abs(round2(c.totalDebt - c.creditBalance)))
+              }}
+              ج
+            </div>
           </div>
         </UCard>
         <UEmpty
@@ -199,7 +297,6 @@
         class="w-24"
       />
       <UPagination
-        dir="ltr"
         v-model:page="currentPage"
         :total="filtered.length"
         :items-per-page="currentPerPage"
@@ -208,9 +305,17 @@
       />
     </div>
 
-    <UiAppDialog v-model:open="detailsOpen" :title="`سجل عمليات ${selected?.name || ''}`">
+    <UiAppDialog
+      v-model:open="detailsOpen"
+      :title="`سجل عمليات ${selected?.name || ''}`"
+    >
       <div v-if="selected" class="max-h-[75vh] overflow-y-auto">
-        <CustomerDebtTimeline :customer-id="selected.customer_id" :total-debt="selected.totalDebt" :credit-balance="selected.creditBalance" @view-invoice="openViewInvoice" />
+        <CustomerDebtTimeline
+          :customer-id="selected.customer_id"
+          :total-debt="selected.totalDebt"
+          :credit-balance="selected.creditBalance"
+          @view-invoice="openViewInvoice"
+        />
       </div>
     </UiAppDialog>
 
@@ -476,7 +581,9 @@ const { db, getDoc } = useFirebase();
 
 const loading = ref(true);
 const book = ref<CustomerDebt[]>([]);
-const statementBook = computed(() => book.value.filter((customer) => customer.totalDebt > 0));
+const statementBook = computed(() =>
+  book.value.filter((customer) => customer.totalDebt > 0),
+);
 const searchText = ref(String(route.query.customer_name ?? ""));
 const currentPage = ref(1);
 const currentPerPage = ref(25);
@@ -831,11 +938,18 @@ async function reload(): Promise<void> {
   loading.value = true;
   try {
     book.value = await debts.fetchDebtsBook();
-    if (selected.value) selected.value = book.value.find((customer) => customer.key === selected.value?.key) ?? null;
+    if (selected.value)
+      selected.value =
+        book.value.find((customer) => customer.key === selected.value?.key) ??
+        null;
     const customerId = String(route.query.customer_id ?? "");
     const customerName = String(route.query.customer_name ?? "");
     if (customerId || customerName) {
-      const target = book.value.find((customer) => (customerId && customer.customer_id === customerId) || (customerName && customer.name === customerName));
+      const target = book.value.find(
+        (customer) =>
+          (customerId && customer.customer_id === customerId) ||
+          (customerName && customer.name === customerName),
+      );
       if (target) selected.value = target;
     }
   } finally {
@@ -854,7 +968,9 @@ async function printDebtsStatement(): Promise<void> {
   printingStatement.value = true;
   try {
     const freshCustomers = await debts.fetchDebtsBook();
-    const freshBook = freshCustomers.filter((customer) => customer.totalDebt > 0);
+    const freshBook = freshCustomers.filter(
+      (customer) => customer.totalDebt > 0,
+    );
     if (!freshBook.length) {
       notify("لا توجد ديون مستحقة للطباعة", "error");
       return;
@@ -876,13 +992,19 @@ async function printDebtsStatement(): Promise<void> {
       (map[key] ??= []).push(inv);
     }
     statementMap.value = map;
-    const invoiceCount = Object.values(map).reduce((s, arr) => s + arr.length, 0);
+    const invoiceCount = Object.values(map).reduce(
+      (s, arr) => s + arr.length,
+      0,
+    );
     await nextTick();
     await useDownloadPDF(
       "debts-statement",
       `كشف-الديون-${new Date().toLocaleDateString("ar-EG")}`,
     );
-    notify(`تم تجهيز الكشف: ${freshBook.length} عميل و${invoiceCount} فاتورة`, "success");
+    notify(
+      `تم تجهيز الكشف: ${freshBook.length} عميل و${invoiceCount} فاتورة`,
+      "success",
+    );
   } catch (e) {
     console.error(e);
     notify("تعذر تجهيز كشف الديون", "error");
