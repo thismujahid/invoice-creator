@@ -39,7 +39,7 @@
             <div class="grid grid-cols-2 gap-2">
               <UFormField label="المنتج" class="col-span-2"><USelectMenu :model-value="productOf(line)" :items="products.activeProducts" label-key="name" by="id" :search-input="{ placeholder: 'بحث عن منتج...', icon: 'i-lucide-search' }" placeholder="المنتج" class="w-full" @update:model-value="(value) => selectProduct(line, value)" /></UFormField>
               <UFormField v-if="unitsOf(line).length > 1" label="الوحدة"><USelectMenu :model-value="unitOf(line)" :items="unitsOf(line)" label-key="name" by="id" :search-input="false" class="w-full" @update:model-value="(value) => selectUnit(line, value)" /></UFormField>
-              <UFormField :label="line.productId ? 'الكمية (المتبقي بعد الفاتورة: ' + stockLabelOf(line) + ')' : 'الكمية'" :error="stockErrorOf(line) || undefined"><UInputNumber v-model="line.quantity" :min="0.01" :step="0.01" class="w-full" /></UFormField>
+              <UFormField :label="line.productId ? 'الكمية (المتبقي بعد الفاتورة: ' + stockLabelOf(line) + ')' : 'الكمية'" :error="stockErrorOf(line) || undefined"><UInputNumber v-model="line.quantity" :min="unitOf(line)?.allows_fractional ? 0.0001 : 1" :step="unitOf(line)?.allows_fractional ? 0.0001 : 1" class="w-full" /></UFormField>
               <UFormField label="سعر المنتج"><UInput :model-value="priceOf(line) === null ? 'غير محدد' : formatePrice(priceOf(line))" readonly class="w-full" /></UFormField>
               <UFormField label="الإجمالي"><UInput :model-value="formatePrice(lineTotal(line))" readonly class="w-full" /></UFormField>
             </div>
@@ -94,7 +94,7 @@ const customers = useCustomersStore();
 const products = useProductsStore();
 const invoices = useInvoicesStore();
 const { formatePrice, formatInvoiceLineName } = useHelpers();
-const { sellableUnitsForProduct, stockQuantityLabel, round2 } = useFinance();
+const { sellableUnitsForProduct, stockQuantityLabel, round2, round4 } = useFinance();
 const { notify } = useAppToast();
 const customer = ref<Customer>();
 const customerSearch = ref("");
@@ -137,23 +137,24 @@ function stockLabelOf(line: SaleLine): string {
   const unit = unitOf(line);
   if (!product || !unit) return "—";
   const selected = lines.value.reduce((sum, item) => item.productId === line.productId && item.unitId === line.unitId ? sum + item.quantity : sum, 0);
-  return `${Math.max(0, round2(availableStock(line.productId, line.unitId) - selected))} ${unit.name}`;
+  return `${Math.max(0, round4(availableStock(line.productId, line.unitId) - selected))} ${unit.name}`;
 }
 function availableStock(productId: string, unitId: string): number {
   const product = products.productsById.get(productId);
   const unit = product?.units?.find((item) => item.id === unitId);
-  return round2(Number(unit?.stock_quantity ?? product?.stock_quantity ?? 0) + (originalReserved.get(stockKey(productId, unitId)) || 0));
+  return round4(Number(unit?.stock_quantity ?? product?.stock_quantity ?? 0) + (originalReserved.get(stockKey(productId, unitId)) || 0));
 }
 const stockErrors = computed(() => {
   const selected = new Map<string, number>();
   for (const line of lines.value) {
     if (!line.productId || !unitOf(line)) continue;
     const key = stockKey(line.productId, line.unitId);
-    selected.set(key, round2((selected.get(key) || 0) + line.quantity));
+    selected.set(key, round4((selected.get(key) || 0) + line.quantity));
   }
   const errors = new Map<string, string>();
   for (const [key, quantity] of selected) {
     const [productId, unitId] = key.split("||");
+    if (!productId || !unitId) continue;
     const unit = products.productsById.get(productId)?.units?.find((item) => item.id === unitId);
     const available = availableStock(productId, unitId);
     if (quantity - available > 1e-9) errors.set(key, `إجمالي المطلوب ${quantity} ${unit?.name ?? "وحدة"} يتجاوز المتاح ${available} ${unit?.name ?? "وحدة"}.`);
@@ -213,7 +214,7 @@ function selectProduct(line: SaleLine, product: Product | null | undefined): voi
 }
 function selectUnit(line: SaleLine, unit: ProductUnit | null | undefined): void { line.unitId = unit?.id ?? ""; line.lockedPrice = undefined; }
 function setQuantity(line: SaleLine, value: unknown): void { const quantity = Number(value); line.quantity = Number.isFinite(quantity) ? quantity : 0; }
-function changeQuantity(line: SaleLine, delta: number): void { line.quantity = Math.max(0.01, round2(line.quantity + delta)); }
+function changeQuantity(line: SaleLine, delta: number): void { line.quantity = Math.max(0.0001, round4(line.quantity + delta)); }
 function setPaid(value: unknown): void { paidTouched.value = true; const amount = Number(value); paid.value = Number.isFinite(amount) ? amount : 0; }
 function setDiscount(value: unknown): void { discount.value = value === "" || value == null ? null : Number(value); }
 function payFull(): void { paid.value = Math.max(0, round2(total.value - creditUsed.value)); paidTouched.value = false; }
@@ -233,6 +234,7 @@ async function save(print: boolean): Promise<void> {
   if (saving.value) return;
   error.value = "";
   if (!customer.value?.id || !lines.value.length || lines.value.some((line) => !productOf(line) || !unitOf(line) || !Number.isFinite(line.quantity) || line.quantity <= 0)) { error.value = "اختر العميل والمنتجات والوحدات وأدخل كميات صحيحة."; return; }
+  if (lines.value.some((line) => Math.abs(line.quantity - round4(line.quantity)) > 1e-9)) { error.value = "الكمية تقبل أربع منازل عشرية كحد أقصى."; return; }
   if (lines.value.some((line) => unitOf(line)?.allows_fractional !== true && !Number.isInteger(line.quantity))) { error.value = "هذه الوحدة لا تقبل كميات كسرية."; return; }
   if (stockErrors.value.size) { error.value = "كمية المنتجات المطلوبة تتجاوز المتاح بالمخزون. خفّض الكمية قبل الحفظ."; return; }
   if (discountError.value) { error.value = discountError.value; return; }
@@ -283,7 +285,7 @@ onMounted(async () => {
     for (const item of draft.products || []) {
       if (item.product_id && item.unit_id) {
         const key = stockKey(item.product_id, item.unit_id);
-        originalReserved.set(key, round2((originalReserved.get(key) || 0) + Number(item.product_quantity || 0)));
+        originalReserved.set(key, round4((originalReserved.get(key) || 0) + Number(item.product_quantity || 0)));
       }
     }
   }

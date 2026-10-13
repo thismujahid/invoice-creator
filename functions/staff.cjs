@@ -4,7 +4,6 @@ const { safeProduct, saleAmounts, invoiceRevision } = require("./staffMath.cjs")
 
 const db = getFirestore();
 const adminEmail = "mohamed.mojahead@gmail.com";
-const fixedCashier = { uid: "q1EgNKKwcvgeuf57TD49rqLbqlL2", email: "saleh2025mujahid@gmail.com" };
 const money = (value) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 const cost4 = (value) => Math.round((Number(value) + Number.EPSILON) * 10000) / 10000;
 const validNumber = (value, min = 0) => typeof value === "number" && Number.isFinite(value) && value >= min;
@@ -27,7 +26,6 @@ async function roleOf(request) {
   if (!request.auth?.uid) throw new HttpsError("unauthenticated", "Sign in first.");
   if (request.auth.token.email === adminEmail) return "admin";
   const data = (await db.doc(`staff_users/${request.auth.uid}`).get()).data();
-  if (request.auth.uid === fixedCashier.uid && request.auth.token.email === fixedCashier.email && (!data || (data.active === true && data.email === fixedCashier.email))) return "cashier";
   if (data?.role === "cashier" && data.active === true && data.email === request.auth.token.email) return "cashier";
   throw new HttpsError("permission-denied", "This account is not authorized.");
 }
@@ -38,8 +36,7 @@ async function authorize(request, tx) {
   if (reset.data()?.status === "running") throw new HttpsError("failed-precondition", "System reset is running.");
   if (role === "cashier") {
     const staff = await tx.get(db.doc(`staff_users/${request.auth.uid}`));
-    const isFixedCashier = request.auth.uid === fixedCashier.uid && request.auth.token.email === fixedCashier.email;
-    if ((staff.exists && (staff.data()?.active !== true || staff.data()?.email !== request.auth.token.email)) || (!staff.exists && !isFixedCashier)) {
+    if (!staff.exists || staff.data()?.role !== "cashier" || staff.data()?.active !== true || staff.data()?.email !== request.auth.token.email) {
       throw new HttpsError("permission-denied", "Cashier access was revoked.");
     }
   }
@@ -473,14 +470,14 @@ exports.createStaffSale = onCall(async (request) => {
       const unitId = cleanText(raw.unit_id, 128) || product.units?.[0]?.id || "legacy-base";
       const unit = sellableUnit(product, unitId);
       const quantity = raw.product_quantity;
-      if (!validNumber(quantity, 0.000001)) fail("Enter a valid quantity.");
+      if (!validNumber(quantity, 0.000001) || Math.abs(quantity - cost4(quantity)) > 1e-9) fail("Enter a valid quantity with at most four decimal places.");
       if (unit.allows_fractional !== true && Math.abs(quantity - Math.round(quantity)) > 1e-9) fail("This unit does not allow fractional quantities.");
       const listedPrice = unit.price;
       const requestedPrice = Number(raw.product_price);
       if (role === "cashier" && (!validNumber(listedPrice) || !validNumber(requestedPrice) || Math.abs(requestedPrice - listedPrice) > 0.005)) fail("The selling price changed. Refresh the product.");
       if (!validNumber(requestedPrice)) fail("Enter a valid selling price.");
       const stockKey = `${id}||${unit.id}`;
-      needs.set(stockKey, money((needs.get(stockKey) || 0) + quantity));
+      needs.set(stockKey, cost4((needs.get(stockKey) || 0) + quantity));
       const unitCost = cost4(Number((unit.average_cost ?? product.cost_price) || 0));
       return {
         line_id: `${saleRef.id}-${index}`, product_id: id, product_name: product.name,

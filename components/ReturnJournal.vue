@@ -13,7 +13,7 @@
           <b>{{ formatePrice(entry.total) }} ج</b>
         </div>
         <p class="mt-2 text-xs text-gray-600">{{ entry.items }}</p>
-        <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs"><span>{{ entry.kind === 'customer' ? 'تخفيض الدين' : 'تخفيض مستحق المورد' }}: {{ formatePrice(entry.offset) }} ج</span><span>{{ entry.kind === 'customer' ? 'نقد خرج' : 'رصيد نشأ لنا' }}: {{ formatePrice(entry.other) }} ج</span><span v-if="entry.kind === 'customer'">رصيد للعميل: {{ formatePrice((entry.record.credit_issued || 0) + (entry.record.credit_restored || 0)) }} ج</span><span v-if="entry.kind === 'supplier'">نقد حُصّل لاحقًا: {{ formatePrice(entry.record.cash_received || 0) }} ج</span></div>
+        <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs"><span>{{ entry.kind === 'customer' ? 'تخفيض الدين' : 'تخفيض مستحق المورد' }}: {{ formatePrice(entry.offset) }} ج</span><span>{{ entry.kind === 'customer' ? 'نقد خرج' : 'رصيد نشأ لنا' }}: {{ formatePrice(entry.other) }} ج</span><span v-if="entry.kind === 'customer'">رصيد للعميل: {{ formatePrice((entry.record.credit_issued || 0) + (entry.record.credit_restored || 0)) }} ج</span><span v-if="entry.kind === 'supplier'">نقد حُصّل لاحقًا: {{ formatePrice(entry.record.cash_received || 0) }} ج</span><span v-if="entry.kind === 'supplier' && entry.record.cost_variance !== undefined">فرق تكلفة: {{ formatePrice(entry.record.cost_variance) }} ج</span></div>
         <div class="mt-2 flex gap-2"><UButton size="xs" color="neutral" variant="link" @click="selectedEntry = entry">تفاصيل المرتجع</UButton><UButton size="xs" color="neutral" variant="link" @click="viewInvoice(entry)">عرض الفاتورة</UButton><CustomerCreditPayout v-if="entry.kind === 'customer'" :customer-id="entry.record.customer_id" :customer-name="entry.name" /></div>
       </UCard>
       <UEmpty v-if="!entries.length" title="لا توجد مرتجعات مسجلة" />
@@ -131,6 +131,8 @@ async function exportJournal(): Promise<void> {
       "نقد مردود للعميل أو رصيد لنا": index === 0 ? entry.other : "",
       "رصيد محفوظ للعميل": index === 0 && entry.kind === "customer" ? (entry.record.credit_issued || 0) + (entry.record.credit_restored || 0) : "",
       "نقد حُصّل من المورد لاحقًا": index === 0 && entry.kind === "supplier" ? entry.record.cash_received || 0 : "",
+      "قيمة المخزون الخارج": index === 0 && entry.kind === "supplier" ? entry.record.inventory_amount ?? "" : "",
+      "فرق تكلفة المرتجع": index === 0 && entry.kind === "supplier" ? entry.record.cost_variance ?? "" : "",
       ملاحظة: entry.record.note || "",
     })));
     const workbook = XLSX.utils.book_new();

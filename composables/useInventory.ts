@@ -1,6 +1,6 @@
 import { collection, doc, type Transaction } from "firebase/firestore";
 import type { InventoryTransaction } from "~/types/finance";
-import { round2, toNum } from "./finance";
+import { round2, round4, toNum } from "./finance";
 import type { PriceDecision } from "./finance";
 
 export interface PurchaseInput {
@@ -21,6 +21,7 @@ export interface PurchaseInput {
 
 export interface AdjustInput {
   product_id: string;
+  unit_id: string;
   new_stock_quantity: number;
   note: string;
 }
@@ -92,21 +93,29 @@ export const useInventory = defineStore("inventory", () => {
   async function adjustStock(input: AdjustInput): Promise<{ ok: true } | { ok: false; error: string }> {
     if (!input.product_id) return { ok: false, error: "حدد المنتج أولاً." };
     if (!input.note?.trim()) return { ok: false, error: "سبب التعديل مطلوب." };
-    const target = round2(input.new_stock_quantity);
-    if (!Number.isFinite(target) || target < 0) return { ok: false, error: "الكمية الجديدة غير صالحة." };
-    if (!Number.isInteger(target)) return { ok: false, error: "الكمية يجب أن تكون رقمًا صحيحًا." };
+    const target = round4(input.new_stock_quantity);
+    if (!Number.isFinite(input.new_stock_quantity) || target < 0) return { ok: false, error: "الكمية الجديدة غير صالحة." };
+    if (Math.abs(target - input.new_stock_quantity) > EPS) return { ok: false, error: "الكمية تقبل أربع منازل عشرية كحد أقصى." };
+    if (!input.unit_id) return { ok: false, error: "حدد الوحدة أولًا." };
     try {
       await runTx(async (tx) => {
         const pRef = doc(db, "products", input.product_id);
         const pSnap = await tx.get(pRef);
         if (!pSnap.exists()) throw new Error("PRODUCT_MISSING");
-        const cur = round2(toNum(pSnap.data().stock_quantity));
-        const currentCost = toNum(pSnap.data().cost_price);
-        const delta = round2(target - cur);
+        const data = pSnap.data();
+        const units = Array.isArray(data.units) ? data.units : [];
+        const unit = units.find((entry: { id?: string }) => entry.id === input.unit_id);
+        if (units.length && !unit) throw new Error("UNIT_MISSING");
+        if (!units.length && input.unit_id !== (data.base_unit_id || "legacy-base")) throw new Error("UNIT_MISSING");
+        if (unit?.allows_fractional !== true && !Number.isInteger(target)) throw new Error("FRACTION_NOT_ALLOWED");
+        const cur = round4(toNum(unit ? unit.stock_quantity : data.stock_quantity));
+        const currentCost = unit ? unit.average_cost : data.cost_price;
+        const delta = round4(target - cur);
         if (Math.abs(delta) < EPS) return;
+        if (delta > 0 && (currentCost === null || currentCost === undefined || !Number.isFinite(Number(currentCost)))) throw new Error("COST_MISSING");
         const movementRef = doc(collection(db, "inventory_transactions"));
         tx.update(pRef, {
-          stock_quantity: target,
+          ...(unit ? { units: units.map((entry: { id?: string }) => entry.id === input.unit_id ? { ...entry, stock_quantity: target } : entry) } : { stock_quantity: target }),
           last_inventory_transaction_id: movementRef.id,
           last_inventory_transaction_ids: [movementRef.id],
         });
@@ -115,12 +124,15 @@ export const useInventory = defineStore("inventory", () => {
           product_id: input.product_id,
           product_name: String(pSnap.data().name || ""),
           quantity: Math.abs(delta),
+          unit_quantity: Math.abs(delta),
+          unit_id: input.unit_id,
+          unit_name: unit?.name || data.base_unit_name || "وحدة",
           base_quantity: Math.abs(delta),
           unit_factor: 1,
           direction: delta > 0 ? "in" : "out",
           // Inbound carries current average so cost history stays trusted;
           // outbound has no cost effect (null = take only).
-          unit_cost: delta > 0 ? currentCost : null,
+          unit_cost: delta > 0 ? round4(Number(currentCost)) : null,
           reason: "manual_correction",
           note: `تعديل يدوي (${input.note.trim()}) — ${delta > 0 ? "دخول بتكلفة المتوسط الحالية" : "خروج بدون أثر على التكلفة"}`,
           seq: 0,
@@ -128,10 +140,13 @@ export const useInventory = defineStore("inventory", () => {
           created_at: serverTimestamp(),
         });
       });
-      products.patchCached(input.product_id, { stock_quantity: target });
+      products.invalidateCache();
       return { ok: true };
     } catch (e) {
       if (e instanceof Error && e.message === "PRODUCT_MISSING") return { ok: false, error: "المنتج غير موجود." };
+      if (e instanceof Error && e.message === "UNIT_MISSING") return { ok: false, error: "الوحدة غير موجودة." };
+      if (e instanceof Error && e.message === "FRACTION_NOT_ALLOWED") return { ok: false, error: "هذه الوحدة لا تقبل كميات كسرية." };
+      if (e instanceof Error && e.message === "COST_MISSING") return { ok: false, error: "متوسط تكلفة الوحدة غير معروف؛ سجّلها عبر الشراء أولًا." };
       console.error(e);
       return { ok: false, error: "تعذر حفظ العملية، لم يتم تعديل الخزنة أو المخزون." };
     }

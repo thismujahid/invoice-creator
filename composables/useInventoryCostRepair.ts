@@ -1,7 +1,7 @@
 import { collection, doc, getDocs, query, where } from "firebase/firestore";
 import type { InventoryTransaction, InventoryTransactionType } from "~/types/finance";
 import type { Product } from "~/types";
-import { applyStockGroup, round2, round4, toNum } from "./finance";
+import { applyStockGroup, round4, toNum } from "./finance";
 import { toDateSafe } from "~/types";
 
 export type RepairStatus = "OK" | "REPAIRABLE" | "STOCK_MISMATCH" | "INSUFFICIENT_HISTORY" | "INVALID_HISTORY";
@@ -16,6 +16,7 @@ export const REPAIR_STATUS_LABELS: Record<RepairStatus, string> = {
 
 export interface RepairRow {
   product_id: string;
+  unit_id: string | null;
   product_name: string;
   currentStock: number | null;
   replayedStock: number;
@@ -33,7 +34,7 @@ export interface RepairRow {
 }
 
 const QTY_EPS = 1e-6;
-const MONEY_EPS = 0.005;
+const COST_EPS = 0.00005;
 
 function hasKnownCost(v: unknown): v is number {
   return (
@@ -215,7 +216,16 @@ export const useInventoryCostRepair = defineStore("inventoryCostRepair", () => {
     let done = 0;
     for (const p of products) {
       if (!p.id) continue;
-      rows.push(analyzeOne(p, byProduct.get(p.id) ?? []));
+      const movements = byProduct.get(p.id) ?? [];
+      if (p.units?.length) {
+        const missingUnit = movements.some((movement) => !movement.unit_id || !p.units!.some((unit) => unit.id === movement.unit_id));
+        for (const unit of p.units) {
+          const row = analyzeOne({ ...p, stock_quantity: unit.stock_quantity, cost_price: unit.average_cost ?? null }, movements.filter((movement) => movement.unit_id === unit.id), unit.id, unit.name);
+          rows.push(missingUnit ? { ...row, status: "INVALID_HISTORY" } : row);
+        }
+      } else {
+        rows.push(analyzeOne(p, movements));
+      }
       done += 1;
       if (done % 20 === 0) onProgress?.(done, products.length);
     }
@@ -232,10 +242,11 @@ export const useInventoryCostRepair = defineStore("inventoryCostRepair", () => {
     return analyzeScoped({}, onProgress);
   }
 
-  function analyzeOne(p: Product, txns: InventoryTransaction[]): RepairRow {
+  function analyzeOne(p: Product, txns: InventoryTransaction[], unitId: string | null = null, unitName?: string): RepairRow {
     const base = {
       product_id: p.id as string,
-      product_name: p.name,
+      unit_id: unitId,
+      product_name: unitName ? `${p.name} — ${unitName}` : p.name,
       currentStock: (p.stock_quantity ?? null) as number | null,
       replayedStock: 0,
       currentCost: (p.cost_price ?? null) as number | null,
@@ -287,7 +298,7 @@ export const useInventoryCostRepair = defineStore("inventoryCostRepair", () => {
       for (const t of list) {
         const step = classify(t);
         if ("invalid" in step) {
-          return { ...base, replayedStock: round2(stock), status: "INVALID_HISTORY" };
+          return { ...base, replayedStock: round4(stock), status: "INVALID_HISTORY" };
         }
         steps.push(step.stockIn > 0
           ? { qty: step.stockIn, cost: step.knownCost, dir: "in" as const }
@@ -304,13 +315,13 @@ export const useInventoryCostRepair = defineStore("inventoryCostRepair", () => {
         (costInflows.length > 1 || hasInflowAndOutflow) &&
         list.some((t) => t.seq === null || t.seq === undefined)
       ) {
-        return { ...base, replayedStock: round2(stock), status: "INVALID_HISTORY" };
+        return { ...base, replayedStock: round4(stock), status: "INVALID_HISTORY" };
       }
       // Costless stock inflows cannot safely establish the average cost basis.
       for (const s of steps) {
         if (s.dir === "in" && s.cost === null) untrusted = true;
       }
-      const outs = round2(steps.filter((s) => s.dir === "out").reduce((a, s) => a + s.qty, 0));
+      const outs = round4(steps.filter((s) => s.dir === "out").reduce((a, s) => a + s.qty, 0));
       const ins = steps
         .filter((s) => s.dir === "in")
         .map((s) => ({ qty: s.qty, cost: s.cost }));
@@ -332,7 +343,7 @@ export const useInventoryCostRepair = defineStore("inventoryCostRepair", () => {
     avg: number | undefined,
     untrusted: boolean,
   ): RepairRow {
-    const replayedStock = round2(stock);
+    const replayedStock = round4(stock);
     const recomputedCost = avg === undefined ? null : round4(avg);
     const storedStock = p.stock_quantity ?? null;
     const storedCost = p.cost_price ?? null;
@@ -359,10 +370,10 @@ export const useInventoryCostRepair = defineStore("inventoryCostRepair", () => {
       // Authoritative history, no stored value — safe to set.
       return { ...base, replayedStock, recomputedCost, difference: recomputedCost, status: "REPAIRABLE" };
     }
-    if (Math.abs(recomputedCost - storedCost) <= MONEY_EPS) {
+    if (Math.abs(recomputedCost - storedCost) < COST_EPS) {
       return { ...base, replayedStock, recomputedCost, difference: 0, status: "OK" };
     }
-    return { ...base, replayedStock, recomputedCost, difference: round2(recomputedCost - storedCost), status: "REPAIRABLE" };
+    return { ...base, replayedStock, recomputedCost, difference: round4(recomputedCost - storedCost), status: "REPAIRABLE" };
   }
 
   /** Apply a repair only while the product and all analyzed movements match. */
@@ -378,9 +389,9 @@ export const useInventoryCostRepair = defineStore("inventoryCostRepair", () => {
     }
     try {
       const logSnap = await getDocs(query(collection(db, "inventory_transactions"), where("product_id", "==", row.product_id)));
-      const freshTransactions = logSnap.docs.map((d) => ({ id: d.id, ...(d.data() as object) }) as InventoryTransaction);
+      const freshTransactions = logSnap.docs.map((d) => ({ id: d.id, ...(d.data() as object) }) as InventoryTransaction).filter((movement) => movement.unit_id === row.unit_id || row.unit_id === null);
       if (
-        logSnap.size !== row.txnCount ||
+        freshTransactions.length !== row.txnCount ||
         transactionFingerprint(freshTransactions) !== row.txnFingerprint
       ) {
         return { ok: false, error: "تغيّر سجل الحركات أثناء المراجعة — أعد التحليل." };
@@ -399,9 +410,12 @@ export const useInventoryCostRepair = defineStore("inventoryCostRepair", () => {
         if (transactionFingerprint(currentTransactions) !== row.txnFingerprint) {
           throw new Error("VALIDATION:تغيّر سجل الحركات أثناء المراجعة — أعد التحليل.");
         }
-        const curCostRaw = pSnap.data().cost_price;
+        const units = Array.isArray(pSnap.data().units) ? pSnap.data().units : [];
+        const selectedUnit = row.unit_id === null ? null : units.find((unit: { id?: string }) => unit.id === row.unit_id);
+        if (row.unit_id !== null && !selectedUnit) throw new Error("VALIDATION:وحدة المنتج لم تعد موجودة.");
+        const curCostRaw = selectedUnit ? selectedUnit.average_cost : pSnap.data().cost_price;
         const curCost = curCostRaw ?? null;
-        const curStock = pSnap.data().stock_quantity ?? null;
+        const curStock = (selectedUnit ? selectedUnit.stock_quantity : pSnap.data().stock_quantity) ?? null;
         const currentLastMovementId = pSnap.data().last_inventory_transaction_id ?? null;
         const currentLastMovementIds = [
           ...((pSnap.data().last_inventory_transaction_ids ?? []) as string[]),
@@ -416,7 +430,7 @@ export const useInventoryCostRepair = defineStore("inventoryCostRepair", () => {
           curCost !== null &&
           curCost !== undefined &&
           row.currentCost !== null &&
-          Math.abs(Number(curCost) - Number(row.currentCost)) > MONEY_EPS;
+          Math.abs(Number(curCost) - Number(row.currentCost)) >= COST_EPS;
         const stockPresenceChanged =
           (curStock === null || curStock === undefined) !==
           (row.currentStock === null || row.currentStock === undefined);
@@ -435,9 +449,12 @@ export const useInventoryCostRepair = defineStore("inventoryCostRepair", () => {
         }
         const now = serverTimestamp();
         const adjustmentRef = doc(collection(db, "inventory_cost_adjustments"));
-        tx.update(pRef, { cost_price: row.recomputedCost, last_cost_adjustment_id: adjustmentRef.id });
+        tx.update(pRef, row.unit_id === null
+          ? { cost_price: row.recomputedCost, last_cost_adjustment_id: adjustmentRef.id }
+          : { units: units.map((unit: { id?: string }) => unit.id === row.unit_id ? { ...unit, average_cost: row.recomputedCost } : unit), last_cost_adjustment_id: adjustmentRef.id });
         tx.set(adjustmentRef, {
           product_id: row.product_id,
+          unit_id: row.unit_id,
           old_cost: row.currentCost,
           new_cost: row.recomputedCost,
           created_by: creator(),

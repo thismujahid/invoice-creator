@@ -253,6 +253,9 @@ export interface SupplierReturnItem {
   base_quantity: number;
   unit_cost: number;
   amount: number;
+  inventory_unit_cost?: number;
+  inventory_amount?: number;
+  cost_variance?: number;
 }
 
 export interface SupplierReturn {
@@ -262,6 +265,8 @@ export interface SupplierReturn {
   supplier_name: string;
   items: SupplierReturnItem[];
   total_return: number;
+  inventory_amount?: number;
+  cost_variance?: number;
   payable_reduction: number;
   receivable_amount: number;
   cash_received?: number;

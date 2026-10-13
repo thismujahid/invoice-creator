@@ -15,10 +15,10 @@ const periodOf = (date) => {
 };
 const baseQuantity = (line) => {
   const saved = Number(line.base_quantity);
-  return money(Number.isFinite(saved) && saved >= 0 ? saved : number(line.product_quantity) * (number(line.unit_factor) > 0 ? number(line.unit_factor) : 1));
+  return cost4(Number.isFinite(saved) && saved >= 0 ? saved : number(line.product_quantity) * (number(line.unit_factor) > 0 ? number(line.unit_factor) : 1));
 };
 const costGroups = (line) => Array.isArray(line.cost_groups) && line.cost_groups.length
-  ? line.cost_groups.map((group) => ({ base_quantity: money(group.base_quantity), unit_cost: cost4(group.unit_cost) })).filter((group) => group.base_quantity > 0)
+  ? line.cost_groups.map((group) => ({ base_quantity: cost4(group.base_quantity), unit_cost: cost4(group.unit_cost) })).filter((group) => group.base_quantity > 0)
   : [{ base_quantity: baseQuantity(line), unit_cost: cost4(line.base_cost_snapshot ?? line.product_cost_price) }].filter((group) => group.base_quantity > 0);
 const amounts = (invoice) => saleAmounts(invoice.products || [], {
   previous: number(invoice.debt), delivery: number(invoice.delivery_price),
@@ -109,7 +109,7 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
     for (const record of returns) for (const item of record.items || []) {
       if (!Number.isInteger(item.source_line_index) || !Number.isInteger(item.source_cost_group_index)) unavailable("سجل المرتجع القديم يحتاج مراجعة المسؤول قبل مرتجع جديد.");
       const key = `${item.source_line_index}:${item.source_cost_group_index}`;
-      returned.set(key, money(number(returned.get(key)) + number(item.quantity)));
+      returned.set(key, cost4(number(returned.get(key)) + number(item.quantity)));
     }
     const rows = [];
     for (const [lineIndex, line] of (invoice.products || []).entries()) {
@@ -117,13 +117,13 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
       const factor = number(line.unit_factor) > 0 ? number(line.unit_factor) : 1;
       for (const [groupIndex, group] of costGroups(line).entries()) {
         const key = `${lineIndex}:${groupIndex}`;
-        const sold = money(group.base_quantity / factor);
+        const sold = cost4(group.base_quantity / factor);
         const already = number(returned.get(key));
-        if (already - sold > 0.005) unavailable("سجل المرتجع لا يطابق الفاتورة.");
+        if (already - sold > 1e-9) unavailable("سجل المرتجع لا يطابق الفاتورة.");
         rows.push({ key, product_id: line.product_id, product_name: line.product_name,
           unit_id: line.unit_id ?? null, unit_name: line.unit_name || "وحدة", unit_factor: factor,
           unit_price: number(line.product_price), unit_cost: group.unit_cost,
-          soldQty: sold, returnedQty: already, maxQty: Math.max(0, money(sold - already)), lineIndex, groupIndex });
+          soldQty: sold, returnedQty: already, maxQty: Math.max(0, cost4(sold - already)), lineIndex, groupIndex });
       }
     }
     return rows;
@@ -195,7 +195,8 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
         if (!unit) invalid("Selling unit is unavailable.");
         if (unit.allows_fractional !== true && !Number.isInteger(quantity)) invalid("This unit does not allow fractional quantities.");
         const factor = 1;
-        const base = money(quantity);
+        if (Math.abs(quantity - cost4(quantity)) > 1e-9) invalid("Quantity supports at most four decimal places.");
+        const base = cost4(quantity);
         if (base <= 0) invalid("Quantity is too small.");
         const oldId = text(entry?.line_id, 128);
         let oldIndex = oldId.startsWith("legacy-") ? Number(oldId.slice(7)) : oldLines.findIndex((line) => line.line_id === oldId && oldId);
@@ -214,18 +215,18 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
         let keep = base;
         const groups = [];
         for (const group of oldGroups) {
-          const retained = money(Math.min(keep, group.base_quantity));
+          const retained = cost4(Math.min(keep, group.base_quantity));
           if (retained > 0) groups.push({ base_quantity: retained, unit_cost: group.unit_cost });
-          const restored = money(group.base_quantity - retained);
+          const restored = cost4(group.base_quantity - retained);
           if (restored > 0) restores.push({ product_id: productId, product_name: oldLine.product_name, unit_id: unit.id, unit_name: unit.name, qty: restored, unit_cost: group.unit_cost });
-          keep = money(keep - retained);
+          keep = cost4(keep - retained);
         }
         const currentCost = cost4(unit.average_cost ?? product.cost_price);
         if (keep > 0) groups.push({ base_quantity: keep, unit_cost: currentCost });
-        const added = Math.max(0, money(base - oldBase));
+        const added = Math.max(0, cost4(base - oldBase));
         if (added) {
           const key = unitKey(productId, unit.id);
-          takes.set(key, money(number(takes.get(key)) + added));
+          takes.set(key, cost4(number(takes.get(key)) + added));
         }
         const average = cost4(groups.reduce((sum, group) => sum + group.base_quantity * group.unit_cost, 0) / base);
         return { line_id: oldLine?.line_id || `${id}-edit-${index}`, product_id: productId, product_name: product.name,
@@ -265,7 +266,7 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
           if (pid !== productId) continue;
           const unit = units.find((item) => item.id === unitId);
           const restored = restores.filter((item) => item.product_id === productId && item.unit_id === unitId).reduce((sum, item) => sum + item.qty, 0);
-          if (!unit || number(take) - number(unit.stock_quantity) - restored > 0.005) unavailable("كمية الوحدة تتجاوز المخزون المتاح.");
+          if (!unit || number(take) - number(unit.stock_quantity) - restored > 1e-9) unavailable("كمية الوحدة تتجاوز المخزون المتاح.");
         }
       }
       const now = FieldValue.serverTimestamp();
@@ -314,11 +315,11 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
           const key = unitKey(productId, unit.id);
           const take = number(takes.get(key));
           const inflows = restores.filter((item) => item.product_id === productId && item.unit_id === unit.id);
-          const start = money(number(unit.stock_quantity) - take);
-          const added = money(inflows.reduce((sum, item) => sum + item.qty, 0));
+          const start = cost4(number(unit.stock_quantity) - take);
+          const added = cost4(inflows.reduce((sum, item) => sum + item.qty, 0));
           const value = inflows.reduce((sum, item) => sum + item.qty * item.unit_cost, 0);
           if (!take && !added) return unit;
-          return { ...unit, stock_quantity: money(start + added), average_cost: added > 0 ? cost4(start > 0 ? (start * number(unit.average_cost) + value) / (start + added) : value / added) : unit.average_cost };
+          return { ...unit, stock_quantity: cost4(start + added), average_cost: added > 0 ? cost4(start > 0 ? (start * number(unit.average_cost) + value) / (start + added) : value / added) : unit.average_cost };
         });
         const patch = { units: nextUnits };
         const ids = movementIds.get(productId);
@@ -371,8 +372,8 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
       const rows = new Map(groupRows(invoice, previousReturns).map((row) => [row.key, row]));
       const stored = invoice.returned || {};
       const counted = {};
-      for (const record of previousReturns) for (const item of record.items || []) counted[item.product_id] = money(number(counted[item.product_id]) + number(item.base_quantity));
-      for (const productId of new Set([...Object.keys(stored), ...Object.keys(counted)])) if (Math.abs(number(stored[productId]) - number(counted[productId])) > 0.005) unavailable("تغير سجل المرتجعات. أعد فتح الفاتورة.");
+      for (const record of previousReturns) for (const item of record.items || []) counted[item.product_id] = cost4(number(counted[item.product_id]) + number(item.base_quantity));
+      for (const productId of new Set([...Object.keys(stored), ...Object.keys(counted)])) if (Math.abs(number(stored[productId]) - number(counted[productId])) > 1e-9) unavailable("تغير سجل المرتجعات. أعد فتح الفاتورة.");
       const seen = new Set();
       const totals = invoiceTotal(invoice);
       const ratio = totals.gross > 0 ? totals.net / totals.gross : 1;
@@ -381,11 +382,11 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
         const key = text(requested?.rowKey, 40);
         const row = rows.get(key);
         const quantity = requested?.quantity;
-        if (!row || seen.has(key) || typeof quantity !== "number" || !Number.isFinite(quantity) || money(quantity) <= 0 || money(quantity * row.unit_factor) <= 0 || quantity - row.maxQty > 0.005) invalid("Return quantity exceeds the available quantity.");
+        if (!row || seen.has(key) || typeof quantity !== "number" || !Number.isFinite(quantity) || quantity <= 0 || Math.abs(quantity - cost4(quantity)) > 1e-9 || quantity - row.maxQty > 1e-9) invalid("Return quantity exceeds the available quantity.");
         seen.add(key);
-        items.push({ product_id: row.product_id, product_name: row.product_name, quantity: money(quantity),
+        items.push({ product_id: row.product_id, product_name: row.product_name, quantity: cost4(quantity),
           unit_id: row.unit_id, unit_name: row.unit_name, unit_factor: 1,
-          base_quantity: money(quantity), original_unit_price: row.unit_price,
+          base_quantity: cost4(quantity), original_unit_price: row.unit_price,
           original_unit_cost: row.unit_cost, source_line_index: row.lineIndex,
           source_cost_group_index: row.groupIndex, refund_amount: money(row.unit_price * quantity * ratio) });
       }
@@ -425,18 +426,18 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
           const inflows = items.filter((item) => item.product_id === productId && item.unit_id === unit.id);
           if (!inflows.length) return unit;
           const oldStock = number(unit.stock_quantity);
-          const added = money(inflows.reduce((sum, item) => sum + item.quantity, 0));
+          const added = cost4(inflows.reduce((sum, item) => sum + item.quantity, 0));
           const value = inflows.reduce((sum, item) => sum + item.quantity * item.original_unit_cost, 0);
-          return { ...unit, stock_quantity: money(oldStock + added), average_cost: cost4(oldStock > 0 ? (oldStock * number(unit.average_cost) + value) / (oldStock + added) : value / added) };
+          return { ...unit, stock_quantity: cost4(oldStock + added), average_cost: cost4(oldStock > 0 ? (oldStock * number(unit.average_cost) + value) / (oldStock + added) : value / added) };
         });
         const ids = movementIds.get(productId);
         tx.update(products[index].ref, { units: nextUnits,
           last_inventory_transaction_id: ids.at(-1), last_inventory_transaction_ids: ids });
       }
       const merged = { ...stored };
-      for (const item of items) merged[item.product_id] = money(number(merged[item.product_id]) + item.base_quantity);
-      const returnedBase = money(Object.values(merged).reduce((sum, value) => sum + number(value), 0));
-      const soldBase = money((invoice.products || []).reduce((sum, line) => sum + baseQuantity(line), 0));
+      for (const item of items) merged[item.product_id] = cost4(number(merged[item.product_id]) + item.base_quantity);
+      const returnedBase = cost4(Object.values(merged).reduce((sum, value) => sum + number(value), 0));
+      const soldBase = cost4((invoice.products || []).reduce((sum, line) => sum + baseQuantity(line), 0));
       const updated = { ...invoice, remaining: money(outstanding(invoice) - debtReduction), returned: merged, credit_restored: money(number(invoice.credit_restored) + creditRestored),
         returned_base_quantity: returnedBase, return_status: returnedBase + 1e-9 >= soldBase ? "full" : "partial" };
       tx.create(returnRef, { invoice_id: id, customer_id: invoice.customer_id || null, items,

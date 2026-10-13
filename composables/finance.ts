@@ -587,15 +587,15 @@ export function applyStockGroup(
   takeQty: number,
   inflows: { qty: number; cost: number | null }[],
 ): { stock: number; avg: number | undefined } {
-  let s = round2(stock - takeQty);
+  let s = round4(stock - takeQty);
   let costQty = 0;
   let costVal = 0;
   let plainQty = 0;
   for (const f of inflows) {
     if (f.cost === null || f.cost === undefined) {
-      plainQty = round2(plainQty + f.qty);
+      plainQty = round4(plainQty + f.qty);
     } else {
-      costQty = round2(costQty + f.qty);
+      costQty = round4(costQty + f.qty);
       costVal += f.qty * f.cost;
     }
   }
@@ -605,7 +605,7 @@ export function applyStockGroup(
       ? movingAverageCost(s, a ?? 0, costQty, costVal / costQty)
       : costVal / costQty);
   }
-  s = round2(s + costQty + plainQty);
+  s = round4(s + costQty + plainQty);
   return { stock: s, avg: a };
 }
 

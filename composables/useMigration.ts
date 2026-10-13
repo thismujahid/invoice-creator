@@ -304,7 +304,7 @@ export const useMigration = defineStore("migration", () => {
     onProgress?: (done: number, total: number) => void,
   ): Promise<{ invoices: number; customers: number; customerSummaries: number; debtSummaries: number; supplierInvoices: number; suppliers: number; dailyStats: number; monthlyStats: number; returns: number; returnsTotal: number }> {
     if (auth.currentUser?.email !== ADMIN_EMAIL) throw new Error("Admin access is required to rebuild performance summaries.");
-    const [invoices, customers, purchaseInvoices, suppliers, supplierAdvances, existingDebtSummaries, existingCustomerSummaries, existingSupplierSummaries, returnSnapshots, existingDaily, existingMonthly] = await Promise.all([
+    const [invoices, customers, purchaseInvoices, suppliers, supplierAdvances, existingDebtSummaries, existingCustomerSummaries, existingSupplierSummaries, returnSnapshots, supplierReturnSnapshots, existingDaily, existingMonthly] = await Promise.all([
       readAll<Invoice>("invoices"),
       readAll<Customer>("customers"),
       readAll<PurchaseInvoice>("purchase_invoices"),
@@ -314,6 +314,7 @@ export const useMigration = defineStore("migration", () => {
       getDocs(collection(db, "customer_summaries")),
       getDocs(collection(db, "supplier_summaries")),
       getDocs(collection(db, "invoice_returns")),
+      getDocs(collection(db, "supplier_returns")),
       getDocs(collection(db, "invoice_stats_daily")),
       getDocs(collection(db, "invoice_stats_monthly")),
     ]);
@@ -376,8 +377,8 @@ export const useMigration = defineStore("migration", () => {
       if (dayKey) dailyStats.set(dayKey, sumInvoiceStats(dailyStats.get(dayKey) ?? {}, delta));
       if (monthKey) monthlyStats.set(monthKey, sumInvoiceStats(monthlyStats.get(monthKey) ?? {}, delta));
     }
-    const supplierAggregates = new Map<string, { supplier_id: string; supplier_name: string; invoice_count: number; total_purchases: number; outstanding_payable: number; advance_receivable: number }>();
-    for (const supplier of suppliers) if (supplier.id) supplierAggregates.set(supplier.id, { supplier_id: supplier.id, supplier_name: supplier.name, invoice_count: 0, total_purchases: 0, outstanding_payable: 0, advance_receivable: 0 });
+    const supplierAggregates = new Map<string, { supplier_id: string; supplier_name: string; invoice_count: number; total_purchases: number; outstanding_payable: number; advance_receivable: number; return_cost_variance: number }>();
+    for (const supplier of suppliers) if (supplier.id) supplierAggregates.set(supplier.id, { supplier_id: supplier.id, supplier_name: supplier.name, invoice_count: 0, total_purchases: 0, outstanding_payable: 0, advance_receivable: 0, return_cost_variance: 0 });
     const suppliersByName = new Map<string, Supplier[]>();
     for (const supplier of suppliers) {
       const name = normalizeName(supplier.name);
@@ -393,7 +394,7 @@ export const useMigration = defineStore("migration", () => {
           ? suppliersByName.get(normalizeName(invoice.supplier_name))?.[0]
           : undefined;
       if (!supplier?.id) continue;
-      const aggregate = supplierAggregates.get(supplier.id) ?? { supplier_id: supplier.id, supplier_name: supplier.name, invoice_count: 0, total_purchases: 0, outstanding_payable: 0, advance_receivable: 0 };
+      const aggregate = supplierAggregates.get(supplier.id) ?? { supplier_id: supplier.id, supplier_name: supplier.name, invoice_count: 0, total_purchases: 0, outstanding_payable: 0, advance_receivable: 0, return_cost_variance: 0 };
       aggregate.invoice_count += 1;
       aggregate.total_purchases = round2(aggregate.total_purchases + toNum(invoice.total_amount) - toNum(invoice.return_total));
       aggregate.outstanding_payable = round2(aggregate.outstanding_payable + toNum(invoice.remaining_amount));
@@ -402,6 +403,11 @@ export const useMigration = defineStore("migration", () => {
     for (const advance of supplierAdvances) {
       const aggregate = supplierAggregates.get(advance.supplier_id);
       if (aggregate) aggregate.advance_receivable = round2(aggregate.advance_receivable + toNum(advance.remaining_amount));
+    }
+    for (const snapshot of supplierReturnSnapshots.docs) {
+      const record = snapshot.data();
+      const aggregate = supplierAggregates.get(record.supplier_id);
+      if (aggregate) aggregate.return_cost_variance = round2(aggregate.return_cost_variance + toNum(record.cost_variance));
     }
     const docs = [...aggregates.entries()];
     const supplierDocs = [...supplierAggregates.entries()];

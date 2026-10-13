@@ -569,7 +569,7 @@
         class="mb-2 flex items-center justify-between gap-2 text-xs"
       >
         <span class="text-gray-500"
-          >{{ repairRows.length }} منتج • المحدد:
+          >{{ repairRows.length }} وحدة • المحدد:
           {{ selectedRepairable.length }}</span
         >
         <div class="flex gap-2">
@@ -603,13 +603,13 @@
         />
         <div
           v-for="r in repairRows"
-          :key="r.product_id"
+          :key="repairKey(r)"
           class="flex items-start gap-2 rounded-lg border border-gray-200 p-2 text-sm"
         >
           <UCheckbox
             v-if="r.status === 'REPAIRABLE'"
-            :model-value="isRepairSelected(r.product_id)"
-            @update:model-value="() => toggleRepairRow(r.product_id)"
+            :model-value="isRepairSelected(repairKey(r))"
+            @update:model-value="() => toggleRepairRow(repairKey(r))"
           />
           <div class="min-w-0 flex-1">
             <div class="truncate font-semibold">{{ r.product_name }}</div>
@@ -643,7 +643,7 @@
             size="xs"
             color="warning"
             variant="soft"
-            :loading="repairRowBusy === r.product_id"
+            :loading="repairRowBusy === repairKey(r)"
             @click="applySingleRepair(r)"
             >تطبيق</UButton
           >
@@ -838,15 +838,16 @@ const repairRows = ref<RepairRow[]>([]);
 const repairSelected = ref(new Set<string>());
 const repairApplyBusy = ref(false);
 const repairRowBusy = ref<string | null>(null);
+const repairKey = (row: RepairRow): string => `${row.product_id}||${row.unit_id ?? ""}`;
 const selectedRepairable = computed(() =>
   repairRows.value.filter(
-    (r) => r.status === "REPAIRABLE" && repairSelected.value.has(r.product_id),
+    (r) => r.status === "REPAIRABLE" && repairSelected.value.has(repairKey(r)),
   ),
 );
 const allRepairableSelected = computed(() => {
   const reps = repairRows.value.filter((r) => r.status === "REPAIRABLE");
   return (
-    reps.length > 0 && reps.every((r) => repairSelected.value.has(r.product_id))
+    reps.length > 0 && reps.every((r) => repairSelected.value.has(repairKey(r)))
   );
 });
 function isRepairSelected(id: string): boolean {
@@ -863,7 +864,7 @@ function toggleRepairSelectAll(): void {
     repairSelected.value = new Set(
       repairRows.value
         .filter((r) => r.status === "REPAIRABLE")
-        .map((r) => r.product_id),
+        .map(repairKey),
     );
   }
 }
@@ -888,7 +889,7 @@ async function runRepairAnalyze(): Promise<void> {
     const reps = repairRows.value.filter(
       (r) => r.status === "REPAIRABLE",
     ).length;
-    repairMsg.value = `اكتمل التحليل: ${repairRows.value.length} منتج، ${reps} قابل للإصلاح.`;
+    repairMsg.value = `اكتمل التحليل: ${repairRows.value.length} وحدة، ${reps} قابل للإصلاح.`;
   } catch (e) {
     repairMsg.value = "فشل التحليل.";
     notify("تعذر إتمام التحليل.", "error");
@@ -897,7 +898,7 @@ async function runRepairAnalyze(): Promise<void> {
   }
 }
 async function applySingleRepair(r: RepairRow): Promise<void> {
-  repairRowBusy.value = r.product_id;
+  repairRowBusy.value = repairKey(r);
   try {
     const res = await repairApi.applyOne(r, "إصلاح يدوي من المراجعة");
     if (!res.ok) {
@@ -905,7 +906,7 @@ async function applySingleRepair(r: RepairRow): Promise<void> {
       return;
     }
     notify(`تم إصلاح ${r.product_name}.`, "success");
-    repairSelected.value.delete(r.product_id);
+    repairSelected.value.delete(repairKey(r));
     await products.fetchProducts();
     await refreshRepairRows();
   } finally {

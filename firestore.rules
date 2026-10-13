@@ -186,7 +186,7 @@ service cloud.firestore {
         && request.resource.data.get('units', []).size() > 0
         && request.resource.data.get('low_stock_threshold', 5) is number
         && request.resource.data.get('low_stock_threshold', 5) >= 0);
-      allow delete: if isAdmin();
+      allow delete: if false;
     }
     match /customers/{id} {
       allow read: if isStaff() || isCashier();

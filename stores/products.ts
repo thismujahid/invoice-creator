@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { collection, doc, onSnapshot, type Unsubscribe } from "firebase/firestore";
 import type { Product } from "~/types";
-import { hasShortageAlert, isLowStock, isNegativeStock, isOutOfStock, round2, shortageUnitRowsOf, toNum, unitStockDisplay } from "~/composables/finance";
+import { hasShortageAlert, isLowStock, isNegativeStock, isOutOfStock, shortageUnitRowsOf, unitStockDisplay } from "~/composables/finance";
 
 export type InventorySyncState = "idle" | "loading" | "live" | "cache" | "error";
 
@@ -17,7 +17,7 @@ if (import.meta.hot) {
 }
 
 export const useProductsStore = defineStore("products", () => {
-  const { readFrom, saveDataTo, updateItem, deleteItem, db, serverTimestamp } = useFirebase();
+  const { readFrom, saveDataTo, updateItem, db } = useFirebase();
   const authStore = useAuth();
   const list = ref<Product[]>([]);
   const loaded = ref(false);
@@ -179,12 +179,6 @@ export const useProductsStore = defineStore("products", () => {
     loaded.value = false;
   }
 
-  const deleteProduct = async (id: string): Promise<boolean> => {
-    const ok = await deleteItem("products", id);
-    if (ok) list.value = list.value.filter((p) => p.id !== id);
-    return ok;
-  };
-
   /** Archive a product instead of destructive deletion.
    *  Products with accounting history (invoices/movements) are never destroyed:
    *  they are marked inactive so reports keep their integrity. A real supplier
@@ -209,53 +203,5 @@ export const useProductsStore = defineStore("products", () => {
     }
   }
 
-  /** Atomic delete with optional stock-value recovery to the cashbox.
-   *  DEPRECATED: deleting never creates cash (no fake supplier_return).
-   *  Prefer archiveProduct(). Kept for backward compat; `recover` is ignored
-   *  and no cash movement is written. Destroys the doc only when explicitly
-   *  requested by legacy callers. */
-  async function deleteProductWithRecovery(
-    id: string,
-    _recover: boolean,
-  ): Promise<{ ok: true; recovered: number } | { ok: false; error: string }> {
-    void _recover;
-    try {
-      await runTx(async (tx) => {
-        const pRef = doc(db, "products", id);
-        const pSnap = await tx.get(pRef);
-        if (!pSnap.exists()) throw new Error("VALIDATION:المنتج غير موجود.");
-        const data = pSnap.data();
-        const stock = round2(toNum(data.stock_quantity));
-        const now = serverTimestamp();
-        const by = (authStore.currentUserKey as string) || null;
-        if (stock > 0) {
-          tx.set(doc(collection(db, "inventory_transactions")), {
-            type: "manual_adjustment",
-            product_id: id,
-            product_name: String(data.name || ""),
-            quantity: stock,
-            base_quantity: stock,
-            unit_factor: 1,
-            direction: "out",
-            unit_cost: null,
-            reason: "product_delete",
-            note: "حذف المنتج من السجل (بدون أثر نقدي — استخدم الأرشفة للمنتجات ذات السجل المحاسبي)",
-            created_by: by,
-            created_at: now,
-          });
-        }
-        tx.delete(pRef);
-      });
-      list.value = list.value.filter((p) => p.id !== id);
-      return { ok: true, recovered: 0 };
-    } catch (e) {
-      if (e instanceof Error && e.message.startsWith("VALIDATION:")) {
-        return { ok: false, error: e.message.slice("VALIDATION:".length) };
-      }
-      console.error(e);
-      return { ok: false, error: "تعذر حذف المنتج." };
-    }
-  }
-
-  return { list, loaded, lastFetchedAt, inventoryReady, inventorySyncState, syncPendingWrites, syncError, productsById, activeProducts, lowStockProducts, outOfStockProducts, negativeStockProducts, lowStockCount, shortageUnitCount, shortageOutUnitCount, ensureInventorySubscription, stopInventorySubscription, clearInventory, fetchProducts, addProduct, updateProduct, patchCached, upsertCached, invalidateCache, deleteProduct, deleteProductWithRecovery, archiveProduct };
+  return { list, loaded, lastFetchedAt, inventoryReady, inventorySyncState, syncPendingWrites, syncError, productsById, activeProducts, lowStockProducts, outOfStockProducts, negativeStockProducts, lowStockCount, shortageUnitCount, shortageOutUnitCount, ensureInventorySubscription, stopInventorySubscription, clearInventory, fetchProducts, addProduct, updateProduct, patchCached, upsertCached, invalidateCache, archiveProduct };
 });

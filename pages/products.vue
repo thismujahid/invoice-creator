@@ -86,11 +86,11 @@
             }})</UButton
           >
           <UButton
-            icon="i-lucide-trash-2"
-            color="error"
+            icon="i-lucide-archive"
+            color="warning"
             variant="soft"
             @click="bulkDeleteOpen = true"
-            >حذف المحدد ({{ selectProducts.length }})</UButton
+            >أرشفة المحدد ({{ selectProducts.length }})</UButton
           >
           <UButton
             icon="i-lucide-x"
@@ -209,11 +209,11 @@
                       class="flex items-center justify-center"
                   /></UTooltip>
                   <UButton
-                    icon="i-lucide-trash-2"
-                    color="error"
+                  icon="i-lucide-archive"
+                  color="warning"
                     variant="soft"
                     size="xs"
-                    aria-label="حذف"
+                  aria-label="أرشفة"
                     @click="confirmDelete = p"
                     class="flex items-center justify-center"
                   />
@@ -293,11 +293,11 @@
                 class="flex items-center justify-center"
               />
               <UButton
-                icon="i-lucide-trash-2"
-                color="error"
+                icon="i-lucide-archive"
+                color="warning"
                 variant="soft"
                 size="xs"
-                aria-label="حذف"
+                aria-label="أرشفة"
                 @click="confirmDelete = p"
                 class="flex items-center justify-center"
               />
@@ -326,15 +326,13 @@
         size="sm"
       />
     </div>
-    <UiAppDialog v-model:open="deleteOpen" title="أرشفة / حذف المنتج">
+    <UiAppDialog v-model:open="deleteOpen" title="أرشفة المنتج">
       <p class="mb-2 text-gray-600">
-        {{ confirmDelete?.name }} — الأرشفة تحفظ السجل المحاسبي (مفضلة للمنتجات
-        ذات الفواتير/الحركات).
+        {{ confirmDelete?.name }} — الأرشفة تحفظ المنتج وسجله المحاسبي وتمنع بيعه.
       </p>
-      <p v-if="deleteStock > 0" class="mb-4 text-xs text-gray-500">
+      <p v-if="deleteTarget" class="mb-4 text-xs text-gray-500">
         المخزون المتبقي:
-        {{ deleteTarget ? stockQuantityLabel(deleteTarget) : "—" }} — الحذف لا
-        ينشئ نقدًا؛ إرجاع المورد عملية مالية مستقلة.
+        {{ stockQuantityLabel(deleteTarget) }} — إرجاع المورد عملية مالية مستقلة.
       </p>
       <template #footer>
         <div class="flex w-full flex-col gap-2">
@@ -343,15 +341,7 @@
             block
             :loading="deleting"
             @click="archiveConfirmed"
-            >أرشفة (موصى به)</UButton
-          >
-          <UButton
-            color="error"
-            variant="soft"
-            block
-            :loading="deleting"
-            @click="deleteConfirmed"
-            >حذف نهائي</UButton
+            >تأكيد الأرشفة</UButton
           >
           <UButton
             color="neutral"
@@ -364,11 +354,9 @@
         </div>
       </template>
     </UiAppDialog>
-    <UiAppDialog v-model:open="bulkDeleteOpen" title="أرشفة / حذف المنتجات المحددة">
+    <UiAppDialog v-model:open="bulkDeleteOpen" title="أرشفة المنتجات المحددة">
       <p class="mb-2 text-gray-600">
-        سيتم تطبيق الإجراء على {{ selectProducts.length }} منتج محدد —
-        الأرشفة تحفظ السجل المحاسبي (موصى به للمنتجات ذات الفواتير/الحركات)،
-        والحذف النهائي لا ينشئ نقدًا.
+        سيتم أرشفة {{ selectProducts.length }} منتج محدد مع حفظ سجلاتها المحاسبية.
       </p>
       <div
         class="mb-4 max-h-40 space-y-1 overflow-y-auto rounded-lg border border-gray-200 p-2 text-sm"
@@ -388,15 +376,7 @@
             block
             :loading="bulkBusy"
             @click="bulkArchiveConfirmed"
-            >أرشفة المحدد (موصى به)</UButton
-          >
-          <UButton
-            color="error"
-            variant="soft"
-            block
-            :loading="bulkBusy"
-            @click="bulkDeleteConfirmed"
-            >حذف نهائي للمحدد</UButton
+            >تأكيد أرشفة المحدد</UButton
           >
           <UButton
             color="neutral"
@@ -616,6 +596,15 @@
           variant="soft"
           title="هذا التعديل سيغيّر كمية المخزون فقط ولن يؤثر على رصيد الخزنة."
         />
+        <UFormField label="الوحدة" required>
+          <USelect
+            v-model="adjustUnitId"
+            :items="adjustUnitOptions"
+            value-key="value"
+            label-key="label"
+            class="w-full"
+          />
+        </UFormField>
         <UFormField label="الكمية الحالية">
           <UInput
             :model-value="adjustCountText"
@@ -632,7 +621,7 @@
           <UInputNumber
             v-model="adjustNew"
             :min="0"
-            :step="1"
+            :step="adjustUnit?.allows_fractional ? 0.0001 : 1"
             size="lg"
             class="w-full"
           />
@@ -694,6 +683,7 @@ const {
   sellableUnitsForProduct,
   unitSellingPrice,
   purchasableUnitsForProduct,
+  unitsForProduct,
   convertUnitPrice,
   unitPurchasePrice,
   purchaseLineBaseQuantity,
@@ -928,8 +918,10 @@ const purchasePaidError = computed(() => {
 });
 const adjustNewError = computed(() => {
   if (adjustNew.value === undefined || adjustNew.value === null) return "";
-  if (!(adjustNew.value >= 0)) return "الكمية الجديدة غير صالحة.";
-  if (!Number.isInteger(adjustNew.value))
+  if (!Number.isFinite(adjustNew.value) || adjustNew.value < 0) return "الكمية الجديدة غير صالحة.";
+  if (Math.abs(round4(adjustNew.value) - adjustNew.value) > 1e-9)
+    return "الكمية تقبل أربع منازل عشرية كحد أقصى.";
+  if (adjustUnit.value?.allows_fractional !== true && !Number.isInteger(adjustNew.value))
     return "الكمية يجب أن تكون رقمًا صحيحًا.";
   return "";
 });
@@ -1085,26 +1077,20 @@ watch(purchaseAvg, () => {
 });
 const adjustOpen = ref(false);
 const adjustId = ref<string | null>(null);
+const adjustUnitId = ref("");
 const adjustNew = ref<number | undefined>(undefined);
 const adjustReason = ref("");
+const adjustProduct = computed(() => prodsList.value.find((p) => p.id === adjustId.value));
+const adjustUnits = computed(() => adjustProduct.value ? unitsForProduct(adjustProduct.value) : []);
+const adjustUnitOptions = computed(() => adjustUnits.value.map((unit) => ({ label: unit.name, value: unit.id })));
+const adjustUnit = computed(() => adjustUnits.value.find((unit) => unit.id === adjustUnitId.value));
 const adjustName = computed(
-  () => prodsList.value.find((p) => p.id === adjustId.value)?.name ?? "",
+  () => adjustProduct.value?.name ?? "",
 );
 const adjustCount = computed(
-  () =>
-    prodsList.value.find((p) => p.id === adjustId.value)?.stock_quantity ??
-    null,
+  () => adjustUnit.value?.stock_quantity ?? adjustProduct.value?.stock_quantity ?? null,
 );
-const adjustCountText = computed(() =>
-  stockQuantityLabel(
-    prodsList.value.find((p) => p.id === adjustId.value) ?? {
-      name: "",
-      price: null,
-      cost_price: null,
-    },
-    adjustCount.value,
-  ),
-);
+const adjustCountText = computed(() => adjustCount.value === null ? "غير مُدخل" : `${round4(adjustCount.value)} ${adjustUnit.value?.name ?? "وحدة"}`);
 function openPurchase(id?: string): void {
   if (!id) return;
   const p = prodsList.value.find((x) => x.id === id);
@@ -1138,6 +1124,8 @@ function openPurchase(id?: string): void {
 function openAdjust(id?: string): void {
   if (!id) return;
   adjustId.value = id;
+  const product = prodsList.value.find((item) => item.id === id);
+  adjustUnitId.value = product ? unitsForProduct(product)[0]?.id ?? "" : "";
   adjustNew.value = undefined;
   adjustReason.value = "";
   stockSubmitError.value = "";
@@ -1178,7 +1166,7 @@ async function doPurchase(): Promise<void> {
     const proposal = effectiveProposal.value;
     if (showPrice && purchasePrice.value === undefined) {
       stockSubmitError.value =
-        proposal.price === null
+        proposal.proposed === null
           ? "أدخل سعر البيع يدويًا (لا يوجد هامش سابق)."
           : "أدخل سعر البيع الجديد أولاً.";
       return;
@@ -1188,7 +1176,7 @@ async function doPurchase(): Promise<void> {
       ? {
           mode: "custom" as const,
           price: purchasePrice.value ?? 0,
-          approvedProposed: proposal.price,
+          approvedProposed: proposal.proposed,
           approvedAverage: avgBase,
           averageBasis: basis,
           singleUnit: true,
@@ -1256,6 +1244,10 @@ async function doPurchase(): Promise<void> {
 async function doAdjust(): Promise<void> {
   stockSubmitError.value = "";
   if (!adjustId.value) return;
+  if (!adjustUnitId.value) {
+    stockSubmitError.value = "حدد الوحدة أولًا.";
+    return;
+  }
   if (adjustNewError.value) return;
   if (adjustNew.value === undefined) {
     stockSubmitError.value = "أدخل الكمية الجديدة أولاً.";
@@ -1265,6 +1257,7 @@ async function doAdjust(): Promise<void> {
   try {
     const res = await inventory.adjustStock({
       product_id: adjustId.value,
+      unit_id: adjustUnitId.value,
       new_stock_quantity: adjustNew.value ?? -1,
       note: adjustReason.value,
     });
@@ -1281,7 +1274,7 @@ async function doAdjust(): Promise<void> {
 const clearConfirm = ref(false);
 const bulkDeleteOpen = ref(false);
 const bulkBusy = ref(false);
-async function runBulkDelete(mode: "archive" | "delete"): Promise<void> {
+async function runBulkArchive(): Promise<void> {
   const ids = [...selectProducts.value];
   if (!ids.length || bulkBusy.value) return;
   bulkBusy.value = true;
@@ -1289,34 +1282,23 @@ async function runBulkDelete(mode: "archive" | "delete"): Promise<void> {
     let ok = 0;
     let failed = 0;
     for (const id of ids) {
-      if (mode === "archive") {
-        const res = await productsStore.archiveProduct(id);
-        if (res.ok) ok++;
-        else failed++;
-      } else {
-        // No cash is ever created by deletion; supplier returns are separate.
-        if (await productsStore.deleteProduct(id)) ok++;
-        else failed++;
-      }
+      const res = await productsStore.archiveProduct(id);
+      if (res.ok) ok++;
+      else failed++;
     }
     selectProducts.value = [];
     bulkDeleteOpen.value = false;
     await loadProds();
-    const action = mode === "archive" ? "أرشفة" : "حذف";
     if (failed > 0)
-      notifyToast(`تم ${action} ${ok} منتج، وفشل ${failed}.`, "error");
-    else if (mode === "archive")
+      notifyToast(`تمت أرشفة ${ok} منتج، وفشل ${failed}.`, "error");
+    else
       notifyToast(`تمت أرشفة ${ok} منتج مع حفظ سجلها المحاسبي.`, "success");
-    else notifyToast(`تم حذف ${ok} منتج نهائيًا (بدون أثر نقدي).`, "success");
   } finally {
     bulkBusy.value = false;
   }
 }
 async function bulkArchiveConfirmed(): Promise<void> {
-  await runBulkDelete("archive");
-}
-async function bulkDeleteConfirmed(): Promise<void> {
-  await runBulkDelete("delete");
+  await runBulkArchive();
 }
 interface ProductRow {
   id?: string;
@@ -1332,7 +1314,6 @@ const deleteOpen = computed({
 const deleteTarget = computed(() =>
   prodsList.value.find((p) => p.id === confirmDelete.value?.id),
 );
-const deleteStock = computed(() => toNum(deleteTarget.value?.stock_quantity));
 async function loadProds(): Promise<void> {
   loading.value = true;
   loadError.value = "";
@@ -1368,20 +1349,6 @@ async function archiveConfirmed(): Promise<void> {
       return;
     }
     notifyToast("تمت أرشفة المنتج مع حفظ سجله المحاسبي.", "success");
-    await loadProds();
-  } finally {
-    deleting.value = false;
-    confirmDelete.value = null;
-  }
-}
-async function deleteConfirmed(): Promise<void> {
-  const id = confirmDelete.value?.id;
-  if (!id) return;
-  deleting.value = true;
-  try {
-    // No cash is ever created by deletion; supplier returns are separate.
-    await productsStore.deleteProduct(id);
-    notifyToast("تم حذف المنتج نهائيًا (بدون أثر نقدي).", "success");
     await loadProds();
   } finally {
     deleting.value = false;

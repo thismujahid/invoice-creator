@@ -33,6 +33,8 @@
       <div class="mt-2 grid grid-cols-2 gap-2 rounded-lg bg-gray-50 p-2 text-xs">
         <span>تخفيض المستحق للمورد</span><b>{{ formatePrice(item.payable_reduction) }} ج</b>
         <span>رصيد مستحق لنا</span><b>{{ formatePrice(item.receivable_amount) }} ج</b>
+        <template v-if="item.inventory_amount !== undefined"><span>قيمة المخزون الخارج</span><b>{{ formatePrice(item.inventory_amount) }} ج</b></template>
+        <template v-if="item.cost_variance !== undefined"><span>فرق تكلفة المرتجع</span><b>{{ formatePrice(item.cost_variance) }} ج</b></template>
         <span>نقد حُصّل لاحقًا</span><b>{{ formatePrice(item.cash_received || 0) }} ج</b>
       </div>
       <p v-if="item.note" class="mt-2 text-xs text-gray-500">{{ item.note }}</p>

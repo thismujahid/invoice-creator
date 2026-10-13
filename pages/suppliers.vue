@@ -18,6 +18,7 @@
           <div><b class="block text-sm text-red-600">{{ summaries[supplier.id || '']?.initialized ? `${formatePrice(summaries[supplier.id || '']?.remaining)} ج` : '—' }}</b><span class="text-gray-500">مستحق للمورد</span></div>
           <div><b class="block text-sm text-blue-700">{{ summaries[supplier.id || '']?.initialized ? `${formatePrice(summaries[supplier.id || '']?.advance)} ج` : '—' }}</b><span class="text-gray-500">سلفة مستحقة لنا</span></div>
         </div>
+        <p v-if="summaries[supplier.id || '']?.initialized" class="mt-2 text-xs text-gray-600">فرق تكلفة مرتجعات المورد: {{ formatePrice(summaries[supplier.id || '']?.variance) }} ج</p>
         <div class="mt-3 flex gap-2"><UButton size="sm" color="neutral" variant="soft" icon="i-lucide-files" class="flex-1" :to="`/supplier-invoices?supplier=${supplier.id}`">عرض الفواتير</UButton><UButton size="sm" color="success" variant="soft" icon="i-lucide-plus" class="flex-1" :to="`/supplier-invoices?supplier=${supplier.id}&new=1`">فاتورة جديدة</UButton></div>
       </UCard>
       <UEmpty v-if="!filtered.length" class="col-span-full" icon="i-lucide-truck" title="لا يوجد موردون" description="أضف الموردين لتسجيل فواتير الشراء بصورة منظمة." />
@@ -42,7 +43,7 @@ const loading = ref(true);
 const saving = ref(false);
 const deleting = ref("");
 const search = ref("");
-const summaries = ref<Record<string, { count: number; total: number; remaining: number; advance: number; initialized: boolean }>>({});
+const summaries = ref<Record<string, { count: number; total: number; remaining: number; advance: number; variance: number; initialized: boolean }>>({});
 const editorOpen = ref(false);
 const editing = ref<Supplier | null>(null);
 const error = ref("");
@@ -95,6 +96,7 @@ onMounted(async () => {
         total: Math.max(0, Number(data.total_purchases) || 0),
         remaining: Math.max(0, Number(data.outstanding_payable) || 0),
         advance: Math.max(0, Number(data.advance_receivable) || 0),
+        variance: Number(data.return_cost_variance) || 0,
         initialized: data.initialized === true,
       };
     }
