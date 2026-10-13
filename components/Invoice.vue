@@ -41,17 +41,37 @@
             <td>{{ row["سعر الوحدة"] }}</td>
             <td class="font-semibold">{{ row.الإجمالي }}</td>
           </tr>
-          <tr v-for="(row, i) in returnedProducts" :key="`return-${i}`" class="no-print text-red-700">
-            <td>-{{ row.quantity }}</td>
-            <td class="text-start">مرتجع · {{ row.name }}</td>
-            <td></td>
-            <td>{{ formatePrice(row.unitPrice) }}</td>
-            <td class="font-semibold">-{{ formatePrice(row.amount) }}</td>
-          </tr>
         </tbody>
       </table>
-      <div class="sticky bottom-0 z-10 bg-white pt-1">
-        <div class="inv-footer">
+      <section v-if="hasReturns" class="mt-3 rounded-lg border border-red-100 bg-red-50/40 p-3">
+        <h3 class="mb-2 font-bold text-red-800">الأصناف المرتجعة</h3>
+        <div v-for="(row, i) in returnedProducts" :key="`return-${i}`" class="flex items-center justify-between gap-3 border-t border-red-100 py-2 first:border-0">
+          <div class="min-w-0">
+            <div class="font-medium">{{ row.quantity }} × {{ row.name }}</div>
+            <div class="text-xs text-gray-500">{{ formatePrice(row.unitPrice) }} ج للوحدة بعد الخصم</div>
+          </div>
+          <strong class="shrink-0 text-red-700">{{ formatePrice(row.amount) }} ج</strong>
+        </div>
+      </section>
+      <div class="bg-white pt-1" :class="hasReturns ? '' : 'sticky bottom-0 z-10'">
+        <div v-if="hasReturns" class="mt-3 space-y-3">
+          <div class="rounded-lg border border-gray-200 p-3">
+            <h3 class="mb-2 font-bold">ملخص الفاتورة</h3>
+            <div v-if="invoiceData.discount" class="flex justify-between gap-3 py-1 text-gray-600"><span>الإجمالي قبل الخصم</span><span>{{ formatePrice(calcTotal(invoiceData)) }} ج</span></div>
+            <div v-if="invoiceData.discount" class="flex justify-between gap-3 py-1 text-gray-600"><span>الخصم {{ invoiceData.discount_for ? `(${invoiceData.discount_for})` : "" }}</span><span>{{ invoiceData.discount_percentage ? `${invoiceData.discount}%` : `${formatePrice(invoiceData.discount)} ج` }}</span></div>
+            <div class="flex justify-between gap-3 py-1"><span>الفاتورة قبل المرتجع</span><strong>{{ formatePrice(originalTotal) }} ج</strong></div>
+            <div class="flex justify-between gap-3 py-1 text-red-700"><span>خصم المرتجع</span><strong dir="ltr">-{{ formatePrice(returnTotal) }} ج</strong></div>
+            <div class="mt-2 flex justify-between gap-3 border-t border-gray-200 pt-2 text-base font-bold"><span>الصافي بعد المرتجع</span><span>{{ formatePrice(netAfterReturns) }} ج</span></div>
+          </div>
+          <div class="rounded-lg border border-gray-200 p-3">
+            <h3 class="mb-2 font-bold">توزيع قيمة المرتجع</h3>
+            <div v-if="debtReductionTotal" class="flex justify-between gap-3 py-1"><span>تخفيض دين العميل</span><strong>{{ formatePrice(debtReductionTotal) }} ج</strong></div>
+            <div v-if="cashRefundTotal" class="flex justify-between gap-3 py-1"><span>نقد أُعيد للعميل</span><strong>{{ formatePrice(cashRefundTotal) }} ج</strong></div>
+            <div v-if="returnCreditTotal" class="flex justify-between gap-3 py-1"><span>رصيد أُضيف لمحفظة العميل</span><strong>{{ formatePrice(returnCreditTotal) }} ج</strong></div>
+            <div class="mt-2 flex justify-between gap-3 border-t border-gray-200 pt-2 font-bold"><span>المتبقي على الفاتورة الآن</span><span>{{ formatePrice(currentRemaining) }} ج</span></div>
+          </div>
+        </div>
+        <div v-else class="inv-footer">
           <div v-if="oldDebt > 0"><strong>القديم/</strong> <span>{{ formatePrice(oldDebt) }}</span></div>
           <div v-if="walletBalance > 0 && !Number(invoiceData.credit_used || 0)"><strong>رصيد المحفظة/</strong> <span>{{ formatePrice(walletBalance) }}</span></div>
           <div v-if="invoiceData.amount_of_mahros"><strong>محروس/</strong> <span>{{ formatePrice(invoiceData.amount_of_mahros) }}</span></div>
@@ -64,25 +84,17 @@
             <strong>الخصم {{ invoiceData.discount_for ? `(${invoiceData.discount_for})` : "" }}/</strong>
             <span>{{ invoiceData.discount_percentage ? `${invoiceData.discount}%` : formatePrice(invoiceData.discount) }}</span>
           </div>
-          <div class="text-sm font-bold">
-            <strong v-if="hasReturns" class="no-print">الإجمالي الأصلي/</strong>
-            <strong :class="hasReturns ? 'print-only' : ''">الإجمالي {{ invoiceData.discount ? "النهائي" : "" }}/</strong>
-            <span>{{ formatePrice(calcTotal(invoiceData) - discountAmount) }}</span>
-          </div>
-          <div v-if="hasReturns" class="no-print text-sm font-bold"><strong>الصافي بعد مرتجع {{ formatePrice(returnTotal) }}/</strong><span>{{ formatePrice(calcTotal(invoiceData) - discountAmount - returnTotal) }}</span></div>
-          <div v-if="hasReturns" class="no-print"><strong>تسوية المرتجع/</strong><span>{{ returnSettlementLabel }}</span></div>
+          <div class="text-sm font-bold"><strong>الإجمالي {{ invoiceData.discount ? "النهائي" : "" }}/</strong><span>{{ formatePrice(originalTotal) }}</span></div>
           <!-- paid / remaining rows: 0 is a valid financial value, never hide it. -->
           <div v-if="invoiceData.paid_amount !== null && invoiceData.paid_amount !== undefined">
             <strong>المدفوع/</strong>
             <span>{{ formatePrice(invoiceData.paid_amount) }}</span>
           </div>
           <div v-if="invoiceData.credit_used" class="no-print"><strong>من رصيد العميل/</strong><span>{{ formatePrice(invoiceData.credit_used) }}</span></div>
-          <div v-if="hasReturns && cashRefundTotal" class="no-print text-red-700"><strong>نقد مردود/</strong><span>-{{ formatePrice(cashRefundTotal) }}</span></div>
-          <div v-if="invoiceData.paid_amount !== null && invoiceData.paid_amount !== undefined" :class="hasReturns ? 'print-only' : ''">
+          <div v-if="invoiceData.paid_amount !== null && invoiceData.paid_amount !== undefined">
             <strong>المتبقي/</strong>
             <span>{{ formatePrice((calcTotal(invoiceData) - discountAmount) - Number(invoiceData.paid_amount ?? 0)) }}</span>
           </div>
-          <div v-if="hasReturns" class="no-print"><strong>المتبقي الحالي/</strong><span>{{ formatePrice(invoiceData.remaining ?? Math.max(0, calcTotal(invoiceData) - discountAmount - returnTotal - Number(invoiceData.paid_amount ?? 0) + cashRefundTotal)) }}</span></div>
         </div>
       </div>
       <div class="no-print mt-3 flex gap-2 pb-1">
@@ -169,13 +181,14 @@ const mappedProducts = computed(() => {
   });
 });
 const hasReturns = computed(() => !!props.viewMode && !!props.returns?.length);
-const returnTotal = computed(() => (props.returns ?? []).reduce((sum, item) => sum + Number(item.total_refund || 0), 0));
-const cashRefundTotal = computed(() => (props.returns ?? []).reduce((sum, item) => sum + Number(item.cash_refund || 0), 0));
-const returnSettlementLabel = computed(() => {
-  const debt = (props.returns ?? []).reduce((sum, item) => sum + Number(item.debt_reduction || 0), 0);
-  const credit = (props.returns ?? []).reduce((sum, item) => sum + Number(item.credit_issued || 0) + Number(item.credit_restored || 0), 0);
-  return [debt > 0 ? `دين ${formatePrice(debt)}` : "", cashRefundTotal.value > 0 ? `نقد ${formatePrice(cashRefundTotal.value)}` : "", credit > 0 ? `رصيد للعميل ${formatePrice(credit)}` : ""].filter(Boolean).join(" · ");
-});
+const { round2 } = useFinance();
+const returnTotal = computed(() => round2((props.returns ?? []).reduce((sum, item) => sum + Number(item.total_refund || 0), 0)));
+const cashRefundTotal = computed(() => round2((props.returns ?? []).reduce((sum, item) => sum + Number(item.cash_refund || 0), 0)));
+const debtReductionTotal = computed(() => round2((props.returns ?? []).reduce((sum, item) => sum + Number(item.debt_reduction || 0), 0)));
+const returnCreditTotal = computed(() => round2((props.returns ?? []).reduce((sum, item) => sum + Number(item.credit_issued || 0) + Number(item.credit_restored || 0), 0)));
+const originalTotal = computed(() => round2(calcTotal(props.invoiceData) - discountAmount.value));
+const netAfterReturns = computed(() => round2(originalTotal.value - returnTotal.value));
+const currentRemaining = computed(() => Number(props.invoiceData.remaining ?? Math.max(0, netAfterReturns.value - Number(props.invoiceData.paid_amount ?? 0) + cashRefundTotal.value)));
 const returnedProducts = computed(() => hasReturns.value ? (props.returns ?? []).flatMap((record) => (record.items ?? []).map((item) => ({
   name: formatInvoiceLineName(item.product_name, item.unit_name),
   quantity: item.quantity,
@@ -348,18 +361,9 @@ defineExpose({ startPrint });
 .inv-footer > div:not(:last-of-type) {
   border-bottom: 1px dashed rgba(128, 128, 128, 0.163);
 }
-.print-only {
-  display: none !important;
-}
 @media print {
   .no-print {
     display: none !important;
-  }
-  strong.print-only {
-    display: inline !important;
-  }
-  .inv-footer > div.print-only {
-    display: flex !important;
   }
 }
 </style>

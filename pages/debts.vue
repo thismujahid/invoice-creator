@@ -101,7 +101,7 @@
                   >{{ c.phone ?? "—" }}</span
                 >
               </td>
-              <td class="p-2 font-semibold" dir="ltr">
+              <td class="p-2 font-semibold">
                 {{ formatePrice(c.invoiceDebt) }} ج × {{ c.unpaidCount }}
               </td>
               <td class="p-2">{{ formatePrice(c.loanDebt) }}</td>
@@ -433,8 +433,14 @@
             >
           </div>
         </div>
-        <div v-if="payTarget.creditBalance > 0 && payTarget.totalDebt > 0" class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
-          <div class="mb-2">للعميل رصيد {{ formatePrice(payTarget.creditBalance) }} ج. سوِّ الدين من الرصيد أولًا، ثم سجّل أي دفعة نقدية متبقية.</div>
+        <div
+          v-if="payTarget.creditBalance > 0 && payTarget.totalDebt > 0"
+          class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm"
+        >
+          <div class="mb-2">
+            للعميل رصيد {{ formatePrice(payTarget.creditBalance) }} ج. سوِّ
+            الدين من الرصيد أولًا، ثم سجّل أي دفعة نقدية متبقية.
+          </div>
           <CustomerCreditSettlement
             :customer-id="resolvePayCustomerId()"
             :customer-name="payTarget.name"
@@ -469,7 +475,10 @@
             class="w-full"
           />
         </UFormField>
-        <div v-if="payTarget.totalDebt > 0" class="flex items-center justify-between">
+        <div
+          v-if="payTarget.totalDebt > 0"
+          class="flex items-center justify-between"
+        >
           <p class="text-xs font-bold text-gray-400">
             التوزيع على الالتزامات (الأقدم أولاً)
           </p>
@@ -527,7 +536,10 @@
             class="w-full"
           />
         </UFormField>
-        <div v-if="payTarget.totalDebt > 0" class="space-y-1 rounded-lg bg-gray-50 p-2.5 text-sm font-bold">
+        <div
+          v-if="payTarget.totalDebt > 0"
+          class="space-y-1 rounded-lg bg-gray-50 p-2.5 text-sm font-bold"
+        >
           <div class="flex items-center justify-between gap-2">
             <span class="font-normal text-gray-500">إجمالي الدين</span>
             <span>{{ formatePrice(payTarget.totalDebt) }}</span>
@@ -807,7 +819,12 @@ const payAllocs = ref<Record<string, number>>({});
 const payNote = ref("");
 const payError = ref("");
 const payBusy = ref(false);
-const mustSettleFirst = computed(() => !!payTarget.value && payTarget.value.creditBalance > 0 && payTarget.value.totalDebt > 0);
+const mustSettleFirst = computed(
+  () =>
+    !!payTarget.value &&
+    payTarget.value.creditBalance > 0 &&
+    payTarget.value.totalDebt > 0,
+);
 const payObligations = computed<Obligation[]>(() => {
   if (!payTarget.value) return [];
   return [...payTarget.value.invoices, ...payTarget.value.loans].sort(
@@ -887,7 +904,10 @@ async function onPaySettled(): Promise<void> {
   const customerId = resolvePayCustomerId();
   const key = payTarget.value?.key;
   await reload();
-  payTarget.value = book.value.find((customer) => customer.customer_id === customerId || customer.key === key) ?? null;
+  payTarget.value =
+    book.value.find(
+      (customer) => customer.customer_id === customerId || customer.key === key,
+    ) ?? null;
   payAmount.value = undefined;
   payAllocs.value = {};
   payAttempted.value = false;

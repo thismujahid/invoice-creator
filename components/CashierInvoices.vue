@@ -354,12 +354,7 @@
             :returns="viewReturns"
             view-mode
             @close="invoiceOpen = false"
-          /><ReturnHistory
-            v-if="selectedInvoice && viewReturnsExpected && !viewReturnsLoading"
-            class="mt-4"
-            :customer-returns="viewReturns"
-            :error="viewReturnsError"
-          />
+          /><UAlert v-if="viewReturnsError" color="error" variant="soft" class="mt-3" :title="viewReturnsError" />
         </div>
       </UiAppDialog>
       <UiAppDialog

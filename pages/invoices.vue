@@ -89,14 +89,15 @@
       <UCard variant="outline">
         <div class="flex items-center justify-between gap-2">
           <div class="min-w-0">
-            <div class="truncate text-base font-bold sm:text-lg">
-              {{ formatePrice(invoiceStats.total_profit) }}
+            <div class="truncate text-base font-bold sm:text-lg" :class="invoiceStats.total_profit < 0 ? 'text-red-700' : ''">
+              {{ formatePrice(Math.abs(invoiceStats.total_profit)) }}
             </div>
-            <div class="text-xs text-gray-500">مجمل ربح البضاعة</div>
+            <div class="text-xs text-gray-500">{{ invoiceStats.total_profit < 0 ? 'مجمل خسارة البضاعة' : 'مجمل ربح البضاعة' }}</div>
           </div>
           <UIcon
-            name="i-lucide-trending-up"
-            class="size-8 shrink-0 text-emerald-500"
+            :name="invoiceStats.total_profit < 0 ? 'i-lucide-trending-down' : 'i-lucide-trending-up'"
+            class="size-8 shrink-0"
+            :class="invoiceStats.total_profit < 0 ? 'text-red-500' : 'text-emerald-500'"
           />
         </div>
       </UCard>
@@ -178,7 +179,7 @@
               <th class="p-2 text-start font-medium">عدد المنتجات</th>
               <th class="p-2 text-start font-medium">الإجمالي</th>
               <th class="p-2 text-start font-medium">المتبقى</th>
-              <th class="p-2 text-start font-medium">الربح</th>
+              <th class="p-2 text-start font-medium" title="صافي بيع البضاعة بعد الخصم والمرتجعات مطروحًا منه تكلفتها التاريخية">الربح/الخسارة</th>
               <th class="p-2 text-start font-medium">تاريخ الإنشاء</th>
               <th class="p-2 text-start font-medium">الأدوات</th>
             </tr>
@@ -198,8 +199,8 @@
               <td class="p-2">{{ row.products_count }}</td>
               <td class="p-2 font-semibold">{{ row.total }}<span v-if="row.returnBadge" class="block text-xs font-normal text-gray-500">الأصلي {{ row.originalTotal }}</span></td>
               <td class="p-2 text-red-600">{{ formatePrice(row.debt) }}</td>
-              <td class="p-2 font-semibold text-emerald-600">
-                {{ row.profit }}
+              <td class="p-2 font-semibold" :class="row.profitValue < 0 ? 'text-red-600' : 'text-emerald-600'">
+                {{ row.profitValue < 0 ? 'خسارة' : '' }} {{ formatePrice(Math.abs(row.profitValue)) }}
               </td>
               <td class="p-2 text-gray-600">{{ row.created_at }}</td>
               <td class="p-2">
@@ -303,8 +304,8 @@
               >
                 المتبقي: {{ formatePrice(row.debt) }}
               </div>
-              <div class="mt-0.5 text-xs font-semibold text-emerald-600">
-                الربح: {{ row.profit }}
+              <div class="mt-0.5 text-xs font-semibold" :class="row.profitValue < 0 ? 'text-red-600' : 'text-emerald-600'">
+                {{ row.profitValue < 0 ? 'الخسارة' : 'الربح' }}: {{ formatePrice(Math.abs(row.profitValue)) }}
               </div>
             </div>
             <div class="flex shrink-0 gap-1.5" @click.stop>
@@ -387,7 +388,7 @@
           }"
           @close="viewRow = null"
         />
-        <ReturnHistory v-if="viewRow.returnBadge && !viewReturnsLoading" class="mt-4" :customer-returns="viewReturns" :error="viewReturnsError" />
+        <UAlert v-if="viewReturnsError" color="error" variant="soft" class="mt-3" :title="viewReturnsError" />
       </div>
     </UiAppDialog>
     <!-- Delete confirm -->
@@ -714,7 +715,9 @@ const sortedInvoices = computed<Invoice[]>(() =>
   }),
 );
 const paginateArray = computed(() => {
-  return sortedInvoices.value.map((invoice) => ({
+  return sortedInvoices.value.map((invoice) => {
+    const profitValue = round2(calcInvTotal(invoice) - (returnProfitAdjustments.value[invoice.id || ""] ?? 0));
+    return {
       id: invoice.id,
       name: invoice.customer_name,
       phone: invoice.customer_phone,
@@ -723,7 +726,7 @@ const paginateArray = computed(() => {
       originalTotal: formatePrice(calcTotal(invoice) - discountAmount(invoice)),
       // HOME delta: debt + profit columns replace the creator column.
       debt: outstandingDebtOf(invoice),
-      profit: formatePrice(round2(calcInvTotal(invoice) - (returnProfitAdjustments.value[invoice.id || ""] ?? 0))),
+      profitValue,
       returnBadge: returnBadgeFor(invoice),
       returnTotal: returnTotals.value[invoice.id || ""] ?? 0,
       hasPreviousBalance: Number(invoice.debt ?? 0) > 0,
@@ -735,7 +738,8 @@ const paginateArray = computed(() => {
         (invoice.date as { seconds?: number })?.seconds,
         true,
       ),
-  }));
+    };
+  });
 });
 // FLAG [B1-FIXED]: clone before stripping id — never mutate the store row.
 // NOTE: Firestore Timestamp class instances are NOT structuredClone-able
@@ -824,7 +828,7 @@ type InvoiceRow = {
   products_count: number;
   total: string;
   debt: string | number | null;
-  profit: string;
+  profitValue: number;
   returnBadge: string;
   returnTotal: number;
   hasPreviousBalance: boolean;
