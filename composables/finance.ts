@@ -380,62 +380,52 @@ export function purchaseUnitProposals(
   });
 }
 
-/** One exported purchase-order row of the same product (self included). */
-export interface AvgFormulaSibling {
-  /** Excel data-row number of the sibling row. */
-  row: number;
-  /** Unit factor of the sibling row (base units per sibling unit). */
-  factor: number;
-  /** Untouched cost reference of the sibling row (its own denomination). */
-  costRef: number;
-}
-
 /** Excel formula for the editable "new average cost" cell of a purchase-order
- *  row. Single-row products keep the legacy per-row blend (byte-identical).
- *  Products exported as SEVERAL unit rows share one aggregate blend across
- *  all sibling rows — every sibling implies the SAME base average, so the
- *  import approves one unambiguous decision and per-row blends can no longer
- *  false-positive as "different averages for the same product". Pure string
- *  builder — testable without Excel. */
+ *  row. Strictly per-row: blending ONLY this row's quantity/cost with the
+ *  baked stock, else midpoint (or the cost itself when nothing was ever
+ *  recorded). Rows never reference each other — editing one row changes only
+ *  its own cells. Multi-row same-product files therefore show per-row
+ *  estimates; the import approves ONE aggregate average computed from all
+ *  rows' quantities/costs (never the per-row values). Pure string builder —
+ *  testable without Excel. */
 export function shortageAvgFormula(args: {
   ownRow: number;
   oldUnitAvg: number;
   costRef: number;
   stockUnit: number;
-  factor: number;
-  /** Every exported row of the same product, self included. */
-  siblings: AvgFormulaSibling[];
-  /** Recorded stock/average in BASE terms (2-decimal baked constants). */
-  stockBase: number;
-  oldBase: number;
 }): string {
-  const { ownRow, oldUnitAvg, costRef, stockUnit, factor, siblings, stockBase, oldBase } = args;
+  const { ownRow, oldUnitAvg, costRef, stockUnit } = args;
   const oldRef = oldUnitAvg > 0 ? oldUnitAvg : costRef;
   const mid = oldRef > 0 ? `(${oldRef}+D${ownRow})/2` : `D${ownRow}`;
   const unch = oldRef > 0 ? `${oldRef}` : `D${ownRow}`;
-  if (siblings.length < 2) {
-    const weighted = `(${stockUnit}*${oldRef}+C${ownRow}*D${ownRow})/(${stockUnit}+C${ownRow})`;
-    return `IF(ABS(D${ownRow}-${costRef})<0.005,${unch},ROUND(IF(OR(C${ownRow}="",C${ownRow}=0),${mid},IF(${stockUnit}<=0,${mid},${weighted})),2))`;
-  }
-  const qtyExpr = siblings.map((s) => `C${s.row}*${s.factor}`).join("+");
-  const valExpr = siblings.map((s) => `C${s.row}*D${s.row}`).join("+");
-  const zeroExpr = `AND(${siblings.map((s) => `OR(C${s.row}="",C${s.row}=0)`).join(",")})`;
-  const unchExpr = `AND(${siblings.map((s) => `ABS(D${s.row}-${s.costRef})<0.005`).join(",")})`;
-  // No recorded average: fall back to the siblings' own cost references
-  // (their mean in base terms) instead of diluting toward zero.
-  const aggOld = oldBase > 0
-    ? oldBase
-    : round4(siblings.reduce((sum, s) => sum + s.costRef / (s.factor > 0 ? s.factor : 1), 0) / siblings.length);
-  const aggExpr = `((${stockBase}*${aggOld})+(${valExpr}))/((${stockBase})+(${qtyExpr}))`;
-  return `IF(${unchExpr},${unch},ROUND(IF(${zeroExpr},${mid},${factor}*(${aggExpr})),2))`;
+  const weighted = `(${stockUnit}*${oldRef}+C${ownRow}*D${ownRow})/(${stockUnit}+C${ownRow})`;
+  return `IF(ABS(D${ownRow}-${costRef})<0.005,${unch},ROUND(IF(OR(C${ownRow}="",C${ownRow}=0),${mid},IF(${stockUnit}<=0,${mid},${weighted})),2))`;
+}
+
+/** Margin rate implied by recorded prices for a purchase-order unit row:
+ *  over the recorded average when one exists, else over the last purchase
+ *  cost reference. null = no margin derivable (price cell stays = average /
+ *  manual entry). Shared by the export price formula and the import
+ *  fresh-price check so both always agree. */
+export function orderMarginRate(
+  oldUnitAvg: number,
+  unitPrice: number | null | undefined,
+  costRef: number,
+): number | null {
+  if (unitPrice === null || unitPrice === undefined) return null;
+  const base = oldUnitAvg > 0 ? oldUnitAvg : toNum(costRef);
+  if (!(base > 0)) return null;
+  return (toNum(unitPrice) - base) / base;
 }
 
 /** Base-converted manual selling price of one import row, or null when the
  *  row carries no genuine manual price: untouched (equals recorded), or —
  *  for multi-row products only — following its own average cell by its
- *  recorded margin (export-fresh: each unit preserves its own margin, so
- *  margins legitimately differ across units and must not be compared in base
- *  terms). Single-row behavior is exactly the legacy rule. */
+ *  implied margin (recorded average, else last purchase cost, else the cell
+ *  itself). Export-fresh rows are ignored, never conflicts: each unit
+ *  preserves its own margin, so margins legitimately differ across units and
+ *  must not be compared in base terms. Single-row behavior is exactly the
+ *  legacy rule. */
 export function manualPriceBaseOf(
   product: Pick<Product, "cost_price" | "units">,
   row: { priceOverride: number | null | undefined; avgOverride: number | null | undefined; unitId?: string; unitFactor?: number | null },
@@ -446,21 +436,74 @@ export function manualPriceBaseOf(
   const unit = (full.units ?? []).find((u) => u.id === row.unitId);
   const oldUnitPrice = unit ? unitSellingPrice(full, unit) : null;
   if (oldUnitPrice !== null && Math.abs(toNum(row.priceOverride) - oldUnitPrice) <= 0.005) return null;
-  if (siblingCount > 1) {
+  if (siblingCount > 1 && oldUnitPrice !== null) {
     const factor = Number(row.unitFactor) > 0 ? Number(row.unitFactor) : 1;
     const oldUnitAvg = round4(toNum(full.cost_price) * factor);
-    if (oldUnitPrice !== null && oldUnitAvg > 0) {
-      const eUsed = row.avgOverride !== null && row.avgOverride !== undefined ? toNum(row.avgOverride) : oldUnitAvg;
-      const { proposed } = proposedSellingPrice(oldUnitAvg, oldUnitPrice, eUsed);
-      if (proposed !== null && Math.abs(toNum(row.priceOverride) - proposed) <= 0.02) return null;
+    const lastCost = unit ? unitPurchasePrice(full, unit) : null;
+    const costRefLike = lastCost ?? oldUnitAvg;
+    const rate = orderMarginRate(oldUnitAvg, oldUnitPrice, costRefLike);
+    if (rate !== null) {
+      const eUsed =
+        row.avgOverride !== null && row.avgOverride !== undefined
+          ? toNum(row.avgOverride)
+          : oldUnitAvg > 0
+            ? oldUnitAvg
+            : toNum(costRefLike);
+      if (Math.abs(toNum(row.priceOverride) - round2(eUsed * (1 + rate))) <= 0.02) return null;
     }
+    // No recorded average/rate (the export then writes F=E): fresh iff the
+    // price follows its own average cell. This also covers stale margins —
+    // the decision path preserves recorded margins anyway, so a deviating
+    // manual intent cannot smuggle through here; only E-breaking values
+    // surface as conflicts.
+    if (
+      row.avgOverride !== null &&
+      row.avgOverride !== undefined &&
+      Math.abs(toNum(row.priceOverride) - toNum(row.avgOverride)) <= 0.02
+    )
+      return null;
   }
   return round4(toNum(row.priceOverride) / (Number(row.unitFactor) > 0 ? Number(row.unitFactor) : 1));
 }
 
+/** Import row shape needed for sibling-conflict classification. */
+export interface ImportConflictRow {
+  avgOverride: number | null | undefined;
+  priceOverride: number | null | undefined;
+  unitId?: string;
+  unitFactor?: number | null;
+}
+
+/** Conflict message for one import row against its same-product siblings, or
+ *  null when clean. Average cells are NEVER compared: each file row shows a
+ *  per-row estimate, while the approved average is always aggregated from all
+ *  rows' quantities/costs — so disagreeing per-row values cannot block the
+ *  import. Only genuinely manual selling prices are compared (via
+ *  manualPriceBaseOf). Pure — the dialog delegates its per-row check to it. */
+export function siblingRowConflict(
+  product: Pick<Product, "cost_price" | "units">,
+  row: ImportConflictRow,
+  siblings: ImportConflictRow[],
+): string | null {
+  const full = product as Product;
+  const priceMine = manualPriceBaseOf(full, row, siblings.length);
+  for (const other of siblings) {
+    if (other === row) continue;
+    const otherPrice = manualPriceBaseOf(full, other, siblings.length);
+    if (
+      priceMine !== null &&
+      otherPrice !== null &&
+      Math.abs(priceMine - otherPrice) > 0.005
+    )
+      return "قيم سعر البيع مختلفة لنفس المنتج في الملف.";
+  }
+  return null;
+}
+
 /** Estimated collected (cash-in-hand) share of gross profit.
  *  Proportional to the paid share of net total — an approximation, since
- *  payments are not tracked per product line. */export function collectedProfitOf(
+ *  payments are not tracked per product line. */
+export function collectedProfitOf(
   lines: Pick<InvoiceProductLine, "product_price" | "product_cost_price" | "product_quantity">[] | null | undefined,
   paidAmount: unknown,
   netTotal: unknown,
@@ -1139,6 +1182,8 @@ export const useFinance = () => ({
   shortageUnitRowsOf,
   shortageAvgFormula,
   manualPriceBaseOf,
+  orderMarginRate,
+  siblingRowConflict,
   isUnitLowStock,
   lowStockUnitsOf,
   unitThresholdDisplayOf,

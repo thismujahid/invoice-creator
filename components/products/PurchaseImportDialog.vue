@@ -509,11 +509,11 @@ const {
   toNum,
   proposedSellingPrice,
   purchasableUnitsForProduct,
-  unitSellingPrice,
   purchaseLineBaseQuantity,
   purchaseLineBaseCost,
   purchasePreviewAverage,
   manualPriceBaseOf,
+  siblingRowConflict,
   convertUnitPrice,
   MAX_PURCHASE_ITEMS: maxItems,
 } = useFinance();
@@ -866,27 +866,7 @@ function currentProduct(row: ImportRow): Product | undefined {
     ? (productsById.value.get(row.product.id) ?? row.product)
     : undefined;
 }
-/** Recorded unitterms references for one import row (what "unchanged" means). */
-function recordedOf(
-  product: Product,
-  row: ImportRow,
-): { factor: number; oldUnitAvg: number; oldUnitPrice: number | null } {
-  const factor = row.unitFactor || 1;
-  const unit = product.units?.find((u) => u.id === row.unitId);
-  return {
-    factor,
-    oldUnitAvg: round4(toNum(product.cost_price) * factor),
-    oldUnitPrice: unit ? unitSellingPrice(product, unit) : null,
-  };
-}
-/** Sibling rows of the same existing product whose file-provided average or
- *  price genuinely differ from recorded AND disagree with this row's.
- *  Untouched cached values (equal to recorded) are ignored, not conflicts.
- *  Sibling averages agreeing within 2 cents are the same decision (Excel
- *  ROUNDs each unit row to 2 decimals, so opposite rounding alone can drift
- *  a cent). Multi-row export-fresh prices (each unit following the shared
- *  average by its own recorded margin) are ignored, not conflicts — margins
- *  legitimately differ across units. */
+/** Sibling-row check delegated to the pure, unit-tested siblingRowConflict. */
 function rowGroupConflict(row: ImportRow): string | null {
   if (!row.product?.id) return null;
   const product = currentProduct(row);
@@ -894,36 +874,7 @@ function rowGroupConflict(row: ImportRow): string | null {
   const siblings = rows.value.filter(
     (other) => other.product?.id === row.product!.id,
   );
-  const mine = recordedOf(product, row);
-  const avgBase =
-    row.avgOverride == null ||
-    Math.abs(toNum(row.avgOverride) - mine.oldUnitAvg) <= 0.005
-      ? null
-      : round4(toNum(row.avgOverride) / mine.factor);
-  const priceBase = manualPriceBaseOf(product, row, siblings.length);
-  for (const other of siblings) {
-    if (other === row) continue;
-    const theirs = recordedOf(product, other);
-    const otherAvg =
-      other.avgOverride == null ||
-      Math.abs(toNum(other.avgOverride) - theirs.oldUnitAvg) <= 0.005
-        ? null
-        : round4(toNum(other.avgOverride) / theirs.factor);
-    if (
-      avgBase !== null &&
-      otherAvg !== null &&
-      Math.abs(avgBase - otherAvg) > 0.02
-    )
-      return "قيم متوسط التكلفة مختلفة لنفس المنتج في الملف.";
-    const otherPrice = manualPriceBaseOf(product, other, siblings.length);
-    if (
-      priceBase !== null &&
-      otherPrice !== null &&
-      Math.abs(priceBase - otherPrice) > 0.005
-    )
-      return "قيم سعر البيع مختلفة لنفس المنتج في الملف.";
-  }
-  return null;
+  return siblingRowConflict(product, row, siblings);
 }
 function rowErrors(row: ImportRow): string[] {
   const errors: string[] = [];
@@ -1011,7 +962,12 @@ function productPricingOf(
     const baseCost = purchaseLineBaseCost(row.unitCost ?? 0, factor);
     totalBase = round2(totalBase + baseQty);
     totalCostValue += baseQty * baseCost;
-    if (firstAvg === null && row.avgOverride != null) {
+    // Per-row file averages are single-row estimates, never decisions: with
+    // several rows for one product the approved average always aggregates
+    // from all rows' quantities/costs (fallback below), so disagreeing
+    // per-row values can never block the import. Single-row manual averages
+    // are still honored.
+    if (productRows.length < 2 && firstAvg === null && row.avgOverride != null) {
       const oldUnitAvg = round4(oldBase * factor);
       if (Math.abs(toNum(row.avgOverride) - oldUnitAvg) > 0.005)
         firstAvg = round4(toNum(row.avgOverride) / factor);

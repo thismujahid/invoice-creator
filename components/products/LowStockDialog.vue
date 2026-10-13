@@ -186,6 +186,7 @@ const {
   unitLowThresholdOf,
   shortageUnitRowsOf,
   shortageAvgFormula,
+  orderMarginRate,
   unitThresholdDisplayOf,
   lowStockThresholdOf,
 } = useFinance();
@@ -342,10 +343,9 @@ async function exportOrder(): Promise<void> {
   // One row per selected (product, unit) — identical math to the previous
   // product-wide export, but only for the checked rows: id | `Product (Unit)`
   // | qty(C) | unit cost(D) | new avg(E) | new price(F) | line total(G = C*D).
-  // Products with several unit rows share ONE aggregate average across all
-  // sibling rows (same base average everywhere), so the import approves a
-  // single unambiguous decision instead of flagging per-row blends as
-  // conflicting averages for the same product.
+  // Rows are fully independent (no cross-row references): editing one row
+  // changes only its own cells. Multi-row same-product values are per-row
+  // estimates; the import aggregates the real average from all rows.
   // A final الإجمالي row sums G. Cached values equal the untouched state so
   // an unedited file imports exactly what was computed. All money shown or
   // baked here is rounded to 2 decimals (ROUND(...,2) wraps every computed
@@ -365,14 +365,10 @@ async function exportOrder(): Promise<void> {
     ],
   ];
   let r = 1; // header row; data rows start at 2
-  // Per-row scalars first, so sibling rows of the same product can share one
-  // aggregate average formula (see shortageAvgFormula): with several unit
-  // rows per product every sibling implies the SAME base average instead of
-  // blending its own row alone (which the import would flag as conflicting
-  // averages for the same product).
-  const scalars = picked.map(({ product: p, unit }) => {
+  for (const { product: p, unit } of picked) {
     const oldBase = toNum(p.cost_price);
     const stockBase = toNum(p.stock_quantity);
+    r += 1;
     const factor = Number(unit.factor) > 0 ? Number(unit.factor) : 1;
     const oldUnitAvg = num(oldBase * factor);
     const lastCost = unitPurchasePrice(p, unit);
@@ -380,84 +376,49 @@ async function exportOrder(): Promise<void> {
     const costRef = num(prefilledCost);
     const unitPrice = unitSellingPrice(p, unit);
     const stockUnit = num(stockBase / factor);
-    const rate =
-      oldUnitAvg > 0 && unitPrice !== null && unitPrice !== undefined
-        ? (toNum(unitPrice) - oldUnitAvg) / oldUnitAvg
-        : null;
+    // Margin over the recorded average, else over the last purchase cost —
+    // so the price cell carries the old markup even with no recorded average.
+    const rate = orderMarginRate(oldUnitAvg, unitPrice, costRef);
     const rateBaked = rate === null ? null : Number(rate.toFixed(6));
-    return {
-      p,
-      unit,
-      oldBase,
-      stockBase,
-      factor,
-      oldUnitAvg,
-      prefilledCost,
-      costRef,
-      unitPrice,
-      stockUnit,
-      rateBaked,
-    };
-  });
-  const groupOf = new Map<string, number[]>();
-  scalars.forEach((s, index) => {
-    const key = s.p.id ?? s.p.name;
-    const group = groupOf.get(key) ?? [];
-    group.push(index);
-    groupOf.set(key, group);
-  });
-  scalars.forEach((s, index) => {
-    const { p, unit } = s;
-    r += 1;
-    const siblingIndexes = groupOf.get(p.id ?? p.name) ?? [index];
-    const siblings = siblingIndexes.map((j) => ({
-      row: 2 + j,
-      factor: scalars[j]!.factor,
-      costRef: scalars[j]!.costRef,
-    }));
-    // Average formula: untouched costs -> recorded average; edited costs ->
-    // quantity-weighted aggregate blend over ALL sibling rows of the product
-    // with baked stock (single-row products: own-row blend), else midpoint
-    // (or the cost itself when nothing was ever recorded).
+    // Average formula blends ONLY this row (rows never reference each other:
+    // editing one row changes just its own cells). Multi-row same-product
+    // values are estimates; the import aggregates the real average from all
+    // rows' quantities/costs.
     const avgFormula = shortageAvgFormula({
       ownRow: r,
-      oldUnitAvg: s.oldUnitAvg,
-      costRef: s.costRef,
-      stockUnit: s.stockUnit,
-      factor: s.factor,
-      siblings,
-      stockBase: num(s.stockBase),
-      oldBase: num(s.oldBase),
+      oldUnitAvg,
+      costRef,
+      stockUnit,
     });
-    const avgCached = s.oldUnitAvg > 0 ? s.oldUnitAvg : num(s.prefilledCost);
+    const avgCached = oldUnitAvg > 0 ? oldUnitAvg : num(prefilledCost);
     // Price formula: follows the average with the baked margin, 2 decimals.
     let priceFormula: string;
     let priceCached: number | undefined;
-    if (s.rateBaked !== null) {
-      priceFormula = `IF(E${r}="","",ROUND(E${r}*(1+${s.rateBaked}),2))`;
+    if (rateBaked !== null) {
+      priceFormula = `IF(E${r}="","",ROUND(E${r}*(1+${rateBaked}),2))`;
       priceCached =
-        s.unitPrice === null || s.unitPrice === undefined
+        unitPrice === null || unitPrice === undefined
           ? undefined
-          : num(toNum(s.unitPrice));
-    } else if (s.unitPrice !== null && s.unitPrice !== undefined) {
-      priceFormula = `ROUND(IF(ABS(E${r}-${avgCached})<0.005,${num(toNum(s.unitPrice))},E${r}),2)`;
-      priceCached = num(toNum(s.unitPrice));
+          : num(toNum(unitPrice));
+    } else if (unitPrice !== null && unitPrice !== undefined) {
+      priceFormula = `ROUND(IF(ABS(E${r}-${avgCached})<0.005,${num(toNum(unitPrice))},E${r}),2)`;
+      priceCached = num(toNum(unitPrice));
     } else {
       priceFormula = `ROUND(IF(E${r}="","",E${r}),2)`;
       priceCached = undefined;
     }
     rows.push([
-      s.p.id ?? "",
-      `${s.p.name} (${s.unit?.name ?? s.p.base_unit_name ?? "وحدة"})`,
+      p.id ?? "",
+      `${p.name} (${unit?.name ?? p.base_unit_name ?? "وحدة"})`,
       "",
-      s.prefilledCost,
+      prefilledCost,
       { t: "n", v: avgCached, f: avgFormula },
       priceCached === undefined
         ? { t: "n", f: priceFormula }
         : { t: "n", v: priceCached, f: priceFormula },
       { t: "n", f: `IF(OR(C${r}="",D${r}=""),"",ROUND(C${r}*D${r},2))` },
     ]);
-  });
+  }
   // Total row: sums the line totals (import skips it by name).
   const lastRow = r;
   rows.push([

@@ -8,7 +8,10 @@ import {
   grossProfitOf,
   hasShortageAlert,
   manualPriceBaseOf,
+  orderMarginRate,
+  round2,
   shortageAvgFormula,
+  siblingRowConflict,
   invoiceEditCashOutflowError,
   invoiceEditCustomerChangeError,
   invoiceEditPaymentError,
@@ -436,8 +439,9 @@ function evalExcel(formula, cells) {
       i++;
       return value;
     }
-    if (s[i] === "'") {
-      if (s.startsWith("''", i)) {
+    if (s[i] === "'" || s[i] === '"') {
+      const q = s[i];
+      if (s.startsWith(q + q, i)) {
         i += 2;
         return "";
       }
@@ -517,60 +521,42 @@ function evalExcel(formula, cells) {
   return out;
 }
 
-test("shortage export averages aggregate sibling unit rows", () => {
-  const self = [{ row: 2, factor: 1, costRef: 10 }];
+test("shortage export rows stay independent per unit row", () => {
   const single = shortageAvgFormula({
-    ownRow: 2, oldUnitAvg: 10, costRef: 10, stockUnit: 0, factor: 1,
-    siblings: self, stockBase: 0, oldBase: 10,
+    ownRow: 2, oldUnitAvg: 10, costRef: 10, stockUnit: 0,
   });
-  // Single-row output keeps the legacy per-row shape byte-identical.
+  // Output keeps the legacy per-row shape byte-identical.
   assert.equal(
     single,
     "IF(ABS(D2-10)<0.005,10,ROUND(IF(OR(C2=\"\",C2=0),(10+D2)/2,IF(0<=0,(10+D2)/2,(0*10+C2*D2)/(0+C2))),2))",
   );
   assert.equal(evalExcel(single, { C2: "", D2: 12 }), 11);
-  // Two unit rows of one product (piece ×1 at row 2, pack ×12 at row 3).
-  const sibs = [
-    { row: 2, factor: 1, costRef: 10 },
-    { row: 3, factor: 12, costRef: 120 },
-  ];
+  // Two unit rows of one product blend ONLY their own row: editing row 3
+  // never changes row 2 (piece ×1 at row 2, pack ×12 at row 3).
   const piece = shortageAvgFormula({
-    ownRow: 2, oldUnitAvg: 10, costRef: 10, stockUnit: 0, factor: 1,
-    siblings: sibs, stockBase: 0, oldBase: 10,
+    ownRow: 2, oldUnitAvg: 10, costRef: 10, stockUnit: 0,
   });
   const pack = shortageAvgFormula({
-    ownRow: 3, oldUnitAvg: 120, costRef: 120, stockUnit: 0, factor: 12,
-    siblings: sibs, stockBase: 0, oldBase: 10,
+    ownRow: 3, oldUnitAvg: 120, costRef: 120, stockUnit: 0,
   });
   // Untouched file → recorded averages.
-  assert.equal(evalExcel(piece, { C2: "", D2: 10, C3: "", D3: 120 }), 10);
-  assert.equal(evalExcel(pack, { C2: "", D2: 10, C3: "", D3: 120 }), 120);
-  // Edited costs + quantities: both rows imply the SAME base average
-  // (batch aggregate (120+280)/(10+24) = 11.7647…), so the import never sees
-  // a "different averages" conflict. The old per-row math gave 11 vs 10.833.
-  const ePiece = evalExcel(piece, { C2: 10, D2: 12, C3: 2, D3: 140 });
-  const ePack = evalExcel(pack, { C2: 10, D2: 12, C3: 2, D3: 140 });
-  assert.ok(Math.abs(ePiece - 11.76) < 0.005, `piece ${ePiece}`);
-  assert.ok(Math.abs(ePack / 12 - ePiece) < 0.02, `pack ${ePack} vs piece ${ePiece}`);
-  // With stock on hand the aggregate blends with it: (200+200)/(20+17).
+  assert.equal(evalExcel(piece, { C2: "", D2: 10 }), 10);
+  assert.equal(evalExcel(pack, { C3: "", D3: 120 }), 120);
+  // Edited costs + quantities: per-row blends (11 vs 130) — independent.
+  const ePiece = evalExcel(piece, { C2: 10, D2: 12 });
+  const ePack = evalExcel(pack, { C3: 2, D3: 140 });
+  assert.equal(ePiece, 11);
+  assert.equal(ePack, 130);
+  // With stock on hand each row blends with the baked stock alone.
   const sPiece = shortageAvgFormula({
-    ownRow: 2, oldUnitAvg: 10, costRef: 10, stockUnit: 20, factor: 1,
-    siblings: sibs, stockBase: 20, oldBase: 10,
+    ownRow: 2, oldUnitAvg: 10, costRef: 10, stockUnit: 20,
   });
-  const sPack = shortageAvgFormula({
-    ownRow: 3, oldUnitAvg: 120, costRef: 120, stockUnit: 20 / 12, factor: 12,
-    siblings: sibs, stockBase: 20, oldBase: 10,
-  });
-  const vPiece = evalExcel(sPiece, { C2: 5, D2: 12, C3: 1, D3: 140 });
-  const vPack = evalExcel(sPack, { C2: 5, D2: 12, C3: 1, D3: 140 });
-  assert.ok(Math.abs(vPiece - 10.81) < 0.02, `stock piece ${vPiece}`);
-  assert.ok(Math.abs(vPack / 12 - vPiece) < 0.02, `stock pack ${vPack} vs ${vPiece}`);
-  // No recorded average: siblings' own cost references anchor the blend.
+  assert.ok(Math.abs(evalExcel(sPiece, { C2: 5, D2: 12 }) - 10.4) < 0.005);
+  // No recorded average: the row's own cost reference anchors the blend.
   const zPiece = shortageAvgFormula({
-    ownRow: 2, oldUnitAvg: 0, costRef: 10, stockUnit: 5, factor: 1,
-    siblings: sibs, stockBase: 5, oldBase: 0,
+    ownRow: 2, oldUnitAvg: 0, costRef: 10, stockUnit: 5,
   });
-  assert.equal(evalExcel(zPiece, { C2: "", D2: 12, C3: "", D3: 140 }), 11);
+  assert.equal(evalExcel(zPiece, { C2: "", D2: 12 }), 11);
 });
 
 test("manual import prices ignore export-fresh multi-row margins", () => {
@@ -592,6 +578,91 @@ test("manual import prices ignore export-fresh multi-row margins", () => {
   // Genuine manual edits still surface in base terms.
   assert.equal(manualPriceBaseOf(product, { priceOverride: 15, avgOverride: 11, unitId: "pc", unitFactor: 1 }, 2), 15);
   assert.equal(manualPriceBaseOf(product, { priceOverride: 150, avgOverride: 130, unitId: "box", unitFactor: 12 }, 2), 12.5);
+  // No recorded average/rate (export writes F=E): fresh iff F follows its E.
+  const noAvg = { cost_price: null, units: product.units };
+  assert.equal(manualPriceBaseOf(noAvg, { priceOverride: 10.5, avgOverride: 10.5, unitId: "pc", unitFactor: 1 }, 2), null);
+  assert.equal(manualPriceBaseOf(noAvg, { priceOverride: 23, avgOverride: 23, unitId: "box", unitFactor: 12 }, 2), null);
+  assert.equal(manualPriceBaseOf(noAvg, { priceOverride: 15, avgOverride: 10.5, unitId: "pc", unitFactor: 1 }, 2), 15);
+});
+
+test("disagreeing per-row averages never block a multi-unit import", () => {
+  // Same product sold as تمن (×1) and ربع (×2), recorded base average 9.
+  const product = {
+    cost_price: 9,
+    stock_quantity: 0,
+    units: [
+      { id: "tomn", name: "تمن", factor: 1, selling_price: 9 },
+      { id: "rob", name: "ربع", factor: 2, selling_price: 18 },
+    ],
+  };
+  // Per-row file values after the user fills qty + cost (each blends alone:
+  // 11 vs 130/2 = 65 base — genuinely different, yet both are mere estimates;
+  // the approved average aggregates from quantities/costs, so no conflict).
+  const rows = [
+    { avgOverride: 11, priceOverride: 11, unitId: "tomn", unitFactor: 1 },
+    { avgOverride: 130, priceOverride: 130, unitId: "rob", unitFactor: 2 },
+  ];
+  assert.equal(siblingRowConflict(product, rows[0], rows), null);
+  assert.equal(siblingRowConflict(product, rows[1], rows), null);
+});
+
+test("null-average multi-unit file with F=E prices passes the check", () => {
+  const product = {
+    cost_price: null,
+    stock_quantity: 5,
+    units: [
+      { id: "tomn", name: "تمن", factor: 1, selling_price: 12, purchase_price: 8 },
+      { id: "rob", name: "ربع", factor: 2, selling_price: 24, purchase_price: 22 },
+    ],
+  };
+  // Per-row blends of their own rows: (5*8+10*12)/15 and (2.5*22+10*24)/12.5.
+  const fTamn = shortageAvgFormula({ ownRow: 2, oldUnitAvg: 0, costRef: 8, stockUnit: 5 });
+  const fRob = shortageAvgFormula({ ownRow: 3, oldUnitAvg: 0, costRef: 22, stockUnit: 2.5 });
+  const eTamn = evalExcel(fTamn, { C2: 10, D2: 12 });
+  const eRob = evalExcel(fRob, { C3: 10, D3: 24 });
+  assert.ok(Math.abs(eTamn - 10.67) < 0.02, `tamn avg ${eTamn}`);
+  assert.ok(Math.abs(eRob - 23.6) < 0.02, `rob avg ${eRob}`);
+  const rows = [
+    { avgOverride: eTamn, priceOverride: eTamn, unitId: "tomn", unitFactor: 1 },
+    { avgOverride: eRob, priceOverride: eRob, unitId: "rob", unitFactor: 2 },
+  ];
+  assert.equal(siblingRowConflict(product, rows[0], rows), null);
+  assert.equal(siblingRowConflict(product, rows[1], rows), null);
+});
+
+test("order margin rate falls back to the last purchase cost", () => {
+  assert.equal(orderMarginRate(10, 12, 10), 0.2);
+  assert.equal(orderMarginRate(0, 12, 8), 0.5);
+  assert.equal(orderMarginRate(0, 12, 0), null);
+  assert.equal(orderMarginRate(10, null, 10), null);
+  assert.equal(orderMarginRate(0, null, 0), null);
+});
+
+test("null-average export prices carry the old purchase margin", () => {
+  // Same product as above: margins are (12-8)/8 = 50% and (24-22)/22.
+  const rTamn = orderMarginRate(0, 12, 8);
+  const rRob = orderMarginRate(0, 24, 22);
+  assert.equal(rTamn, 0.5);
+  // Price cells follow the shared average by those margins (not = average).
+  const pTamn = evalExcel(`ROUND(11.64*(1+${Number(rTamn.toFixed(6))}),2)`, {});
+  const pRob = evalExcel(`ROUND(23.29*(1+${Number(rRob.toFixed(6))}),2)`, {});
+  assert.equal(pTamn, 17.46);
+  assert.ok(Math.abs(pRob - 25.41) < 0.015, `rob price ${pRob}`);
+  // And the import still sees no conflict for those fresh values.
+  const product = {
+    cost_price: null,
+    stock_quantity: 5,
+    units: [
+      { id: "tomn", name: "تمن", factor: 1, selling_price: 12, purchase_price: 8 },
+      { id: "rob", name: "ربع", factor: 2, selling_price: 24, purchase_price: 22 },
+    ],
+  };
+  const rows = [
+    { avgOverride: 11.64, priceOverride: pTamn, unitId: "tomn", unitFactor: 1 },
+    { avgOverride: 23.29, priceOverride: pRob, unitId: "rob", unitFactor: 2 },
+  ];
+  assert.equal(siblingRowConflict(product, rows[0], rows), null);
+  assert.equal(siblingRowConflict(product, rows[1], rows), null);
 });
 
 test("supplier invoice status derives consistently and supports legacy documents", () => {
