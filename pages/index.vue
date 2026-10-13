@@ -325,7 +325,7 @@
                   <UFormField
                     :label="
                       form.product_id
-                        ? `الكمية (${invoiceData.id ? 'المتاح بالمخزون' : 'المتبقي بعد الفاتورة'}: ${stockLabelOf(form)})`
+                        ? `الكمية (${stockNumberOf(form) ?? '—'})`
                         : 'الكمية'
                     "
                   >
@@ -388,21 +388,20 @@
                     />
                     <template
                       v-if="
-                        form.product_cost_price || priceHintOf(form) !== null
+                        (authStore.role === 'admin' && form.product_cost_price) ||
+                        priceHintOf(form) !== null
                       "
                       #hint
                     >
                       <span
-                        v-if="form.product_cost_price"
+                        v-if="authStore.role === 'admin' && form.product_cost_price"
                         class="block text-xs text-gray-500"
-                        >متوسط التكلفة:
-                        {{
+                        >{{
                           formatePrice(
                             Number(form.product_cost_price ?? 0) *
                               Number(form.unit_factor || 1),
                           )
-                        }}
-                        ج / {{ form.unit_name || "وحدة" }}</span
+                        }}</span
                       >
                       <span
                         v-if="priceHintOf(form) !== null"
@@ -1380,11 +1379,17 @@ function expandLine(form: InvoiceProductLine): void {
 }
 // Live stock info per line (reactive to store + typed qty).
 function stockLabelOf(form: InvoiceProductLine): string {
+  const unit = selectedUnit(form);
+  const quantity = stockNumberOf(form);
+  if (quantity === null || !unit) return "—";
+  return `${quantity} ${unit.name}`;
+}
+function stockNumberOf(form: InvoiceProductLine): number | null {
   const product = products.list.find((item) => item.id === form.product_id);
   const unit = selectedUnit(form);
-  if (!product || !unit) return "—";
+  if (!product || !unit) return null;
   if (invoiceData.value.id)
-    return `${round4(Number(unit.stock_quantity ?? 0))} ${unit.name}`;
+    return round4(Number(unit.stock_quantity ?? 0));
   const key = stockKey(form.product_id ?? "", unit.id);
   const remaining = Math.max(
     0,
@@ -1393,7 +1398,7 @@ function stockLabelOf(form: InvoiceProductLine): string {
         (needByProduct.value.get(key) ?? 0),
     ),
   );
-  return `${remaining} ${unit.name}`;
+  return remaining;
 }
 const needByProduct = computed(() => {
   const need = new Map<string, number>();

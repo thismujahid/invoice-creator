@@ -1,6 +1,6 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { getFirestore, FieldValue, FieldPath, Timestamp } = require("firebase-admin/firestore");
-const { safeProduct, saleAmounts, invoiceRevision } = require("./staffMath.cjs");
+const { safeProduct, safeInvoice, saleAmounts, invoiceRevision } = require("./staffMath.cjs");
 
 const db = getFirestore();
 const adminEmail = "mohamed.mojahead@gmail.com";
@@ -227,13 +227,14 @@ exports.getCashierReturnJournal = onCall(async (request) => {
 });
 
 exports.getCashierInvoice = onCall(async (request) => {
-  await roleOf(request);
+  const role = await roleOf(request);
   const id = cleanText(request.data?.id, 128);
   if (!id) fail("Select an invoice.");
   const doc = await db.doc(`invoices/${id}`).get();
   if (!doc.exists) throw new HttpsError("not-found", "Invoice not found.");
   const invoice = doc.data();
-  return { ...invoice, id: doc.id, edit_revision: invoiceRevision(invoice), products: (invoice.products || []).map((line, index) => ({ ...line, line_id: line.line_id || `legacy-${index}` })) };
+  const visible = role === "cashier" ? safeInvoice(invoice) : invoice;
+  return { ...visible, id: doc.id, edit_revision: invoiceRevision(invoice), products: (visible.products || []).map((line, index) => ({ ...line, line_id: line.line_id || `legacy-${index}` })) };
 });
 
 exports.getCashierDebtBook = onCall(async (request) => {
@@ -427,7 +428,7 @@ exports.createStaffSale = onCall(async (request) => {
   const saleRef = db.collection("invoices").doc();
   const opRef = operationRef(request, "sale");
   const outcome = await db.runTransaction(async (tx) => {
-    await authorize(request, tx);
+    const role = await authorize(request, tx);
     const previousOperation = await tx.get(opRef);
     if (previousOperation.exists) return previousOperation.data().result;
     const ids = [...new Set(rawLines.map((line) => cleanText(line.product_id, 128)))];
@@ -554,7 +555,7 @@ exports.createStaffSale = onCall(async (request) => {
         reference_label: `فاتورة بيع لـ ${name}`, note: null, created_by: request.auth.uid, created_at: now,
       });
     }
-    const result = { id: saleRef.id, receipt: { ...invoice, id: saleRef.id, edit_revision: invoiceRevision(invoice) } };
+    const result = { id: saleRef.id, receipt: { ...(role === "cashier" ? safeInvoice(invoice) : invoice), id: saleRef.id, edit_revision: invoiceRevision(invoice) } };
     tx.create(opRef, { result, created_at: now });
     return result;
   });

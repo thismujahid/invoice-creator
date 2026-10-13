@@ -1,6 +1,6 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { FieldValue } = require("firebase-admin/firestore");
-const { saleAmounts, invoiceRevision, splitCustomerReturn } = require("./staffMath.cjs");
+const { safeInvoice, saleAmounts, invoiceRevision, splitCustomerReturn } = require("./staffMath.cjs");
 
 const money = (value) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 const cost4 = (value) => Math.round(((Number.isFinite(Number(value)) ? Number(value) : 0) + Number.EPSILON) * 10000) / 10000;
@@ -148,7 +148,7 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
     const relatedPayments = paymentHistory?.docs.filter((doc) => (doc.data().allocations || []).some((item) => item.type === "invoice" && item.reference_id === id)) || [];
     if (returns.size + cashHistory.size + relatedPayments.length > 350) unavailable("سجل الفاتورة كبير جدًا للتعديل المباشر.");
     return db.runTransaction(async (tx) => {
-      await authorize(request, tx);
+      const role = await authorize(request, tx);
       const oldSnaps = await Promise.all([tx.get(opRef), tx.get(invoiceRef),
         ...returns.docs.map((doc) => tx.get(doc.ref)), ...cashHistory.docs.map((doc) => tx.get(doc.ref)),
         ...relatedPayments.map((doc) => tx.get(doc.ref))]);
@@ -333,7 +333,7 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
           reference_label: `فاتورة بيع لـ ${customer.data().name}`, note: "فرق تعديل فاتورة",
           created_by: request.auth.uid, created_at: now });
       }
-      const result = { id, receipt: { ...updated, id, edit_revision: invoiceRevision(updated) } };
+      const result = { id, receipt: { ...(role === "cashier" ? safeInvoice(updated) : updated), id, edit_revision: invoiceRevision(updated) } };
       tx.create(opRef, { result, created_at: now });
       return result;
     });

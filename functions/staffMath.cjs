@@ -20,7 +20,6 @@ function safeProduct(id, data) {
     is_base: unit.is_base === true,
     can_sell: unit.can_sell !== false,
     stock_quantity: unit.stock_quantity ?? null,
-    average_cost: unit.average_cost ?? null,
     allows_fractional: unit.allows_fractional === true,
     low_stock_threshold: unit.low_stock_threshold ?? null,
   }));
@@ -28,6 +27,17 @@ function safeProduct(id, data) {
     id, name: data.name, price: data.price ?? null, stock_quantity: data.stock_quantity ?? null,
     low_stock_threshold: data.low_stock_threshold ?? 5, base_unit_id: data.base_unit_id ?? null,
     base_unit_name: data.base_unit_name ?? null, is_active: data.is_active !== false, units,
+  };
+}
+
+function safeInvoice(invoice) {
+  const { cost, profit, total_cost, total_profit, ...visible } = invoice;
+  return {
+    ...visible,
+    products: (Array.isArray(invoice.products) ? invoice.products : []).map((line) => {
+      const { product_cost_price, base_cost_snapshot, cost_groups, unit_cost, ...item } = line;
+      return item;
+    }),
   };
 }
 
@@ -55,4 +65,4 @@ function splitCustomerReturn(refund, remainingDebt, creditUsed, creditRestoredBe
   return { debtReduction, creditRestored, cashRefund: money(cashRequested), creditIssued: money(settlement - cashRequested), settlement };
 }
 
-module.exports = { safeProduct, saleAmounts, invoiceRevision, splitCustomerReturn };
+module.exports = { safeProduct, safeInvoice, saleAmounts, invoiceRevision, splitCustomerReturn };
