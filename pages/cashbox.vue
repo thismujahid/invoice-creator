@@ -117,7 +117,7 @@
         variant="soft"
         class="mb-3"
         :title="shortageAlert"
-        :actions="[{ label: 'عرض المنتجات', color: 'warning', variant: 'soft', onClick: () => (shortagesOpen = true) }]"
+        :actions="[{ label: 'عرض الوحدات', color: 'warning', variant: 'soft', onClick: () => (shortagesOpen = true) }]"
       />
       <ProductsLowStockDialog
         v-model:open="shortagesOpen"
@@ -1252,10 +1252,10 @@ const forecastNote = computed(() => {
 });
 const shortagesOpen = ref(false);
 const shortageAlert = computed(() => {
-  const out = products.outOfStockProducts.length;
-  const low = products.lowStockCount;
-  if (out + low <= 0) return "";
-  return out > 0 ? `تنبيه مخزون: ${out + low} منتج (${out} نافد) يحتاج مراجعة` : `تنبيه مخزون: ${low} منتج قليل الكمية`;
+  const total = products.shortageUnitCount;
+  const out = products.shortageOutUnitCount;
+  if (total <= 0) return "";
+  return out > 0 ? `تنبيه مخزون: ${total} وحدة (${out} نافدة) تحتاج مراجعة` : `تنبيه مخزون: ${total} وحدة قليلة الكمية`;
 });
 
 let unsubStats: Unsubscribe | null = null;

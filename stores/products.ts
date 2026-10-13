@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { collection, doc, onSnapshot, type Unsubscribe } from "firebase/firestore";
 import type { Product } from "~/types";
-import { isLowStock, isNegativeStock, isOutOfStock, round2, toNum } from "~/composables/finance";
+import { hasShortageAlert, isLowStock, isNegativeStock, isOutOfStock, round2, shortageUnitRowsOf, toNum } from "~/composables/finance";
 
 export type InventorySyncState = "idle" | "loading" | "live" | "cache" | "error";
 
@@ -30,9 +30,19 @@ export const useProductsStore = defineStore("products", () => {
   const productsById = computed(() => new Map(list.value.filter((p) => p.id).map((p) => [p.id as string, p])));
   const activeProducts = computed(() => list.value.filter((p) => p.is_active !== false));
   const lowStockProducts = computed(() => activeProducts.value.filter((p) => isLowStock(p) && !isOutOfStock(p)));
-  const outOfStockProducts = computed(() => activeProducts.value.filter((p) => isOutOfStock(p)));
+  // Alert-aware: a zero threshold (or no enabled threshold) mutes the product
+  // completely — it never counts as out-of-stock for badges/dialogs, even at
+  // zero/negative stock. See hasShortageAlert.
+  const outOfStockProducts = computed(() => activeProducts.value.filter((p) => isOutOfStock(p) && hasShortageAlert(p)));
   const negativeStockProducts = computed(() => activeProducts.value.filter((p) => isNegativeStock(p)));
   const lowStockCount = computed(() => lowStockProducts.value.length);
+  /** Unit-level shortage count — same rows the dialog/Excel show, so the
+   *  button number always matches the modal. */
+  const shortageUnitCount = computed(() => shortageUnitRowsOf(list.value).length);
+  /** Of those rows, how many sit at zero/negative stock. */
+  const shortageOutUnitCount = computed(
+    () => shortageUnitRowsOf(list.value).filter(({ product }) => toNum(product.stock_quantity) <= 0).length,
+  );
 
   function applySnapshotItems(items: Product[]): void {
     const byId = new Map(list.value.filter((p) => p.id).map((p) => [p.id as string, p]));
@@ -247,5 +257,5 @@ export const useProductsStore = defineStore("products", () => {
     }
   }
 
-  return { list, loaded, lastFetchedAt, inventoryReady, inventorySyncState, syncPendingWrites, syncError, productsById, activeProducts, lowStockProducts, outOfStockProducts, negativeStockProducts, lowStockCount, ensureInventorySubscription, stopInventorySubscription, clearInventory, fetchProducts, addProduct, updateProduct, patchCached, upsertCached, invalidateCache, deleteProduct, deleteProductWithRecovery, archiveProduct };
+  return { list, loaded, lastFetchedAt, inventoryReady, inventorySyncState, syncPendingWrites, syncError, productsById, activeProducts, lowStockProducts, outOfStockProducts, negativeStockProducts, lowStockCount, shortageUnitCount, shortageOutUnitCount, ensureInventorySubscription, stopInventorySubscription, clearInventory, fetchProducts, addProduct, updateProduct, patchCached, upsertCached, invalidateCache, deleteProduct, deleteProductWithRecovery, archiveProduct };
 });

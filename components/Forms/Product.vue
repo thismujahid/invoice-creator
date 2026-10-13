@@ -67,8 +67,27 @@
                   · هامش الربح {{ baseMarginText }}</span
                 >
               </span>
+              <span class="mt-0.5 block text-gray-500">
+                مؤشر النقص:
+                {{
+                  baseThreshold == null
+                    ? "—"
+                    : `${baseThreshold} ${productForm.base_unit_name?.trim() || "وحدة"}`
+                }}
+              </span>
             </div>
             <div class="flex shrink-0 gap-1">
+              <UButton
+                v-if="baseHistory"
+                size="xs"
+                color="info"
+                variant="soft"
+                icon="i-lucide-history"
+                aria-label="تطور سعر الشراء"
+                :disabled="saving"
+                @click="openHistory(productForm.base_unit_name, baseHistory)"
+                >السعر</UButton
+              >
               <UButton
                 size="xs"
                 color="neutral"
@@ -112,8 +131,27 @@
                   · هامش الربح {{ unitMarginText(unit) }}</span
                 >
               </span>
+              <span class="mt-0.5 block text-gray-500">
+                مؤشر النقص:
+                {{
+                  unit.low_stock_threshold == null
+                    ? "—"
+                    : `${unit.low_stock_threshold} ${unit.name?.trim() || "وحدة"}`
+                }}
+              </span>
             </div>
             <div class="flex shrink-0 gap-1">
+              <UButton
+                v-if="unit.purchase_price_history"
+                size="xs"
+                color="info"
+                variant="soft"
+                icon="i-lucide-history"
+                aria-label="تطور سعر الشراء"
+                :disabled="saving"
+                @click="openHistory(unit.name, unit.purchase_price_history)"
+                >السعر</UButton
+              >
               <UButton
                 size="xs"
                 color="neutral"
@@ -140,28 +178,8 @@
           {{ errors.units }}
         </p>
       </div>
-      <UFormField label="مؤشر نقص المخزون" :error="errors.low_stock_threshold">
-        <div class="flex gap-2">
-          <USelect
-            v-model="thresholdUnitId"
-            :items="thresholdUnitOptions"
-            value-key="id"
-            label-key="name"
-            size="lg"
-            class="w-36 shrink-0"
-            :disabled="saving"
-          />
-          <UInputNumber
-            v-model="thresholdInput"
-            placeholder="5"
-            :min="0"
-            :step="1"
-            size="lg"
-            class="min-w-0 flex-1"
-            :disabled="saving"
-          />
-        </div>
-      </UFormField>
+      <!-- Unit-level shortage thresholds live on each unit row (edited
+        inside the unit dialog below); there is no product-level threshold. -->
       <!-- Unit editor modal (slideover on mobile): add new or edit one row -->
       <UiAppDialog
         v-model:open="unitModalOpen"
@@ -190,6 +208,20 @@
               size="lg"
               class="w-full"
               dir="ltr"
+            />
+          </UFormField>
+          <UFormField
+            label="مؤشر نقص المخزون"
+            hint="بهذه الوحدة — اتركه فارغًا لتعطيل التنبيه لها"
+          >
+            <UInputNumber
+              v-model="unitDraft.low_stock_threshold"
+              :min="0"
+              :step="1"
+              size="lg"
+              class="w-full"
+              dir="ltr"
+              placeholder="بدون تنبيه"
             />
           </UFormField>
           <UFormField v-if="!unitDraft.isBase" label="الاستخدام">
@@ -261,6 +293,11 @@
           </div>
         </template>
       </UiAppDialog>
+      <ProductsPriceHistoryDialog
+        v-model:open="historyOpen"
+        :unit-name="historyUnitName"
+        :history="historyLog"
+      />
       <UAlert
         v-if="submitError"
         color="error"
@@ -314,7 +351,6 @@ function emptyForm(): Product {
     // Mirrors of the base unit row (kept for rules + legacy readers).
     price: null,
     cost_price: null,
-    low_stock_threshold: 5,
     base_unit_name: "وحدة",
     base_unit_id: "base",
   };
@@ -323,6 +359,18 @@ const productForm = ref<Product>(emptyForm());
 // Base unit row prices (the only required prices in the form).
 const baseSalePrice = ref<number | null>(null);
 const basePurchasePrice = ref<number | null>(null);
+// Shortage threshold of the BASE unit, in base-unit terms (null = no alert).
+const baseThreshold = ref<number | null>(null);
+// Purchase-price history log of the BASE unit (reference only, never edited).
+const baseHistory = ref<string | null>(null);
+const historyOpen = ref(false);
+const historyUnitName = ref("");
+const historyLog = ref<string | null>(null);
+function openHistory(unitName: unknown, history: unknown): void {
+  historyUnitName.value = String(unitName ?? "").trim() || "الوحدة";
+  historyLog.value = typeof history === "string" ? history : null;
+  historyOpen.value = true;
+}
 const additionalUnits = ref<EditableProductUnit[]>([]);
 const unitUsageItems = [
   { label: "للشراء فقط", value: "purchase" },
@@ -338,7 +386,6 @@ const errors = ref<{
   name?: string;
   base_sale?: string;
   base_purchase?: string;
-  low_stock_threshold?: string;
   base_unit_name?: string;
   units?: string;
 }>({});
@@ -429,6 +476,7 @@ const unitDraft = ref<UnitDraft>({
   factor: 1,
   selling_price: null,
   purchase_price: null,
+  low_stock_threshold: null,
   can_purchase: true,
   can_sell: true,
   usage: "both",
@@ -451,6 +499,7 @@ function openUnitModal(target: number | "base" | "new"): void {
       factor: 1,
       selling_price: baseSalePrice.value,
       purchase_price: basePurchasePrice.value,
+      low_stock_threshold: baseThreshold.value,
       can_purchase: true,
       can_sell: true,
       usage: "both",
@@ -464,6 +513,7 @@ function openUnitModal(target: number | "base" | "new"): void {
       factor: 1,
       selling_price: null,
       purchase_price: null,
+      low_stock_threshold: null,
       can_purchase: true,
       can_sell: true,
       usage: "both",
@@ -479,6 +529,7 @@ function openUnitModal(target: number | "base" | "new"): void {
       factor: unit.factor,
       selling_price: unit.selling_price,
       purchase_price: unit.purchase_price ?? null,
+      low_stock_threshold: unit.low_stock_threshold ?? null,
       can_purchase: unit.can_purchase ?? true,
       can_sell: unit.can_sell ?? true,
       usage: unit.usage,
@@ -518,9 +569,24 @@ function confirmUnitModal(): void {
     unitModalError.value = "سعر الشراء يجب أن يكون صفرًا أو رقمًا موجبًا.";
     return;
   }
+  // Per-unit shortage threshold in the unit's own denomination.
+  // Empty = no alert for this unit.
+  const rawThr: unknown = d.low_stock_threshold;
+  const normThr =
+    rawThr === null || rawThr === undefined || rawThr === ""
+      ? null
+      : Number(rawThr);
+  if (
+    normThr !== null &&
+    (!Number.isFinite(normThr) || normThr < 0)
+  ) {
+    unitModalError.value = "مؤشر النقص يجب أن يكون صفرًا أو رقمًا موجبًا.";
+    return;
+  }
   if (d.isBase) {
     productForm.value.base_unit_name = d.name.trim();
     baseSalePrice.value = d.selling_price ?? null;
+    baseThreshold.value = normThr;
     // Purchase reference is system-managed after creation.
     if (!isEditMode.value) basePurchasePrice.value = d.purchase_price ?? null;
   } else if (d.key === "new") {
@@ -530,6 +596,7 @@ function confirmUnitModal(): void {
       factor: Number(d.factor),
       selling_price: d.selling_price ?? null,
       purchase_price: d.purchase_price ?? null,
+      low_stock_threshold: normThr,
       can_purchase: d.can_purchase,
       can_sell: d.can_sell,
       usage: d.usage,
@@ -544,6 +611,7 @@ function confirmUnitModal(): void {
     unit.can_purchase = d.can_purchase;
     unit.can_sell = d.can_sell;
     unit.selling_price = d.selling_price ?? null;
+    unit.low_stock_threshold = normThr;
     if (!isEditMode.value) unit.purchase_price = d.purchase_price ?? null;
   }
   unitModalOpen.value = false;
@@ -558,40 +626,8 @@ function removeUnit(index: number): void {
   additionalUnits.value.splice(index, 1);
 }
 
-// Low-stock threshold is ENTERED in the selected unit's denomination but
-// STORED in base units (all readers compare base vs base). The chosen unit
-// id is stored alongside for display + edit hydration.
-const thresholdUnitId = ref<string>("");
-const thresholdInput = ref<number | null>(5);
-const thresholdUnitOptions = computed(() => [
-  {
-    id: productForm.value.base_unit_id || "base",
-    name: productForm.value.base_unit_name?.trim() || "وحدة",
-  },
-  ...additionalUnits.value.map((u) => ({
-    id: u.id,
-    name: u.name.trim() || "وحدة جديدة",
-  })),
-]);
-function thresholdFactor(): number {
-  const baseId = productForm.value.base_unit_id || "base";
-  const selected = thresholdUnitId.value || baseId;
-  if (selected === baseId) return 1;
-  const factor = Number(
-    additionalUnits.value.find((u) => u.id === selected)?.factor,
-  );
-  return Number.isFinite(factor) && factor > 0 ? factor : 1;
-}
-// If the selected threshold unit is deleted, fall back to the base unit.
-watch(thresholdUnitOptions, (options) => {
-  if (
-    thresholdUnitId.value &&
-    !options.some((o) => o.id === thresholdUnitId.value)
-  ) {
-    thresholdUnitId.value = "";
-  }
-});
-
+// Shortage thresholds live on the units themselves (each in its unit's own
+// denomination); the legacy product-level threshold is no longer edited here.
 function validate(): boolean {
   const e: typeof errors.value = {};
   const nameRes = requiredRule(productForm.value.name?.trim());
@@ -621,15 +657,6 @@ function validate(): boolean {
       e.base_purchase = "سعر الشراء لا يمكن أن يكون أعلى من سعر البيع.";
     }
   }
-  const thr: unknown = thresholdInput.value;
-  if (thr !== null && thr !== undefined && thr !== "") {
-    const thrNum = Number(thr);
-    if (!Number.isFinite(thrNum) || thrNum < 0) {
-      e.low_stock_threshold = "مؤشر النقص يجب أن يكون صفرًا أو رقمًا موجبًا.";
-    } else if (!Number.isInteger(thrNum)) {
-      e.low_stock_threshold = "مؤشر النقص يجب أن يكون رقمًا صحيحًا.";
-    }
-  }
   if (!productForm.value.base_unit_name?.trim())
     e.base_unit_name = "اسم وحدة المخزون الأساسية مطلوب.";
   const unitIds = new Set<string>();
@@ -639,12 +666,19 @@ function validate(): boolean {
       unit.purchase_price !== undefined &&
       (!Number.isFinite(Number(unit.purchase_price)) ||
         Number(unit.purchase_price) < 0);
+    const rawThr: unknown = unit.low_stock_threshold;
+    const badThreshold =
+      rawThr !== null &&
+      rawThr !== undefined &&
+      rawThr !== "" &&
+      (!Number.isFinite(Number(rawThr)) || Number(rawThr) < 0);
     if (
       !unit.name.trim() ||
       !Number.isFinite(Number(unit.factor)) ||
       !(Number(unit.factor) > 1) ||
       unitIds.has(unit.id) ||
       badPurchase ||
+      badThreshold ||
       (unit.can_sell &&
         (unit.selling_price === null ||
           unit.selling_price === undefined ||
@@ -680,15 +714,8 @@ async function saveProduct() {
     if (!productForm.value?.id) {
       productForm.value.cost_price = basePurchasePrice.value;
     }
-    // Convert the entered threshold (in the selected unit) to base units.
-    const thrBaseId = productForm.value.base_unit_id || "base";
-    const thrUnitId = thresholdUnitId.value || thrBaseId;
-    const thrRaw: unknown = thresholdInput.value;
-    productForm.value.low_stock_threshold =
-      thrRaw === null || thrRaw === undefined || thrRaw === ""
-        ? 5
-        : Number(thrRaw) * thresholdFactor();
-    productForm.value.low_stock_unit_id = thrUnitId;
+    // Shortage thresholds are stored per unit, each in its unit's own
+    // denomination. The legacy product-level fields are never written.
     const units: ProductUnit[] = [
       {
         id: baseId,
@@ -696,6 +723,7 @@ async function saveProduct() {
         factor: 1,
         selling_price: baseSalePrice.value,
         purchase_price: basePurchasePrice.value,
+        low_stock_threshold: baseThreshold.value ?? null,
         is_base: true,
         can_purchase: true,
         can_sell: true,
@@ -710,14 +738,28 @@ async function saveProduct() {
           unit.purchase_price === null || unit.purchase_price === undefined
             ? null
             : Number(unit.purchase_price),
+        low_stock_threshold:
+          unit.low_stock_threshold === null ||
+          unit.low_stock_threshold === undefined ||
+          (unit.low_stock_threshold as unknown) === ""
+            ? null
+            : Number(unit.low_stock_threshold),
         is_base: false,
       })),
     ];
+    // Strip the legacy product-level threshold (old docs keep theirs; new
+    // writes only carry per-unit thresholds).
+    const {
+      low_stock_threshold: _legacyThreshold,
+      low_stock_unit_id: _legacyUnit,
+      ...cleanData
+    } = productForm.value;
+    void _legacyThreshold;
+    void _legacyUnit;
     if (productForm.value?.id) {
       // Edit mode never writes cost_price (§7: system-managed).
-      const { cost_price: _locked, ...editData } = productForm.value;
+      const { cost_price: _locked, ...editData } = cleanData;
       void _locked;
-      editData.low_stock_threshold = productForm.value.low_stock_threshold ?? 5;
       await productsStore.updateProduct(productForm.value.id, {
         ...editData,
         base_unit_id: baseId,
@@ -725,9 +767,8 @@ async function saveProduct() {
       });
     } else {
       const created = (await productsStore.addProduct({
-        ...productForm.value,
+        ...cleanData,
         units,
-        low_stock_threshold: productForm.value.low_stock_threshold ?? 5,
       })) as { id?: string } | null;
       id = created?.id;
     }
@@ -739,8 +780,8 @@ async function saveProduct() {
     productForm.value = emptyForm();
     baseSalePrice.value = null;
     basePurchasePrice.value = null;
-    thresholdUnitId.value = "";
-    thresholdInput.value = 5;
+    baseThreshold.value = null;
+    baseHistory.value = null;
     additionalUnits.value = [];
     closeDialog();
   } catch (err) {
@@ -760,7 +801,6 @@ watch(
     void _legacyCount;
     productForm.value = edit
       ? ({
-          low_stock_threshold: 5,
           base_unit_name: "وحدة",
           ...editable,
         } as Product)
@@ -772,6 +812,10 @@ watch(
     baseSalePrice.value = baseEntry?.selling_price ?? props.edit?.price ?? null;
     basePurchasePrice.value =
       baseEntry?.purchase_price ?? props.edit?.cost_price ?? null;
+    // Per-unit thresholds hydrate as stored (each in its unit's own
+    // denomination); units without one simply show no alert.
+    baseThreshold.value = baseEntry?.low_stock_threshold ?? null;
+    baseHistory.value = baseEntry?.purchase_price_history ?? null;
     additionalUnits.value =
       props.edit?.units
         ?.filter(
@@ -789,6 +833,7 @@ watch(
             ...unit,
             selling_price: legacySalePrice,
             purchase_price: unit.purchase_price ?? null,
+            low_stock_threshold: unit.low_stock_threshold ?? null,
             can_purchase: canPurchase,
             can_sell: canSell,
             usage:
@@ -799,27 +844,10 @@ watch(
                   : "sell",
           };
         }) ?? [];
-    // Hydrate the threshold in its stored unit's denomination (fallback to
-    // base units when the unit is gone — e.g. legacy docs or deleted units).
-    if (props.edit) {
-      const thrBase = Number(props.edit.low_stock_threshold ?? 5);
-      const thrUnit = additionalUnits.value.find(
-        (u) => u.id === props.edit?.low_stock_unit_id,
-      );
-      const thrFactor = Number(thrUnit?.factor);
-      if (thrUnit && Number.isFinite(thrFactor) && thrFactor > 0) {
-        thresholdUnitId.value = thrUnit.id;
-        thresholdInput.value = thrBase / thrFactor;
-      } else {
-        thresholdUnitId.value = "";
-        thresholdInput.value = Number.isFinite(thrBase) ? thrBase : 5;
-      }
-    }
     if (!props.edit) {
       baseSalePrice.value = null;
       basePurchasePrice.value = null;
-      thresholdUnitId.value = "";
-      thresholdInput.value = 5;
+      baseThreshold.value = null;
     }
   },
   { immediate: true },

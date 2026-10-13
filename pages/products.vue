@@ -16,7 +16,7 @@
           variant="soft"
           icon="i-lucide-triangle-alert"
           @click="shortagesOpen = true"
-          >المنتجات قليلة الكمية ({{ lowStockCount }})</UButton
+          >الوحدات قليلة الكمية ({{ shortageCount }})</UButton
         >
         <!-- HOME delta: no products export (as in home branch). -->
         <FormsProduct
@@ -64,23 +64,42 @@
         size="lg"
         class="w-full sm:max-w-xs"
       />
-      <div
-        v-if="isAdmin && selectProducts.length > 0"
-        class="flex flex-wrap gap-2"
-      >
+      <div v-if="isAdmin" class="flex flex-wrap items-center gap-2">
         <UButton
-          icon="i-lucide-file-plus"
-          color="success"
-          @click="createInvoiceFromSelectedProducts"
-          >إنشاء فاتورة بالمنتجات المحددة ({{ selectProducts.length }})</UButton
-        >
-        <UButton
-          icon="i-lucide-x"
-          color="error"
+          v-if="
+            prodsList.length > 0 &&
+            selectProducts.length < prodsList.length
+          "
+          icon="i-lucide-check-check"
+          color="neutral"
           variant="soft"
-          @click="clearConfirm = true"
-          >إلغاء تحديد الكل</UButton
+          @click="selectAllFiltered"
+          >تحديد الكل ({{ prodsList.length }})</UButton
         >
+        <template v-if="selectProducts.length > 0">
+          <UButton
+            icon="i-lucide-file-plus"
+            color="success"
+            @click="createInvoiceFromSelectedProducts"
+            >إنشاء فاتورة بالمنتجات المحددة ({{
+              selectProducts.length
+            }})</UButton
+          >
+          <UButton
+            icon="i-lucide-trash-2"
+            color="error"
+            variant="soft"
+            @click="bulkDeleteOpen = true"
+            >حذف المحدد ({{ selectProducts.length }})</UButton
+          >
+          <UButton
+            icon="i-lucide-x"
+            color="error"
+            variant="soft"
+            @click="clearConfirm = true"
+            >إلغاء التحديد</UButton
+          >
+        </template>
         <UiAppDialog v-model:open="clearConfirm" title="إلغاء التحديد">
           <p class="py-2 text-gray-600">
             أنت علي وشك إلغاء المنتجات المحددة، هل أنت متاكد؟
@@ -215,7 +234,7 @@
           v-for="p in paginateArray"
           :key="p.id"
           variant="outline"
-          :class="p.id && isSelected({ id: p.id }) ? '!border-emerald-500' : ''"
+          :class="p.id && isSelected({ id: p.id }) ? 'border-emerald-500!' : ''"
           @click="isAdmin && p.id && toggleSelect({ id: p.id })"
         >
           <div class="flex items-center justify-between gap-2">
@@ -345,6 +364,51 @@
         </div>
       </template>
     </UiAppDialog>
+    <UiAppDialog v-model:open="bulkDeleteOpen" title="أرشفة / حذف المنتجات المحددة">
+      <p class="mb-2 text-gray-600">
+        سيتم تطبيق الإجراء على {{ selectProducts.length }} منتج محدد —
+        الأرشفة تحفظ السجل المحاسبي (موصى به للمنتجات ذات الفواتير/الحركات)،
+        والحذف النهائي لا ينشئ نقدًا.
+      </p>
+      <div
+        class="mb-4 max-h-40 space-y-1 overflow-y-auto rounded-lg border border-gray-200 p-2 text-sm"
+      >
+        <div
+          v-for="p in bulkSelectedProducts"
+          :key="p.id"
+          class="truncate text-gray-700"
+        >
+          • {{ p.name }}
+        </div>
+      </div>
+      <template #footer>
+        <div class="flex w-full flex-col gap-2">
+          <UButton
+            color="warning"
+            block
+            :loading="bulkBusy"
+            @click="bulkArchiveConfirmed"
+            >أرشفة المحدد (موصى به)</UButton
+          >
+          <UButton
+            color="error"
+            variant="soft"
+            block
+            :loading="bulkBusy"
+            @click="bulkDeleteConfirmed"
+            >حذف نهائي للمحدد</UButton
+          >
+          <UButton
+            color="neutral"
+            variant="ghost"
+            block
+            :disabled="bulkBusy"
+            @click="bulkDeleteOpen = false"
+            >إلغاء</UButton
+          >
+        </div>
+      </template>
+    </UiAppDialog>
     <!-- Stock purchase -->
     <UiAppDialog
       v-model:open="purchaseOpen"
@@ -393,6 +457,43 @@
             class="w-full"
           />
         </UFormField>
+        <div
+          v-if="costCardShown"
+          class="space-y-2 rounded-xl border border-blue-200 bg-blue-50/60 p-3"
+        >
+          <UFormField
+            label="متوسط التكلفة الجديد"
+            :hint="`سعر التكلفة القديم: ${formatePrice(purchaseOldUnitAvg)} ج`"
+            :error="purchaseAvgError || undefined"
+          >
+            <UInputNumber
+              v-model="purchaseAvg"
+              :min="0"
+              :step="0.01"
+              size="lg"
+              class="w-full"
+            />
+          </UFormField>
+          <UFormField
+            v-if="priceFieldShown"
+            label="سعر البيع الجديد"
+            :hint="
+              purchaseUnitOldPrice === null
+                ? 'لم يُسعر من قبل'
+                : `سعر البيع القديم: ${formatePrice(purchaseUnitOldPrice)} ج`
+            "
+            :error="purchasePriceError || undefined"
+          >
+            <UInputNumber
+              :model-value="purchasePrice"
+              :min="0"
+              :step="0.01"
+              size="lg"
+              class="w-full"
+              @update:model-value="setPurchasePrice"
+            />
+          </UFormField>
+        </div>
         <div class="space-y-1 rounded-lg bg-gray-50 p-3 text-sm">
           <div class="flex justify-between">
             <span>إجمالي الشراء</span><b>{{ formatePrice(purchaseTotal) }} ج</b>
@@ -432,92 +533,11 @@
             ><b>{{ formatePrice((purchasePaid ?? 0) - purchaseTotal) }} ج</b>
           </div>
         </div>
-        <!-- Selling-price policy: shown only when the new average exceeds price -->
-        <div
-          v-if="pricePolicyApplies"
-          class="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-3"
-        >
-          <p class="text-sm font-bold">
-            المتوسط الجديد ({{ formatePrice(purchasePreviewAvg) }}) أعلى من سعر
-            البيع الحالي ({{ formatePrice(purchaseCurrentPrice) }})
-          </p>
-          <div class="grid grid-cols-2 gap-2 text-xs text-gray-600">
-            <span
-              >سعر البيع القديم: {{ formatePrice(purchaseCurrentPrice) }}</span
-            >
-            <span
-              >متوسط التكلفة القديم:
-              {{ formatePrice(purchaseCurrentCost) }}</span
-            >
-            <span>نسبة الربح القديمة: {{ purchaseMarkupText }}</span>
-            <span
-              >الفرق:
-              {{
-                formatePrice(
-                  (purchasePreview.proposed ?? 0) - purchaseCurrentPrice,
-                )
-              }}</span
-            >
-          </div>
-          <div
-            v-if="purchaseProposals.length > 1"
-            class="space-y-1 rounded-lg bg-white/70 p-2 text-xs"
-          >
-            <div class="font-bold">المقترح لكل وحدة قابلة للبيع:</div>
-            <div
-              v-for="p in purchaseProposals"
-              :key="p.unitId"
-              class="flex justify-between gap-2"
-            >
-              <span
-                >{{ p.unitName }} ×{{ p.factor }}:
-                {{ p.oldPrice === null ? "—" : formatePrice(p.oldPrice) }} →
-                {{
-                  p.proposed === null ? "يدوي" : formatePrice(p.proposed)
-                }}
-                ج</span
-              >
-              <span class="text-gray-500"
-                >هامش
-                {{
-                  p.rate === null ? "—" : `${Math.round(p.rate * 10000) / 100}%`
-                }}</span
-              >
-            </div>
-          </div>
-          <URadioGroup
-            v-model="priceChoice"
-            legend="قرار سعر البيع"
-            :items="priceChoiceItems"
-          />
-          <UFormField
-            v-if="priceChoice === 'custom'"
-            label="سعر بيع مخصص"
-            required
-            :error="purchasePriceError || undefined"
-          >
-            <UInputNumber
-              v-model="purchasePrice"
-              :min="0"
-              :step="0.01"
-              size="lg"
-              class="w-full"
-            />
-          </UFormField>
-          <UFormField
-            v-else
-            label="السعر المقترح (قابل للتعديل)"
-            hint="السعر القديم ظاهر كمرجع أعلاه."
-          >
-            <UInputNumber
-              v-model="purchasePrice"
-              :min="0"
-              :step="0.01"
-              size="lg"
-              class="w-full"
-            />
-          </UFormField>
-        </div>
+        <!-- Cost blending + selling price: compact card, shown only when the
+          entered cost actually moves the average or the price. Money here is
+          in the selected purchase unit's terms; the saved average stays in
+          base terms, and other units follow the same margin automatically. -->
+
         <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
           <UFormField label="المورد (اختياري)">
             <USelectMenu
@@ -659,6 +679,7 @@
 import type { Invoice, Product } from "~/types";
 import type { ProductUnit } from "~/types";
 import type { Supplier } from "~/types/finance";
+import type { PriceDecision } from "~/composables/finance";
 import { useSuppliersStore } from "~/stores/suppliers";
 import { toDateSafe } from "~/types";
 
@@ -669,10 +690,7 @@ const {
   round2,
   round4,
   toNum,
-  movingAverageCost,
   proposedSellingPrice,
-  isLowStock,
-  unitsForProduct,
   sellableUnitsForProduct,
   unitSellingPrice,
   purchasableUnitsForProduct,
@@ -681,7 +699,6 @@ const {
   purchaseLineBaseQuantity,
   purchaseLineBaseCost,
   purchasePreviewAverage,
-  purchaseUnitProposals,
   stockQuantityLabel,
 } = useFinance();
 const productFormState = ref(false);
@@ -721,7 +738,7 @@ function selectPurchaseUnit(unit?: ProductUnit): void {
     Number(currentUnit?.factor) > 0 ? Number(currentUnit?.factor) : 1;
   purchaseUnitId.value = unit.id;
   const product = prodsList.value.find((item) => item.id === purchaseId.value);
-  // سعر الشراء يتبع الوحدة المختارة نفسها (آخر سعر شراء مسجل عليها)،
+  // سعر الشراء يتبع الوحدة المختارة نفسها (آخر سعر شراء مسجل عليها)，
   // وليس تحويلاً من المتوسط الحالي.
   const unitLastCost = product ? unitPurchasePrice(product, unit) : null;
   if (unitLastCost !== null && unitLastCost !== undefined) {
@@ -734,9 +751,16 @@ function selectPurchaseUnit(unit?: ProductUnit): void {
     unit.factor,
   );
 }
-const priceChoice = ref<"proposed" | "custom">("proposed");
 const purchasePrice = ref<number | undefined>(undefined);
-const purchaseApproved = ref<number | null>(null);
+const purchasePriceTouched = ref(false);
+// Editable middle average, in the selected purchase unit's terms (the saved
+// average stays in base terms). Synced from the suggestion while qty/cost/
+// unit change; free for the user to override afterwards.
+const purchaseAvg = ref<number | undefined>(undefined);
+function setPurchasePrice(value: number | undefined): void {
+  purchasePriceTouched.value = true;
+  purchasePrice.value = value;
+}
 const purchasePaid = ref<number | undefined>(undefined);
 const purchasePaidTouched = ref(false);
 const suppliersStore = useSuppliersStore();
@@ -791,9 +815,7 @@ const purchaseCountText = computed(() =>
 // Shortages dialog state (dialog content lands in S4).
 const shortagesOpen = ref(false);
 const importOpen = ref(false);
-const lowStockCount = computed(
-  () => productsStore.lowStockCount + productsStore.outOfStockProducts.length,
-);
+const shortageCount = computed(() => productsStore.shortageUnitCount);
 async function refreshAfterPurchase(): Promise<void> {
   await Promise.all([productsStore.fetchProducts(), cashbox.fetchCashbox()]);
 }
@@ -851,6 +873,16 @@ function toggleSelect(item: { id?: string }): void {
   if (index > -1) selectProducts.value.splice(index, 1);
   else selectProducts.value.push(item.id);
 }
+/** Select every product matching the current search (across all pages). */
+function selectAllFiltered(): void {
+  selectProducts.value = prodsList.value
+    .map((p) => p.id)
+    .filter((id): id is string => !!id);
+}
+const bulkSelectedProducts = computed(() => {
+  const selected = new Set(selectProducts.value);
+  return prodsList.value.filter((p) => p.id && selected.has(p.id));
+});
 function editProduct(product: { id?: string }): void {
   const prod = prodsList.value.find((el) => el.id === product.id);
   if (prod) productForm.value = { ...prod };
@@ -919,9 +951,6 @@ const purchaseProduct = computed(() =>
 const purchaseCurrentCost = computed(() =>
   toNum(purchaseProduct.value?.cost_price),
 );
-const purchaseCurrentPrice = computed(() =>
-  toNum(purchaseProduct.value?.price),
-);
 const purchaseBaseQty = computed(() =>
   purchaseLineBaseQuantity(
     purchaseQty.value ?? 0,
@@ -944,45 +973,121 @@ const purchasePreviewAvg = computed(() =>
     ),
   ),
 );
-const purchaseProposals = computed(() =>
-  purchaseProduct.value
-    ? purchaseUnitProposals(purchaseProduct.value, purchasePreviewAvg.value)
-    : [],
+// Factor of the selected purchase unit (all card money is shown in its terms).
+const purchaseFactor = computed(() => purchaseUnit.value?.factor ?? 1);
+const purchaseHasHistory = computed(
+  () => toNum(purchaseProduct.value?.stock_quantity) > 0,
 );
-const purchasePreview = computed(() =>
-  proposedSellingPrice(
-    purchaseCurrentCost.value,
-    purchaseCurrentPrice.value,
-    purchasePreviewAvg.value,
-  ),
+const purchaseHasRecordedAvg = computed(() => purchaseCurrentCost.value > 0);
+const purchaseInputsReady = computed(
+  () => purchaseQty.value !== undefined && purchaseCost.value !== undefined,
 );
-const pricePolicyApplies = computed(
+// The selected unit's own price (null = never priced) and sellability.
+const purchaseUnitOldPrice = computed(() => {
+  const product = purchaseProduct.value;
+  const unit = purchaseUnit.value;
+  if (!product || !unit) return null;
+  return unitSellingPrice(product, unit);
+});
+const purchaseUnitSellable = computed(
+  () => !purchaseUnit.value || purchaseUnit.value.can_sell !== false,
+);
+// Recorded average, scaled to the selected unit.
+const purchaseOldUnitAvg = computed(() =>
+  round4(purchaseCurrentCost.value * purchaseFactor.value),
+);
+// System suggestion (base terms): quantity-weighted when stock history
+// exists; a plain midpoint when only a recorded average exists (no quantity
+// to weight with); otherwise the entered cost itself.
+const suggestedAvgBase = computed(() => {
+  if (!purchaseInputsReady.value) return purchasePreviewAvg.value;
+  if (purchaseHasHistory.value) return purchasePreviewAvg.value;
+  if (
+    purchaseHasRecordedAvg.value &&
+    Math.abs(purchaseBaseCost.value - purchaseCurrentCost.value) > 1e-9
+  )
+    return round4((purchaseCurrentCost.value + purchaseBaseCost.value) / 2);
+  return purchasePreviewAvg.value;
+});
+const suggestedAvgUnit = computed(() =>
+  round4(suggestedAvgBase.value * purchaseFactor.value),
+);
+// True when the entered cost actually moves the average.
+const blendingCase = computed(
   () =>
-    purchasePreviewAvg.value - purchaseCurrentPrice.value > 1e-9 &&
-    purchaseQty.value !== undefined &&
-    purchaseCost.value !== undefined,
+    purchaseInputsReady.value &&
+    Math.abs(purchaseBaseCost.value - purchaseCurrentCost.value) > 1e-9 &&
+    (purchaseHasHistory.value || purchaseHasRecordedAvg.value),
 );
-const purchaseMarkupText = computed(() =>
-  purchasePreview.value.rate === null
-    ? "لا توجد"
-    : `${round2(purchasePreview.value.rate * 100)}%`,
+// Effective average the save will use (user-edited when blending, else the
+// system value). The selling-price suggestion preserves the selected unit's
+// own margin over THIS value — up or down.
+const effectiveAvgUnit = computed(() =>
+  blendingCase.value &&
+  purchaseAvg.value !== undefined &&
+  purchaseAvg.value !== null
+    ? toNum(purchaseAvg.value)
+    : suggestedAvgUnit.value,
 );
-const priceChoiceItems: { label: string; value: "proposed" | "custom" }[] = [
-  { label: "اعتماد السعر المقترح", value: "proposed" },
-  { label: "سعر مخصص", value: "custom" },
-];
+const effectiveProposal = computed(() => {
+  if (purchaseUnitOldPrice.value === null)
+    return { rate: null, proposed: null };
+  return proposedSellingPrice(
+    purchaseOldUnitAvg.value,
+    purchaseUnitOldPrice.value,
+    effectiveAvgUnit.value,
+  );
+});
+const priceOnlyCase = computed(
+  () =>
+    purchaseInputsReady.value &&
+    !blendingCase.value &&
+    purchaseUnitSellable.value &&
+    suggestedAvgUnit.value - (purchaseUnitOldPrice.value ?? 0) > 1e-9,
+);
+const costCardShown = computed(() => blendingCase.value || priceOnlyCase.value);
+const priceFieldShown = computed(
+  () => costCardShown.value && purchaseUnitSellable.value,
+);
+// Default selling price for the selected unit: new average + old margin;
+// never-priced unit starts from the average itself; otherwise keep old price.
+function defaultUnitPrice(avgUnit: number): number | undefined {
+  const old = purchaseUnitOldPrice.value;
+  if (old === null) return round2(avgUnit);
+  const { rate, proposed } = proposedSellingPrice(
+    purchaseOldUnitAvg.value,
+    old,
+    avgUnit,
+  );
+  return rate !== null && proposed !== null ? proposed : old;
+}
+const purchaseAvgError = computed(() => {
+  if (!costCardShown.value) return "";
+  if (purchaseAvg.value === undefined || purchaseAvg.value === null) return "";
+  return purchaseAvg.value >= 0 ? "" : "متوسط التكلفة غير صالح.";
+});
 
-watch([purchaseQty, purchaseCost], () => {
-  if (priceChoice.value === "proposed")
-    purchasePrice.value = purchasePreview.value.proposed ?? undefined;
+// Suggestion sync: while qty/cost/unit/product change, refill both editable
+// fields from the system suggestion; manual edits persist until then.
+function syncPurchaseSuggestions(): void {
+  purchaseAvg.value = purchaseInputsReady.value
+    ? suggestedAvgUnit.value
+    : undefined;
+  purchasePriceTouched.value = false;
+  purchasePrice.value =
+    costCardShown.value && purchaseUnitSellable.value
+      ? defaultUnitPrice(suggestedAvgUnit.value)
+      : undefined;
+}
+watch([purchaseQty, purchaseCost, purchaseUnitId, purchaseId], () => {
+  syncPurchaseSuggestions();
 });
-watch(priceChoice, (choice) => {
-  if (choice === "proposed")
-    purchasePrice.value = purchasePreview.value.proposed ?? undefined;
-});
-watch([purchaseCurrentCost, purchaseCurrentPrice, purchasePreviewAvg], () => {
-  if (priceChoice.value === "proposed")
-    purchasePrice.value = purchasePreview.value.proposed ?? undefined;
+// Editing the average re-derives the price suggestion (unless the user already
+// typed a price manually).
+watch(purchaseAvg, () => {
+  if (purchasePriceTouched.value) return;
+  if (!priceFieldShown.value) return;
+  purchasePrice.value = defaultUnitPrice(effectiveAvgUnit.value);
 });
 const adjustOpen = ref(false);
 const adjustId = ref<string | null>(null);
@@ -1019,9 +1124,9 @@ function openPurchase(id?: string): void {
     p?.cost_price ??
     undefined;
   purchaseUnitId.value = baseUnit?.id ?? "";
-  priceChoice.value = "proposed";
+  purchaseAvg.value = undefined;
   purchasePrice.value = undefined;
-  purchaseApproved.value = null;
+  purchasePriceTouched.value = false;
   purchasePaid.value = undefined;
   purchasePaidTouched.value = false;
   purchaseSupplier.value = undefined;
@@ -1050,6 +1155,7 @@ async function doPurchase(): Promise<void> {
   if (
     purchaseQtyError.value ||
     purchaseCostError.value ||
+    purchaseAvgError.value ||
     purchasePriceError.value ||
     purchasePaidError.value
   )
@@ -1058,28 +1164,47 @@ async function doPurchase(): Promise<void> {
     stockSubmitError.value = "أدخل الكمية وسعر التكلفة أولاً.";
     return;
   }
-  // Snapshot the approved proposed price for the concurrency check (§2.3).
-  purchaseApproved.value = purchasePreview.value.proposed;
-  const pricing =
-    pricePolicyApplies.value && priceChoice.value === "custom"
+  // Single visible average (selected-unit terms) + the snapshot it rests on;
+  // the transaction re-checks the snapshot before saving the approved value,
+  // and touches ONLY the purchased unit's selling price.
+  const card = costCardShown.value;
+  const showPrice = priceFieldShown.value;
+  const basis = {
+    stock: round2(toNum(purchaseProduct.value?.stock_quantity)),
+    cost: round4(toNum(purchaseCurrentCost.value)),
+  };
+  let pricing: PriceDecision;
+  if (!card) {
+    pricing = { mode: "keep" };
+  } else {
+    if (purchaseAvg.value === undefined) {
+      stockSubmitError.value = "أدخل متوسط التكلفة الجديد أولاً.";
+      return;
+    }
+    const proposal = effectiveProposal.value;
+    if (showPrice && purchasePrice.value === undefined) {
+      stockSubmitError.value =
+        proposal.price === null
+          ? "أدخل سعر البيع يدويًا (لا يوجد هامش سابق)."
+          : "أدخل سعر البيع الجديد أولاً.";
+      return;
+    }
+    const avgBase = round4(toNum(purchaseAvg.value) / purchaseFactor.value);
+    pricing = showPrice
       ? {
           mode: "custom" as const,
           price: purchasePrice.value ?? 0,
-          approvedProposed: purchasePreview.value.proposed,
+          approvedProposed: proposal.price,
+          approvedAverage: avgBase,
+          averageBasis: basis,
+          singleUnit: true,
         }
-      : pricePolicyApplies.value
-        ? {
-            mode: "proposed" as const,
-            approvedProposed: purchasePreview.value.proposed ?? 0,
-            price: purchasePrice.value ?? purchasePreview.value.proposed ?? 0,
-          }
-        : { mode: "keep" as const };
-  if (pricePolicyApplies.value && purchasePrice.value === undefined) {
-    stockSubmitError.value =
-      priceChoice.value === "custom"
-        ? "أدخل سعر البيع المخصص أولاً."
-        : "السعر المقترح غير صالح؛ أدخل سعرًا يدويًا.";
-    return;
+      : {
+          mode: "keep",
+          approvedAverage: avgBase,
+          averageBasis: basis,
+          singleUnit: true,
+        };
   }
   if (purchasePaid.value !== undefined && purchasePaid.value !== null) {
     const t = round2(
@@ -1112,6 +1237,9 @@ async function doPurchase(): Promise<void> {
       stockSubmitError.value = res.error ?? "تعذر تسجيل الشراء.";
       if ("stale" in res && res.stale) {
         await productsStore.fetchProducts();
+        syncPurchaseSuggestions();
+        stockSubmitError.value =
+          "تغيّرت بيانات المنتج أثناء الحفظ — أُعيد حساب المقترح، راجع القيم ثم أكد مجددًا.";
       }
       return;
     }
@@ -1157,6 +1285,45 @@ async function doAdjust(): Promise<void> {
   }
 }
 const clearConfirm = ref(false);
+const bulkDeleteOpen = ref(false);
+const bulkBusy = ref(false);
+async function runBulkDelete(mode: "archive" | "delete"): Promise<void> {
+  const ids = [...selectProducts.value];
+  if (!ids.length || bulkBusy.value) return;
+  bulkBusy.value = true;
+  try {
+    let ok = 0;
+    let failed = 0;
+    for (const id of ids) {
+      if (mode === "archive") {
+        const res = await productsStore.archiveProduct(id);
+        if (res.ok) ok++;
+        else failed++;
+      } else {
+        // No cash is ever created by deletion; supplier returns are separate.
+        if (await productsStore.deleteProduct(id)) ok++;
+        else failed++;
+      }
+    }
+    selectProducts.value = [];
+    bulkDeleteOpen.value = false;
+    await loadProds();
+    const action = mode === "archive" ? "أرشفة" : "حذف";
+    if (failed > 0)
+      notifyToast(`تم ${action} ${ok} منتج، وفشل ${failed}.`, "error");
+    else if (mode === "archive")
+      notifyToast(`تمت أرشفة ${ok} منتج مع حفظ سجلها المحاسبي.`, "success");
+    else notifyToast(`تم حذف ${ok} منتج نهائيًا (بدون أثر نقدي).`, "success");
+  } finally {
+    bulkBusy.value = false;
+  }
+}
+async function bulkArchiveConfirmed(): Promise<void> {
+  await runBulkDelete("archive");
+}
+async function bulkDeleteConfirmed(): Promise<void> {
+  await runBulkDelete("delete");
+}
 interface ProductRow {
   id?: string;
   name: string;

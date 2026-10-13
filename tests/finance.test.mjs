@@ -6,12 +6,23 @@ import {
   allocateSupplierCash,
   convertUnitPrice,
   grossProfitOf,
+  hasShortageAlert,
+  manualPriceBaseOf,
+  shortageAvgFormula,
   invoiceEditCashOutflowError,
   invoiceEditCustomerChangeError,
   invoiceEditPaymentError,
   invoiceEditStockChanges,
   invoiceHasReturnHistory,
   isLowStock,
+  isUnitLowStock,
+  lowStockThresholdOf,
+  lowStockUnitsOf,
+  parsePurchasePriceHistory,
+  prependPurchasePriceHistory,
+  productHasUnitThresholds,
+  unitLowThresholdOf,
+  unitThresholdDisplayOf,
   purchasableUnitsForProduct,
   proposedSellingPrice,
   restoreGroupsForEdit,
@@ -311,6 +322,278 @@ test("low stock comparison uses each product threshold and strict less-than", ()
   assert.equal(isLowStock({ stock_quantity: 0, low_stock_threshold: 0 }), false);
 });
 
+test("unit-level thresholds replace the product-level threshold", () => {
+  const base = { id: "pc", name: "قطعة", factor: 1, selling_price: 2, is_base: true };
+  const pack = { id: "box", name: "علبة", factor: 12, selling_price: 20 };
+  // No unit thresholds → legacy product-level rule.
+  assert.equal(productHasUnitThresholds({ units: [base, pack] }), false);
+  assert.equal(isLowStock({ stock_quantity: 3, low_stock_threshold: 5, units: [base, pack] }), true);
+  // Pack threshold 10 packs (=120 base); stock 110 → pack is low, base has no alert.
+  const withPack = { stock_quantity: 110, low_stock_threshold: 5, base_unit_id: "pc", units: [{ ...base }, { ...pack, low_stock_threshold: 10 }] };
+  assert.equal(productHasUnitThresholds(withPack), true);
+  assert.equal(unitLowThresholdOf(withPack.units[1]), 10);
+  assert.equal(isUnitLowStock(withPack, withPack.units[1]), true);
+  assert.equal(isUnitLowStock(withPack, withPack.units[0]), false);
+  assert.equal(isLowStock(withPack), true);
+  assert.deepEqual(lowStockUnitsOf(withPack).map((u) => u.id), ["box"]);
+  assert.equal(unitThresholdDisplayOf(withPack.units[1]), "10 علبة");
+  // Stock 130 → no unit breached even though legacy threshold would fire.
+  const ok = { ...withPack, stock_quantity: 130 };
+  assert.equal(isLowStock(ok), false);
+  // Base-only threshold behaves like the legacy rule.
+  const baseOnly = { stock_quantity: 4, low_stock_threshold: 99, base_unit_id: "pc", units: [{ ...base, low_stock_threshold: 5 }, { ...pack }] };
+  assert.equal(isLowStock(baseOnly), true);
+  assert.equal(isLowStock({ ...baseOnly, stock_quantity: 6 }), false);
+  // Missing/invalid unit thresholds never fire; legacy default still applies.
+  assert.equal(unitLowThresholdOf({}), null);
+  assert.equal(unitLowThresholdOf({ low_stock_threshold: -1 }), null);
+  assert.equal(isLowStock({ stock_quantity: 0, units: [{ ...base }, { ...pack }] }), true);
+});
+
+test("zero threshold mutes the shortage alert completely", () => {
+  const base = { id: "pc", name: "قطعة", factor: 1, selling_price: 2, is_base: true };
+  const pack = { id: "box", name: "علبة", factor: 12, selling_price: 20 };
+  // Zero unit threshold → muted even at zero/negative stock.
+  assert.equal(hasShortageAlert({ stock_quantity: 0, units: [{ ...base, low_stock_threshold: 0 }, { ...pack }] }), false);
+  assert.equal(hasShortageAlert({ stock_quantity: -2, units: [{ ...base, low_stock_threshold: 0 }] }), false);
+  // Positive unit threshold → alerting.
+  assert.equal(hasShortageAlert({ stock_quantity: 0, units: [{ ...base, low_stock_threshold: 5 }] }), true);
+  assert.equal(hasShortageAlert({ stock_quantity: 0, units: [{ ...base, low_stock_threshold: 0 }, { ...pack, low_stock_threshold: 2 }] }), true);
+  // Legacy: zero mutes, missing keeps the default-5 fallback.
+  assert.equal(hasShortageAlert({ stock_quantity: 0, low_stock_threshold: 0 }), false);
+  assert.equal(hasShortageAlert({ stock_quantity: 0, low_stock_threshold: 5 }), true);
+  assert.equal(hasShortageAlert({ stock_quantity: 0 }), true);
+  assert.equal(hasShortageAlert({ stock_quantity: 0, units: [{ ...base }, { ...pack }] }), true);
+});
+
+/** Minimal Excel evaluator for the purchase-order formulas: IF (lazy),
+// AND/OR/ABS/ROUND, comparisons (Excel `=`), arithmetic, cell refs and the
+// empty-string literal. Enough to execute shortageAvgFormula output. */
+function evalExcel(formula, cells) {
+  let i = 0;
+  const s = formula;
+  function skip() {
+    while (s[i] === " " || s[i] === "\t") i++;
+  }
+  function parseExpr() {
+    return parseComp();
+  }
+  function parseComp() {
+    const left = parseArith();
+    skip();
+    for (const op of ["<=", ">=", "<", ">", "="]) {
+      if (s.startsWith(op, i)) {
+        i += op.length;
+        const right = parseArith();
+        if (op === "<=") return left <= right;
+        if (op === ">=") return left >= right;
+        if (op === "<") return left < right;
+        if (op === ">") return left > right;
+        return left === right;
+      }
+    }
+    return left;
+  }
+  function parseArith() {
+    let value = parseTerm();
+    for (;;) {
+      skip();
+      if (s[i] === "+") {
+        i++;
+        value += parseTerm();
+      } else if (s[i] === "-") {
+        i++;
+        value -= parseTerm();
+      } else break;
+    }
+    return value;
+  }
+  function parseTerm() {
+    let value = parseFactor();
+    for (;;) {
+      skip();
+      if (s[i] === "*") {
+        i++;
+        value *= parseFactor();
+      } else if (s[i] === "/") {
+        i++;
+        value /= parseFactor();
+      } else break;
+    }
+    return value;
+  }
+  function parseFactor() {
+    skip();
+    if (s[i] === "-") {
+      i++;
+      return -parseFactor();
+    }
+    if (s[i] === "(") {
+      i++;
+      const value = parseExpr();
+      skip();
+      if (s[i] !== ")") throw new Error(`missing ) in: ${formula}`);
+      i++;
+      return value;
+    }
+    if (s[i] === "'") {
+      if (s.startsWith("''", i)) {
+        i += 2;
+        return "";
+      }
+      throw new Error(`bad string in: ${formula}`);
+    }
+    const call = s.slice(i).match(/^([A-Z]+)\(/);
+    if (call) {
+      const name = call[1];
+      i += name.length + 1;
+      if (name === "IF") {
+        // JS arithmetic never throws (0/0 is NaN), so both branches can be
+        // parsed eagerly; only the taken value is returned.
+        const cond = parseExpr();
+        skip();
+        if (s[i] !== ",") throw new Error(`bad IF in: ${formula}`);
+        i++;
+        const thenVal = parseExpr();
+        skip();
+        if (s[i] !== ",") throw new Error(`bad IF in: ${formula}`);
+        i++;
+        const elseVal = parseExpr();
+        skip();
+        if (s[i] !== ")") throw new Error(`bad IF end in: ${formula}`);
+        i++;
+        return cond ? thenVal : elseVal;
+      }
+      const args = [];
+      skip();
+      if (s[i] !== ")") {
+        for (;;) {
+          args.push(parseExpr());
+          skip();
+          if (s[i] === ",") {
+            i++;
+            continue;
+          }
+          break;
+        }
+      }
+      skip();
+      if (s[i] !== ")") throw new Error(`bad call ${name} in: ${formula}`);
+      i++;
+      if (name === "AND") return args.every(Boolean);
+      if (name === "OR") return args.some(Boolean);
+      if (name === "ABS") return Math.abs(args[0]);
+      if (name === "ROUND") {
+        const p = 10 ** args[1];
+        return Math.round((args[0] + Number.EPSILON) * p) / p;
+      }
+      throw new Error(`unknown fn ${name}`);
+    }
+    const cell = s.slice(i).match(/^[A-Z]+[0-9]+/);
+    if (cell) {
+      i += cell[0].length;
+      const v = cells[cell[0]];
+      return v === undefined || v === null ? "" : v;
+    }
+    const num = s.slice(i).match(/^[0-9]+(\.[0-9]+)?/);
+    if (num) {
+      i += num[0].length;
+      return Number(num[0]);
+    }
+    throw new Error(`unexpected token at ${i} in: ${formula}`);
+  }
+  // Helper for the not-taken IF branch: parse without returning.
+  function parseExprAt(pos, discard) {
+    void discard;
+    const saved = i;
+    i = pos;
+    const v = parseExpr();
+    i = saved;
+    return v;
+  }
+  const out = parseExpr();
+  skip();
+  if (i !== s.length) throw new Error(`trailing input in: ${formula}`);
+  return out;
+}
+
+test("shortage export averages aggregate sibling unit rows", () => {
+  const self = [{ row: 2, factor: 1, costRef: 10 }];
+  const single = shortageAvgFormula({
+    ownRow: 2, oldUnitAvg: 10, costRef: 10, stockUnit: 0, factor: 1,
+    siblings: self, stockBase: 0, oldBase: 10,
+  });
+  // Single-row output keeps the legacy per-row shape byte-identical.
+  assert.equal(
+    single,
+    "IF(ABS(D2-10)<0.005,10,ROUND(IF(OR(C2=\"\",C2=0),(10+D2)/2,IF(0<=0,(10+D2)/2,(0*10+C2*D2)/(0+C2))),2))",
+  );
+  assert.equal(evalExcel(single, { C2: "", D2: 12 }), 11);
+  // Two unit rows of one product (piece ×1 at row 2, pack ×12 at row 3).
+  const sibs = [
+    { row: 2, factor: 1, costRef: 10 },
+    { row: 3, factor: 12, costRef: 120 },
+  ];
+  const piece = shortageAvgFormula({
+    ownRow: 2, oldUnitAvg: 10, costRef: 10, stockUnit: 0, factor: 1,
+    siblings: sibs, stockBase: 0, oldBase: 10,
+  });
+  const pack = shortageAvgFormula({
+    ownRow: 3, oldUnitAvg: 120, costRef: 120, stockUnit: 0, factor: 12,
+    siblings: sibs, stockBase: 0, oldBase: 10,
+  });
+  // Untouched file → recorded averages.
+  assert.equal(evalExcel(piece, { C2: "", D2: 10, C3: "", D3: 120 }), 10);
+  assert.equal(evalExcel(pack, { C2: "", D2: 10, C3: "", D3: 120 }), 120);
+  // Edited costs + quantities: both rows imply the SAME base average
+  // (batch aggregate (120+280)/(10+24) = 11.7647…), so the import never sees
+  // a "different averages" conflict. The old per-row math gave 11 vs 10.833.
+  const ePiece = evalExcel(piece, { C2: 10, D2: 12, C3: 2, D3: 140 });
+  const ePack = evalExcel(pack, { C2: 10, D2: 12, C3: 2, D3: 140 });
+  assert.ok(Math.abs(ePiece - 11.76) < 0.005, `piece ${ePiece}`);
+  assert.ok(Math.abs(ePack / 12 - ePiece) < 0.02, `pack ${ePack} vs piece ${ePiece}`);
+  // With stock on hand the aggregate blends with it: (200+200)/(20+17).
+  const sPiece = shortageAvgFormula({
+    ownRow: 2, oldUnitAvg: 10, costRef: 10, stockUnit: 20, factor: 1,
+    siblings: sibs, stockBase: 20, oldBase: 10,
+  });
+  const sPack = shortageAvgFormula({
+    ownRow: 3, oldUnitAvg: 120, costRef: 120, stockUnit: 20 / 12, factor: 12,
+    siblings: sibs, stockBase: 20, oldBase: 10,
+  });
+  const vPiece = evalExcel(sPiece, { C2: 5, D2: 12, C3: 1, D3: 140 });
+  const vPack = evalExcel(sPack, { C2: 5, D2: 12, C3: 1, D3: 140 });
+  assert.ok(Math.abs(vPiece - 10.81) < 0.02, `stock piece ${vPiece}`);
+  assert.ok(Math.abs(vPack / 12 - vPiece) < 0.02, `stock pack ${vPack} vs ${vPiece}`);
+  // No recorded average: siblings' own cost references anchor the blend.
+  const zPiece = shortageAvgFormula({
+    ownRow: 2, oldUnitAvg: 0, costRef: 10, stockUnit: 5, factor: 1,
+    siblings: sibs, stockBase: 5, oldBase: 0,
+  });
+  assert.equal(evalExcel(zPiece, { C2: "", D2: 12, C3: "", D3: 140 }), 11);
+});
+
+test("manual import prices ignore export-fresh multi-row margins", () => {
+  const product = {
+    cost_price: 10,
+    units: [
+      { id: "pc", name: "قطعة", factor: 1, selling_price: 12 },
+      { id: "box", name: "علبة", factor: 12, selling_price: 140 },
+    ],
+  };
+  // Untouched → never manual.
+  assert.equal(manualPriceBaseOf(product, { priceOverride: 12, avgOverride: 10, unitId: "pc", unitFactor: 1 }, 2), null);
+  assert.equal(manualPriceBaseOf(product, { priceOverride: null, avgOverride: 11, unitId: "pc", unitFactor: 1 }, 2), null);
+  // Export-fresh (F follows own E by recorded margin) → ignored multi-row…
+  assert.equal(manualPriceBaseOf(product, { priceOverride: 13.2, avgOverride: 11, unitId: "pc", unitFactor: 1 }, 2), null);
+  assert.equal(manualPriceBaseOf(product, { priceOverride: 151.67, avgOverride: 130, unitId: "box", unitFactor: 12 }, 2), null);
+  // …but kept single-row (legacy: the file value decides).
+  assert.equal(manualPriceBaseOf(product, { priceOverride: 13.2, avgOverride: 11, unitId: "pc", unitFactor: 1 }, 1), 13.2);
+  // Genuine manual edits still surface in base terms.
+  assert.equal(manualPriceBaseOf(product, { priceOverride: 15, avgOverride: 11, unitId: "pc", unitFactor: 1 }, 2), 15);
+  assert.equal(manualPriceBaseOf(product, { priceOverride: 150, avgOverride: 130, unitId: "box", unitFactor: 12 }, 2), 12.5);
+});
+
 test("supplier invoice status derives consistently and supports legacy documents", () => {
   assert.equal(deriveSupplierInvoiceStatus(0, 100), "unpaid");
   assert.equal(deriveSupplierInvoiceStatus(25, 75), "partial");
@@ -319,4 +602,23 @@ test("supplier invoice status derives consistently and supports legacy documents
   assert.equal(deriveSupplierInvoiceStatus(20, undefined, 100), "partial");
   assert.equal(supplierInvoiceStatus({ paid_amount: 0, remaining_amount: 100, total_amount: 100 }), "unpaid");
   assert.equal(supplierInvoiceStatus({ paid_amount: 25, remaining_amount: 75, total_amount: 100, status: "partial" }), "partial");
+});
+
+test("purchase-price history log keeps latest first and stays bounded", () => {
+  assert.deepEqual(parsePurchasePriceHistory(null), []);
+  assert.deepEqual(parsePurchasePriceHistory(""), []);
+  assert.deepEqual(parsePurchasePriceHistory("10.5-1728844800000,9-1728758400000"), [
+    { price: 10.5, at: 1728844800000 },
+    { price: 9, at: 1728758400000 },
+  ]);
+  assert.deepEqual(parsePurchasePriceHistory("bad,10-abc,7-123"), [{ price: 7, at: 123 }]);
+  let log = prependPurchasePriceHistory(null, 9, 1000);
+  assert.equal(log, "9-1000");
+  log = prependPurchasePriceHistory(log, 10.5, 2000);
+  assert.equal(log, "10.5-2000,9-1000");
+  assert.deepEqual(parsePurchasePriceHistory(log)[0], { price: 10.5, at: 2000 });
+  let long = null;
+  for (let i = 1; i <= 25; i++) long = prependPurchasePriceHistory(long, i, i * 1000);
+  assert.equal(parsePurchasePriceHistory(long).length, 20);
+  assert.deepEqual(parsePurchasePriceHistory(long)[0], { price: 25, at: 25000 });
 });

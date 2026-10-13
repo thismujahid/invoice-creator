@@ -13,10 +13,13 @@ export interface Product {
   cost_price: number | null;
   /** Real on-hand stock. Unset/zero until opening stock is entered. */
   stock_quantity?: number | null;
-  /** Low-stock alert threshold (default 5 when missing). Fractional allowed. */
+  /** Low-stock alert threshold (default 5 when missing). Fractional allowed.
+   *  @deprecated Prefer per-unit thresholds (ProductUnit.low_stock_threshold).
+   *  Kept as a fallback for products whose units define no threshold. */
   low_stock_threshold?: number | null;
-  /** Unit the threshold was entered in (display + edit hydration).
-   *  The numeric threshold itself is always stored in base units. */
+  /** Unit the legacy threshold was entered in (display + edit hydration).
+   *  The numeric threshold itself is always stored in base units.
+   *  @deprecated Unused for new/updated products. */
   low_stock_unit_id?: string | null;
   base_unit_id?: string | null;
   base_unit_name?: string | null;
@@ -43,6 +46,17 @@ export interface ProductUnit {
    *  own denomination). The moving average lives once, in base-unit terms,
    *  on Product.cost_price — per-unit averages are derived, never stored. */
   purchase_price?: number | null;
+  /** Purchase-price history log for THIS unit (reference only):
+   *  `"price-timestamp,price-timestamp,..."` with the latest entry first
+   *  (e.g. `"10.5-1728844800000,9-1728758400000"`). Timestamps are client
+   *  milliseconds. Bounded to MAX_PURCHASE_PRICE_HISTORY entries. */
+  purchase_price_history?: string | null;
+  /** Low-stock alert threshold in THIS unit's own denomination
+   *  (e.g. 10 on a ×12 pack means "alert below 10 packs").
+   *  null/undefined = no threshold (this unit never triggers a shortage).
+   *  When ANY unit of a product defines a threshold, unit-level evaluation
+   *  replaces the legacy product-level threshold. */
+  low_stock_threshold?: number | null;
   is_base?: boolean;
   can_purchase?: boolean;
   can_sell?: boolean;

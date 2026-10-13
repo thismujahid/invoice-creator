@@ -14,6 +14,7 @@ import {
   aggregatePurchaseByProduct,
   applyStockGroup,
   estimatePurchaseOps,
+  prependPurchasePriceHistory,
   proposedSellingPrice,
   purchaseLineBaseCost,
   purchaseLineBaseQuantity,
@@ -36,7 +37,8 @@ export interface PurchaseItemInput {
   pricing: PriceDecision;
   /** Required selling price for new products. */
   price?: number | null;
-  /** Stock alert threshold for new products (default 5). */
+  /** Shortage alert for new products, applied to the BASE unit in base-unit
+   *  terms (default 5). Per-unit thresholds may also arrive on `units`. */
   threshold?: number | null;
   unit_id?: string | null;
   unit_name?: string | null;
@@ -140,6 +142,10 @@ export const usePurchasing = defineStore("purchasing", () => {
       if (it.pricing.mode === "custom" && !(toNum(it.pricing.price) >= 0)) {
         return { ok: false, error: `صنف ${n}: سعر البيع المخصص غير صالح.` };
       }
+      const approvedAvg = it.pricing.approvedAverage;
+      if (approvedAvg !== undefined && approvedAvg !== null && (!Number.isFinite(Number(approvedAvg)) || Number(approvedAvg) < 0)) {
+        return { ok: false, error: `صنف ${n}: متوسط التكلفة المعتمد غير صالح.` };
+      }
     }
     const total = round2(items.reduce((s, it) => s + round2(toNum(it.quantity) * round4(toNum(it.unit_cost))), 0));
     const paid = round2(toNum(input.paidNow));
@@ -198,9 +204,10 @@ export const usePurchasing = defineStore("purchasing", () => {
         // factor, weighted average on BASE terms only. Multi-unit lines of one
         // product are aggregated before averaging (deterministic, order-free).
         const now = serverTimestamp();
+        const nowMs = Date.now();
         const byWho = by();
         const builtItems: PurchaseInvoiceItem[] = [];
-        const productWrites: { id: string; isNew: boolean; name: string; stock: number; cost: number; price: number; movementId: string; movementIds: string[]; units?: ProductUnit[]; base_unit_id?: string; base_unit_name?: string; low_stock_threshold?: number }[] = [];
+        const productWrites: { id: string; isNew: boolean; name: string; stock: number; cost: number; price: number; movementId: string; movementIds: string[]; units?: ProductUnit[]; base_unit_id?: string; base_unit_name?: string }[] = [];
         const invLogs: Record<string, unknown>[] = [];
         let seq = 0;
         // Normalize every row first (shared with preview).
@@ -221,7 +228,24 @@ export const usePurchasing = defineStore("purchasing", () => {
         for (const [pid, agg] of aggregate) {
           const cur = prods.get(pid)!;
           const applied = applyStockGroup(cur.stock, cur.cost, 0, agg.baseQty > 0 ? [{ qty: agg.baseQty, cost: agg.baseCost }] : []);
-          newAvgByProduct.set(pid, { newAvg: applied.avg ?? agg.baseCost, stock: applied.stock });
+          let newAvg = applied.avg ?? agg.baseCost;
+          // Client-approved average (editable in the quick-buy dialog): only
+          // valid against the snapshot it was computed from — otherwise the
+          // blended value may rest on stale stock/cost.
+          const rep = normalized.find((n) => n.it.product_id === pid)!.it;
+          const override = rep.pricing.approvedAverage;
+          if (override !== null && override !== undefined) {
+            const basis = rep.pricing.averageBasis;
+            if (!basis || Math.abs(cur.stock - toNum(basis.stock)) > 1e-9 || Math.abs(cur.cost - toNum(basis.cost)) > 1e-9) {
+              const fresh = proposedSellingPrice(cur.cost, cur.price, newAvg);
+              throw Object.assign(new Error("STALE_PRICING"), {
+                stale: { product_id: pid, product_name: cur.name, newAvg: round4(newAvg), proposed: fresh.proposed, oldPrice: cur.price, oldCost: cur.cost, rate: fresh.rate },
+              });
+            }
+            if (!Number.isFinite(Number(override)) || Number(override) < 0) throw new Error("VALIDATION:متوسط التكلفة المعتمد غير صالح.");
+            newAvg = round4(Number(override));
+          }
+          newAvgByProduct.set(pid, { newAvg, stock: applied.stock });
         }
         // Pricing decisions must be consistent across lines of one product.
         const pricingByProduct = new Map<string, string>();
@@ -234,10 +258,63 @@ export const usePurchasing = defineStore("purchasing", () => {
           }
           pricingByProduct.set(n.it.product_id, key);
         }
-        const finalizedByProduct = new Map<string, { finalPrice: number | null; proposed: number | null; rate: number | null; newAvg: number }>();
+        const finalizedByProduct = new Map<string, { finalPrice: number | null; proposed: number | null; rate: number | null; newAvg: number; singleUid: string | null }>();
         for (const [pid, { newAvg }] of newAvgByProduct) {
           const cur = prods.get(pid)!;
           const rep = normalized.find((n) => n.it.product_id === pid)!.it;
+          const singleUid = rep.pricing.singleUnit === true
+            ? (rep.unit_id ?? cur.baseUnitId ?? cur.units.find((u) => u.is_base)?.id ?? null)
+            : null;
+          if (singleUid) {
+            // Quick-buy path: only the purchased unit's selling price moves
+            // (in its own denomination); all other units keep their prices.
+            const target = cur.units.find((u) => u.id === singleUid);
+            const tFactor = target && Number(target.factor) > 0 ? Number(target.factor) : 1;
+            const newAvgUnit = round4(newAvg * tFactor);
+            const oldUnitAvg = round4(cur.cost * tFactor);
+            let oldUnitPrice: number | null = null;
+            if (target) {
+              if (target.selling_price !== null && target.selling_price !== undefined) oldUnitPrice = toNum(target.selling_price);
+              else if (target.is_base || target.id === cur.baseUnitId) oldUnitPrice = toNum(cur.price);
+              else if (target.can_sell === undefined) oldUnitPrice = toNum(cur.price);
+            }
+            const unitProposal = oldUnitAvg > 0 && oldUnitPrice !== null
+              ? proposedSellingPrice(oldUnitAvg, oldUnitPrice, newAvgUnit)
+              : { rate: null, proposed: null };
+            const hasApprovedProposal = rep.pricing.mode === "proposed" ||
+              (rep.pricing.mode === "custom" && rep.pricing.approvedProposed !== undefined);
+            const approvedProposal = rep.pricing.mode === "keep" ? undefined : rep.pricing.approvedProposed;
+            const proposalChanged = hasApprovedProposal && (
+              unitProposal.proposed === null
+                ? approvedProposal !== null
+                : approvedProposal === null || approvedProposal === undefined || Math.abs(unitProposal.proposed - approvedProposal) > 0.005
+            );
+            if (proposalChanged) {
+              throw Object.assign(new Error("STALE_PRICING"), {
+                stale: { product_id: pid, product_name: cur.name, newAvg, proposed: unitProposal.proposed, oldPrice: oldUnitPrice ?? cur.price, oldCost: cur.cost, rate: unitProposal.rate },
+              });
+            }
+            const sellable = !!target && target.can_sell !== false;
+            const needsPrice = sellable && (oldUnitPrice === null || newAvgUnit - oldUnitPrice > 1e-9);
+            let finalPrice: number | null = null;
+            if (rep.pricing.mode === "keep") {
+              if (sellable && oldUnitPrice === null) throw new Error("VALIDATION:حدد سعر بيع الوحدة قبل الحفظ.");
+              if (needsPrice) {
+                throw Object.assign(new Error("STALE_PRICING"), {
+                  stale: { product_id: pid, product_name: cur.name, newAvg, proposed: unitProposal.proposed, oldPrice: oldUnitPrice ?? cur.price, oldCost: cur.cost, rate: unitProposal.rate },
+                });
+              }
+            } else if (rep.pricing.mode === "proposed") {
+              if (unitProposal.proposed === null || unitProposal.rate === null) {
+                throw new Error("VALIDATION:لا توجد نسبة ربح قابلة للاشتقاق — أدخل سعر بيع يدويًا.");
+              }
+              finalPrice = round2(rep.pricing.price ?? unitProposal.proposed);
+            } else {
+              finalPrice = round2(toNum(rep.pricing.price));
+            }
+            finalizedByProduct.set(pid, { finalPrice, proposed: unitProposal.proposed, rate: unitProposal.rate, newAvg, singleUid });
+            continue;
+          }
           const { rate, proposed } = proposedSellingPrice(cur.cost, cur.price, newAvg);
           const hasApprovedProposal = rep.pricing.mode === "proposed" ||
             (rep.pricing.mode === "custom" && rep.pricing.approvedProposed !== undefined);
@@ -268,7 +345,7 @@ export const usePurchasing = defineStore("purchasing", () => {
               finalPrice = round2(toNum(rep.pricing.price));
             }
           }
-          finalizedByProduct.set(pid, { finalPrice, proposed, rate, newAvg });
+          finalizedByProduct.set(pid, { finalPrice, proposed, rate, newAvg, singleUid: null });
         }
         for (const n of normalized) {
           const { it, qty, unitCost, factor, baseQty, baseCost } = n;
@@ -314,8 +391,12 @@ export const usePurchasing = defineStore("purchasing", () => {
             });
           } else {
             // Brand-new product: stock starts 0 → average = batch cost.
+            // The shortage threshold lands on the BASE unit (base-unit terms);
+            // the legacy product-level field is no longer written.
             const price = round2(toNum(it.price));
-            const thrRaw: unknown = it.threshold;
+            const baseUnitKey = it.base_unit_id || "base";
+            const providedBase = (it.units ?? []).find((u) => u.id === baseUnitKey || u.is_base);
+            const thrRaw: unknown = providedBase?.low_stock_threshold ?? it.threshold;
             const threshold = thrRaw === null || thrRaw === undefined || thrRaw === "" ? 5 : toNum(thrRaw);
             if (!(threshold >= 0)) throw new Error("VALIDATION:مؤشر النقص غير صالح.");
             const productId = doc(collection(db, "products")).id;
@@ -342,16 +423,22 @@ export const usePurchasing = defineStore("purchasing", () => {
               movementId,
               movementIds: [movementId],
               units: it.units?.length
-                ? it.units.map((entry) => ({
-                  ...entry,
-                  purchase_price:
-                    entry.purchase_price ??
-                    (entry.id === (it.unit_id ?? it.base_unit_id) ? round4(unitCost) : null),
-                }))
-                : [{ id: it.base_unit_id || "base", name: it.base_unit_name || "وحدة", factor: 1, selling_price: price, purchase_price: round4(baseCost), is_base: true }],
+                ? it.units.map((entry) => {
+                  const isBaseEntry = entry.id === baseUnitKey || entry.is_base;
+                  const isPurchasedEntry = entry.id === (it.unit_id ?? it.base_unit_id);
+                  const entryCost = entry.purchase_price ?? (isPurchasedEntry ? round4(unitCost) : null);
+                  return {
+                    ...entry,
+                    low_stock_threshold: entry.low_stock_threshold ?? (isBaseEntry ? threshold : null),
+                    purchase_price: entryCost,
+                    purchase_price_history: isPurchasedEntry && entryCost !== null
+                      ? prependPurchasePriceHistory(entry.purchase_price_history, entryCost, nowMs)
+                      : (entry.purchase_price_history ?? null),
+                  };
+                })
+                : [{ id: it.base_unit_id || "base", name: it.base_unit_name || "وحدة", factor: 1, selling_price: price, purchase_price: round4(baseCost), purchase_price_history: prependPurchasePriceHistory(null, round4(baseCost), nowMs), low_stock_threshold: threshold, is_base: true }],
               base_unit_id: it.base_unit_id || "base",
               base_unit_name: it.base_unit_name?.trim() || "وحدة",
-              low_stock_threshold: threshold,
             });
             invLogs.push({
               type: "purchase",
@@ -377,8 +464,9 @@ export const usePurchasing = defineStore("purchasing", () => {
         // proposals for EVERY sellable unit (each preserves its own margin).
         for (const [pid, { newAvg, stock }] of newAvgByProduct) {
           const cur = prods.get(pid)!;
-          const { finalPrice } = finalizedByProduct.get(pid)!;
-          const proposals = purchaseUnitProposals(
+          const fin = finalizedByProduct.get(pid)!;
+          const { finalPrice } = fin;
+          const proposals = fin.singleUid ? [] : purchaseUnitProposals(
             { cost_price: cur.cost, price: cur.price, units: cur.units, base_unit_id: cur.baseUnitId } as unknown as import("~/types").Product,
             newAvg,
           );
@@ -391,8 +479,15 @@ export const usePurchasing = defineStore("purchasing", () => {
           }
           const baseId = cur.baseUnitId || cur.units.find((entry) => entry.is_base)?.id;
           const updatedUnits = cur.units.map((unit) => {
-            let next = purchasedCosts.has(unit.id) ? { ...unit, purchase_price: purchasedCosts.get(unit.id)! } : unit;
-            if (finalPrice !== null && unit.can_sell !== false) {
+            let next = unit;
+            if (purchasedCosts.has(unit.id)) {
+              const cost = purchasedCosts.get(unit.id)!;
+              next = { ...unit, purchase_price: cost, purchase_price_history: prependPurchasePriceHistory(unit.purchase_price_history, cost, nowMs) };
+            }
+            if (fin.singleUid) {
+              // Quick-buy: only the purchased unit's selling price moves.
+              if (finalPrice !== null && unit.id === fin.singleUid && unit.can_sell !== false) next = { ...next, selling_price: finalPrice };
+            } else if (finalPrice !== null && unit.can_sell !== false) {
               if (unit.id === baseId) {
                 next = { ...next, selling_price: finalPrice };
               } else {
@@ -409,7 +504,7 @@ export const usePurchasing = defineStore("purchasing", () => {
             name: cur.name,
             stock,
             cost: round4(newAvg),
-            price: finalPrice ?? cur.price,
+            price: fin.singleUid && fin.singleUid !== baseId ? cur.price : (finalPrice ?? cur.price),
             movementId: movementIds[0] ?? doc(collection(db, "inventory_transactions")).id,
             movementIds,
             units: updatedUnits,
@@ -465,7 +560,6 @@ export const usePurchasing = defineStore("purchasing", () => {
               base_unit_id: items.find((i) => !i.product_id && String(i.name ?? "").trim() === w.name)?.base_unit_id || "base",
               base_unit_name: items.find((i) => !i.product_id && String(i.name ?? "").trim() === w.name)?.base_unit_name?.trim() || "وحدة",
               units: w.units,
-              low_stock_threshold: w.low_stock_threshold ?? 5,
               last_inventory_transaction_id: w.movementId,
               last_inventory_transaction_ids: w.movementIds?.length ? w.movementIds : [w.movementId],
               last_purchase_invoice_id: invRef.id,
@@ -491,7 +585,6 @@ export const usePurchasing = defineStore("purchasing", () => {
           ...(w.units ? { units: w.units } : {}),
           ...(w.base_unit_id ? { base_unit_id: w.base_unit_id } : {}),
           ...(w.base_unit_name ? { base_unit_name: w.base_unit_name } : {}),
-          ...(w.low_stock_threshold !== undefined ? { low_stock_threshold: w.low_stock_threshold } : {}),
         }));
         for (const movement of invLogs) {
           const { id, ...data } = movement;

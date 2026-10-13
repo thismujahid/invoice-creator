@@ -429,7 +429,10 @@ async function reload(reset = false): Promise<void> {
     if (page.cursor) pageCursors.value[pageNumber.value] = page.cursor;
   } catch (error) {
     console.error(error);
-    loadError.value = "تعذر تحميل فواتير الموردين. تحقق من الاتصال ثم أعد المحاولة.";
+    const message = error instanceof Error ? error.message : "";
+    loadError.value = message.includes("requires an index")
+      ? "عرض فواتير مورد محدد يحتاج فهرسًا مركبًا في Firestore — أنشئه من رابط رسالة الخطأ في وحدة التحكم أو نفّذ firebase deploy --only firestore:indexes ثم أعد المحاولة."
+      : "تعذر تحميل فواتير الموردين. تحقق من الاتصال ثم أعد المحاولة.";
   } finally { loading.value = false; }
 }
 async function nextPage(): Promise<void> { if (!hasMore.value || loading.value) return; pageNumber.value += 1; await reload(); }

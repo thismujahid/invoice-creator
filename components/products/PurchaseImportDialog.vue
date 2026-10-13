@@ -2,107 +2,296 @@
   <UiAppDialog v-model:open="open" title="استيراد كميات ومنتجات">
     <div class="space-y-4">
       <template v-if="!result">
-        <UAlert color="info" variant="soft" icon="i-lucide-info" title="ارفع ملف .xlsx بالأعمدة: رقم المنتج، اسم المنتج، الكمية المطلوبة، تكلفة شراء الوحدة، نوع الوحدة." />
         <UFormField label="ملف طلب الشراء" :error="fileError || undefined">
-          <div class="relative overflow-hidden rounded-xl border border-dashed border-emerald-300 bg-emerald-50/60 p-4 transition hover:border-emerald-500 hover:bg-emerald-50">
-            <input ref="fileInput" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" class="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0" :disabled="busy" @change="onFile" />
-            <div class="flex flex-col items-center gap-3 text-center sm:flex-row sm:text-start">
-              <span class="flex size-12 shrink-0 items-center justify-center rounded-xl bg-white text-emerald-700 shadow-sm ring-1 ring-emerald-100">
+          <div
+            class="relative overflow-hidden rounded-xl border border-dashed border-emerald-300 bg-emerald-50/60 p-4 transition hover:border-emerald-500 hover:bg-emerald-50"
+          >
+            <input
+              ref="fileInput"
+              type="file"
+              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              class="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
+              :disabled="busy"
+              @change="onFile"
+            />
+            <div
+              class="flex flex-col items-center gap-3 text-center sm:flex-row sm:text-start"
+            >
+              <span
+                class="flex size-12 shrink-0 items-center justify-center rounded-xl bg-white text-emerald-700 shadow-sm ring-1 ring-emerald-100"
+              >
                 <UIcon name="i-lucide-file-spreadsheet" class="size-6" />
               </span>
               <span class="min-w-0 flex-1">
-                <span class="block break-all font-semibold text-gray-900">{{ selectedFileName || 'لم يتم اختيار ملف بعد' }}</span>
-                <span class="mt-1 block text-xs text-gray-500">ملف .xlsx، حتى 10 ميجابايت</span>
-                <span v-if="selectedFileSize" class="mt-1 block text-xs text-gray-500">حجم الملف: {{ selectedFileSize }}</span>
+                <span class="block break-all font-semibold text-gray-900">{{
+                  selectedFileName || "لم يتم اختيار ملف بعد"
+                }}</span>
+                <span class="mt-1 block text-xs text-gray-500"
+                  >ملف .xlsx، حتى 10 ميجابايت</span
+                >
+                <span
+                  v-if="selectedFileSize"
+                  class="mt-1 block text-xs text-gray-500"
+                  >حجم الملف: {{ selectedFileSize }}</span
+                >
               </span>
-              <span class="pointer-events-none inline-flex min-h-10 items-center gap-2 rounded-lg bg-emerald-600 px-4 text-sm font-semibold text-white shadow-sm">
+              <span
+                class="pointer-events-none inline-flex min-h-10 items-center gap-2 rounded-lg bg-emerald-600 px-4 text-sm font-semibold text-white shadow-sm"
+              >
                 <UIcon name="i-lucide-upload" class="size-4" />
-                {{ selectedFileName ? 'استبدال الملف' : 'اختيار ملف' }}
+                {{ selectedFileName ? "استبدال الملف" : "اختيار ملف" }}
               </span>
             </div>
           </div>
         </UFormField>
-        <UAlert v-if="parseError" color="error" variant="soft" :title="parseError" />
+        <UAlert
+          v-if="parseError"
+          color="error"
+          variant="soft"
+          :title="parseError"
+        />
         <template v-if="rows.length">
           <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <UCard variant="outline"><div class="text-lg font-bold">{{ rows.length }}</div><div class="text-xs text-gray-500">صفوف الملف</div></UCard>
-            <UCard variant="outline"><div class="text-lg font-bold">{{ matchedCount }}</div><div class="text-xs text-gray-500">منتجات موجودة</div></UCard>
-            <UCard variant="outline"><div class="text-lg font-bold">{{ newCount }}</div><div class="text-xs text-gray-500">منتجات جديدة مختارة</div></UCard>
-            <UCard variant="outline"><div class="text-lg font-bold" :class="errorCount ? 'text-red-600' : 'text-emerald-700'">{{ errorCount }}</div><div class="text-xs text-gray-500">صفوف تحتاج مراجعة</div></UCard>
+            <UCard variant="outline"
+              ><div class="text-lg font-bold">{{ rows.length }}</div>
+              <div class="text-xs text-gray-500">صفوف الملف</div></UCard
+            >
+            <UCard variant="outline"
+              ><div class="text-lg font-bold">{{ matchedCount }}</div>
+              <div class="text-xs text-gray-500">منتجات موجودة</div></UCard
+            >
+            <UCard variant="outline"
+              ><div class="text-lg font-bold">{{ newCount }}</div>
+              <div class="text-xs text-gray-500">
+                منتجات جديدة مختارة
+              </div></UCard
+            >
+            <UCard variant="outline"
+              ><div
+                class="text-lg font-bold"
+                :class="errorCount ? 'text-red-600' : 'text-emerald-700'"
+              >
+                {{ errorCount }}
+              </div>
+              <div class="text-xs text-gray-500">صفوف تحتاج مراجعة</div></UCard
+            >
           </div>
           <div v-if="problemRows.length" class="space-y-2">
             <p class="text-xs font-bold text-amber-700">
-              صفوف تحتاج مراجعة ({{ problemRows.length }}) — لن تُحفظ أي بيانات قبل حل جميع الأخطاء والتأكيد
+              صفوف تحتاج مراجعة ({{ problemRows.length }}) — لن تُحفظ أي بيانات
+              قبل حل جميع الأخطاء والتأكيد
             </p>
-            <div class="max-h-[38vh] space-y-2 overflow-y-auto overscroll-contain pe-1">
-              <UCard v-for="row in problemRows" :key="row.rowNumber" variant="outline" class="space-y-2 p-3">
-              <div class="flex flex-wrap items-start justify-between gap-2">
-                <div class="min-w-0">
-                  <div class="text-sm font-bold">صف {{ row.rowNumber }} · {{ row.name || 'بدون اسم' }}</div>
-                  <div class="mt-0.5 font-mono text-xs text-gray-500" dir="ltr">{{ row.productId || 'بدون رقم منتج' }}</div>
+            <div
+              class="max-h-[38vh] space-y-2 overflow-y-auto overscroll-contain pe-1"
+            >
+              <UCard
+                v-for="row in problemRows"
+                :key="row.rowNumber"
+                variant="outline"
+                class="space-y-2 p-3"
+              >
+                <div class="flex flex-wrap items-start justify-between gap-2">
+                  <div class="min-w-0">
+                    <div class="text-sm font-bold">
+                      صف {{ row.rowNumber }} · {{ row.name || "بدون اسم" }}
+                    </div>
+                    <div
+                      class="mt-0.5 font-mono text-xs text-gray-500"
+                      dir="ltr"
+                    >
+                      {{ row.productId || "بدون رقم منتج" }}
+                    </div>
+                  </div>
+                  <UBadge
+                    :color="
+                      row.product
+                        ? 'success'
+                        : row.createNew
+                          ? 'info'
+                          : 'warning'
+                    "
+                    variant="soft"
+                  >
+                    {{
+                      row.product
+                        ? "منتج موجود"
+                        : row.createNew
+                          ? "إنشاء منتج جديد"
+                          : "يحتاج قرارًا"
+                    }}
+                  </UBadge>
                 </div>
-                <UBadge :color="row.product ? 'success' : row.createNew ? 'info' : 'warning'" variant="soft">
-                  {{ row.product ? 'منتج موجود' : row.createNew ? 'إنشاء منتج جديد' : 'يحتاج قرارًا' }}
-                </UBadge>
-              </div>
-              <div v-if="!row.product" class="rounded-lg bg-amber-50 p-3">
-                <UFormField label="اختيار منتج موجود يدويًا (اختياري)">
-                  <USelectMenu
-                    :model-value="undefined"
-                    :items="products"
+                <div v-if="!row.product" class="rounded-lg bg-amber-50 p-3">
+                  <UFormField label="اختيار منتج موجود يدويًا (اختياري)">
+                    <USelectMenu
+                      :model-value="undefined"
+                      :items="products"
+                      label-key="name"
+                      by="id"
+                      placeholder="ابحث بالاسم واختر المنتج المطابق"
+                      :search-input="{
+                        placeholder: 'بحث عن منتج…',
+                        icon: 'i-lucide-search',
+                      }"
+                      class="w-full"
+                      @update:model-value="
+                        (product) => pickProduct(row, product)
+                      "
+                    />
+                  </UFormField>
+                  <UCheckbox
+                    v-model="row.createNew"
+                    label="إنشاء منتج جديد بهذا الاسم"
+                  />
+                  <p class="mt-1 text-xs text-amber-800">
+                    لم يُعثر على المعرّف؛ لن تتم مطابقة الاسم تلقائيًا. سيُنشأ
+                    منتج جديد بمعرّف Firestore جديد.
+                  </p>
+                  <UFormField
+                    v-if="row.createNew"
+                    label="اسم المنتج الجديد"
+                    required
+                    class="mt-2"
+                  >
+                    <UInput v-model="row.name" class="w-full" />
+                  </UFormField>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                  <UFormField :label="`الكمية (${row.unitName || 'وحدة'})`"
+                    ><UInputNumber
+                      v-model="row.quantity"
+                      :min="1"
+                      :step="1"
+                      class="w-full"
+                  /></UFormField>
+                  <UFormField :label="`تكلفة ${row.unitName || 'الوحدة'}`"
+                    ><UInputNumber
+                      v-model="row.unitCost"
+                      :min="0"
+                      :step="0.0001"
+                      class="w-full"
+                  /></UFormField>
+                </div>
+                <UFormField
+                  v-if="row.product && unitChoices(row).length > 1"
+                  label="وحدة الكمية والتكلفة"
+                  ><USelectMenu
+                    :model-value="selectedUnit(row)"
+                    :items="unitChoices(row)"
                     label-key="name"
                     by="id"
-                    placeholder="ابحث بالاسم واختر المنتج المطابق"
-                    :search-input="{ placeholder: 'بحث عن منتج…', icon: 'i-lucide-search' }"
+                    :search-input="false"
                     class="w-full"
-                    @update:model-value="(product) => pickProduct(row, product)"
-                  />
-                </UFormField>
-                <UCheckbox v-model="row.createNew" label="إنشاء منتج جديد بهذا الاسم" />
-                <p class="mt-1 text-xs text-amber-800">لم يُعثر على المعرّف؛ لن تتم مطابقة الاسم تلقائيًا. سيُنشأ منتج جديد بمعرّف Firestore جديد.</p>
-                <UFormField v-if="row.createNew" label="اسم المنتج الجديد" required class="mt-2">
-                  <UInput v-model="row.name" class="w-full" />
-                </UFormField>
-              </div>
-                <div class="grid grid-cols-2 gap-2">
-                  <UFormField :label="`الكمية (${row.unitName || 'وحدة'})`"><UInputNumber v-model="row.quantity" :min="1" :step="1" class="w-full" /></UFormField>
-                  <UFormField :label="`تكلفة ${row.unitName || 'الوحدة'}`"><UInputNumber v-model="row.unitCost" :min="0" :step="0.0001" class="w-full" /></UFormField>
-                </div>
-                <UFormField v-if="row.product && unitChoices(row).length > 1" label="وحدة الكمية والتكلفة"><USelectMenu :model-value="selectedUnit(row)" :items="unitChoices(row)" label-key="name" by="id" :search-input="false" class="w-full" @update:model-value="(unit) => pickUnit(row, unit)" /></UFormField>
-              <template v-if="row.product && preview(row).applies">
-                <div class="rounded-lg bg-gray-50 p-2 text-xs">السعر المقترح: <b>{{ preview(row).price === null ? 'يتطلب سعرًا يدويًا' : formatePrice(preview(row).price) }}</b></div>
-                <UFormField label="قرار سعر البيع">
-                  <URadioGroup v-model="row.priceChoice" :items="priceChoices" />
-                </UFormField>
-                <UFormField v-if="row.priceChoice === 'proposed'" label="السعر المقترح (قابل للتعديل)"><UInputNumber v-model="row.approvedPrice" :min="0" :step="0.01" class="w-full" /></UFormField>
-                <UFormField v-else label="سعر بيع مخصص"><UInputNumber v-model="row.customPrice" :min="0" :step="0.01" class="w-full" /></UFormField>
-              </template>
-              <template v-else-if="row.createNew">
-                <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <UFormField label="سعر البيع للمنتج الجديد" required><UInputNumber v-model="row.newPrice" :min="0.01" :step="0.01" class="w-full" /></UFormField>
-                  <UFormField label="مؤشر نقص المخزون" hint="الافتراضي 5"><UInputNumber v-model="row.threshold" :min="0" :step="1" class="w-full" /></UFormField>
-                  <UFormField label="وحدة المخزون الأساسية" required><UInput v-model="row.baseUnitName" placeholder="مثال: قطعة أو جرام" class="w-full" /></UFormField>
-                </div>
-              </template>
-              <ul v-if="rowErrors(row).length" class="list-inside list-disc text-xs text-red-700"><li v-for="error in rowErrors(row)" :key="error">{{ error }}</li></ul>
-            </UCard>
+                    @update:model-value="(unit) => pickUnit(row, unit)"
+                /></UFormField>
+                <template v-if="row.createNew">
+                  <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <UFormField label="سعر البيع للمنتج الجديد" required
+                      ><UInputNumber
+                        v-model="row.newPrice"
+                        :min="0.01"
+                        :step="0.01"
+                        class="w-full"
+                    /></UFormField>
+                    <UFormField
+                      label="مؤشر النقص (للوحدة الأساسية)"
+                      hint="الافتراضي 5"
+                      ><UInputNumber
+                        v-model="row.threshold"
+                        :min="0"
+                        :step="1"
+                        class="w-full"
+                    /></UFormField>
+                    <UFormField label="وحدة المخزون الأساسية" required
+                      ><UInput
+                        v-model="row.baseUnitName"
+                        placeholder="مثال: قطعة أو جرام"
+                        class="w-full"
+                    /></UFormField>
+                  </div>
+                </template>
+                <ul
+                  v-if="rowErrors(row).length"
+                  class="list-inside list-disc text-xs text-red-700"
+                >
+                  <li v-for="error in rowErrors(row)" :key="error">
+                    {{ error }}
+                  </li>
+                </ul>
+              </UCard>
             </div>
           </div>
-          <UAlert v-else color="success" variant="soft" icon="i-lucide-circle-check" title="كل الصفوف سليمة وجاهزة — أكّد الفاتورة مباشرة." />
-          <div class="max-h-44 space-y-1 overflow-y-auto rounded-lg border border-gray-200 p-2 text-xs">
-            <div v-for="row in rows" :key="row.rowNumber" class="flex flex-wrap justify-between gap-2 border-b border-gray-100 py-1 last:border-0">
-              <span>{{ row.name }} · {{ row.quantity ?? '—' }} {{ row.unitName || row.baseUnitName }} × {{ formatePrice(row.unitCost) }} ج</span>
-              <span :class="rowErrors(row).length ? 'text-red-600' : 'text-emerald-700'">{{ rowErrors(row).length ? 'يحتاج مراجعة' : 'جاهز' }}</span>
+          <UAlert
+            v-else
+            color="success"
+            variant="soft"
+            icon="i-lucide-circle-check"
+            title="كل الصفوف سليمة وجاهزة — أكّد الفاتورة مباشرة."
+          />
+          <div
+            class="max-h-44 space-y-1 overflow-y-auto rounded-lg border border-gray-200 p-2 text-xs"
+          >
+            <div
+              v-for="row in rows"
+              :key="row.rowNumber"
+              class="flex flex-wrap justify-between gap-2 border-b border-gray-100 py-1 last:border-0"
+            >
+              <span
+                >{{ row.name }} · {{ row.quantity ?? "—" }}
+                {{ row.unitName || row.baseUnitName }} ×
+                {{ formatePrice(row.unitCost) }} ج<template
+                  v-if="
+                    row.avgOverride !== null && row.avgOverride !== undefined
+                  "
+                >
+                  · متوسط {{ formatePrice(row.avgOverride) }}</template
+                ><template
+                  v-if="
+                    row.priceOverride !== null &&
+                    row.priceOverride !== undefined
+                  "
+                >
+                  · بيع {{ formatePrice(row.priceOverride) }}</template
+                ></span
+              >
+              <span
+                :class="
+                  rowErrors(row).length ? 'text-red-600' : 'text-emerald-700'
+                "
+                >{{ rowErrors(row).length ? "يحتاج مراجعة" : "جاهز" }}</span
+              >
             </div>
           </div>
-          <div class="grid grid-cols-1 gap-2 rounded-lg border border-gray-200 p-3 sm:grid-cols-2">
+          <div
+            class="grid grid-cols-1 gap-2 rounded-lg border border-gray-200 p-3 sm:grid-cols-2"
+          >
             <div class="space-y-1 text-sm">
-              <div class="flex justify-between gap-2"><span>إجمالي الفاتورة</span><b>{{ formatePrice(total) }} ج</b></div>
-              <div class="flex justify-between gap-2"><span>رصيد الخزنة</span><b>{{ formatePrice(cashBalance) }} ج</b></div>
-              <div class="flex justify-between gap-2"><span>الباقي المستحق</span><b class="text-amber-700">{{ formatePrice(remaining) }} ج</b></div>
-              <div v-if="paidNow > total" class="flex justify-between gap-2 text-blue-700"><span>سلفة مستحقة لنا</span><b>{{ formatePrice(paidNow - total) }} ج</b></div>
+              <div class="flex justify-between gap-2">
+                <span>إجمالي الفاتورة</span><b>{{ formatePrice(total) }} ج</b>
+              </div>
+              <div class="flex justify-between gap-2">
+                <span>رصيد الخزنة</span><b>{{ formatePrice(cashBalance) }} ج</b>
+              </div>
+              <div class="flex justify-between gap-2">
+                <span>الباقي المستحق</span
+                ><b class="text-amber-700">{{ formatePrice(remaining) }} ج</b>
+              </div>
+              <div
+                v-if="paidNow > total"
+                class="flex justify-between gap-2 text-blue-700"
+              >
+                <span>سلفة مستحقة لنا</span
+                ><b>{{ formatePrice(paidNow - total) }} ج</b>
+              </div>
             </div>
-            <UFormField label="المدفوع الآن" :error="paidError || undefined"><UInputNumber v-model="paidNow" :min="0" :max="cashBalance" :step="0.01" class="w-full" /></UFormField>
+            <UFormField label="المدفوع الآن" :error="paidError || undefined"
+              ><UInputNumber
+                v-model="paidNow"
+                :min="0"
+                :max="cashBalance"
+                :step="0.01"
+                class="w-full"
+            /></UFormField>
           </div>
           <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <UFormField label="المورد">
@@ -112,7 +301,10 @@
                 label-key="name"
                 by="id"
                 placeholder="اختر المورد"
-                :search-input="{ placeholder: 'بحث عن مورد...', icon: 'i-lucide-search' }"
+                :search-input="{
+                  placeholder: 'بحث عن مورد...',
+                  icon: 'i-lucide-search',
+                }"
                 class="w-full"
                 @update:model-value="(s) => onPickSupplier(s)"
               />
@@ -122,18 +314,34 @@
                 @done="onSupplierCreated"
               />
             </UFormField>
-            <UFormField label="مرجع فاتورة المورد (اختياري)"><UInput v-model="supplierRef" dir="ltr" class="w-full" /></UFormField>
+            <UFormField label="مرجع فاتورة المورد (اختياري)"
+              ><UInput v-model="supplierRef" dir="ltr" class="w-full"
+            /></UFormField>
           </div>
-          <UFormField label="ملاحظة (اختياري)"><UInput v-model="note" class="w-full" /></UFormField>
-          <div v-if="busy" class="overflow-hidden rounded-xl border border-emerald-200 bg-gradient-to-b from-emerald-50 to-white p-4">
+          <UFormField label="ملاحظة (اختياري)"
+            ><UInput v-model="note" class="w-full"
+          /></UFormField>
+          <div
+            v-if="busy"
+            class="overflow-hidden rounded-xl border border-emerald-200 bg-gradient-to-b from-emerald-50 to-white p-4"
+          >
             <div class="flex items-center gap-3">
-              <span class="relative flex size-11 shrink-0 items-center justify-center">
-                <span class="absolute inset-0 animate-spin rounded-full border-2 border-emerald-200 border-t-emerald-600"></span>
-                <UIcon name="i-lucide-package-plus" class="size-5 text-emerald-700" />
+              <span
+                class="relative flex size-11 shrink-0 items-center justify-center"
+              >
+                <span
+                  class="absolute inset-0 animate-spin rounded-full border-2 border-emerald-200 border-t-emerald-600"
+                ></span>
+                <UIcon
+                  name="i-lucide-package-plus"
+                  class="size-5 text-emerald-700"
+                />
               </span>
               <div class="min-w-0">
                 <div class="font-bold text-gray-900">{{ stageTitle }}</div>
-                <div v-if="stageSubtitle" class="text-xs text-gray-500">{{ stageSubtitle }}</div>
+                <div v-if="stageSubtitle" class="text-xs text-gray-500">
+                  {{ stageSubtitle }}
+                </div>
               </div>
             </div>
             <UProgress :value="stagePct" class="mt-3" />
@@ -142,11 +350,26 @@
                 v-for="(step, i) in stageSteps"
                 :key="step"
                 class="flex items-center gap-2"
-                :class="i < stageIndex ? 'text-emerald-700' : i === stageIndex ? 'font-bold text-gray-900' : 'text-gray-400'"
+                :class="
+                  i < stageIndex
+                    ? 'text-emerald-700'
+                    : i === stageIndex
+                      ? 'font-bold text-gray-900'
+                      : 'text-gray-400'
+                "
               >
                 <UIcon
-                  :name="i < stageIndex ? 'i-lucide-circle-check' : i === stageIndex ? 'i-lucide-loader-circle' : 'i-lucide-circle'"
-                  :class="['size-4 shrink-0', i === stageIndex && 'animate-spin']"
+                  :name="
+                    i < stageIndex
+                      ? 'i-lucide-circle-check'
+                      : i === stageIndex
+                        ? 'i-lucide-loader-circle'
+                        : 'i-lucide-circle'
+                  "
+                  :class="[
+                    'size-4 shrink-0',
+                    i === stageIndex && 'animate-spin',
+                  ]"
                 />
                 {{ step }}
               </li>
@@ -155,13 +378,39 @@
         </template>
       </template>
       <template v-else>
-        <UAlert :color="result.remaining > 0 ? 'warning' : 'success'" variant="soft" :icon="result.remaining > 0 ? 'i-lucide-clock-3' : 'i-lucide-circle-check'" :title="result.duplicate ? 'هذه الفاتورة نُفذت مسبقًا ولم تُكرر.' : result.remaining > 0 ? 'تم الشراء وبقي مبلغ مستحق للمورد.' : 'تم الشراء مدفوعًا بالكامل.'" />
+        <UAlert
+          :color="result.remaining > 0 ? 'warning' : 'success'"
+          variant="soft"
+          :icon="
+            result.remaining > 0 ? 'i-lucide-clock-3' : 'i-lucide-circle-check'
+          "
+          :title="
+            result.duplicate
+              ? 'هذه الفاتورة نُفذت مسبقًا ولم تُكرر.'
+              : result.remaining > 0
+                ? 'تم الشراء وبقي مبلغ مستحق للمورد.'
+                : 'تم الشراء مدفوعًا بالكامل.'
+          "
+        />
         <div class="space-y-1 rounded-lg bg-gray-50 p-3 text-sm">
-          <div class="flex justify-between"><span>الإجمالي</span><b>{{ formatePrice(result.total) }} ج</b></div>
-          <div class="flex justify-between"><span>المدفوع للفاتورة</span><b>{{ formatePrice(result.paid) }} ج</b></div>
-          <div v-if="result.advance" class="flex justify-between"><span>الخارج من الخزنة</span><b>{{ formatePrice(result.paid + result.advance) }} ج</b></div>
-          <div class="flex justify-between"><span>الباقي</span><b>{{ formatePrice(result.remaining) }} ج</b></div>
-          <div v-if="result.advance" class="flex justify-between text-blue-700"><span>سلفة مستحقة لنا</span><b>{{ formatePrice(result.advance) }} ج</b></div>
+          <div class="flex justify-between">
+            <span>الإجمالي</span><b>{{ formatePrice(result.total) }} ج</b>
+          </div>
+          <div class="flex justify-between">
+            <span>المدفوع للفاتورة</span
+            ><b>{{ formatePrice(result.paid) }} ج</b>
+          </div>
+          <div v-if="result.advance" class="flex justify-between">
+            <span>الخارج من الخزنة</span
+            ><b>{{ formatePrice(result.paid + result.advance) }} ج</b>
+          </div>
+          <div class="flex justify-between">
+            <span>الباقي</span><b>{{ formatePrice(result.remaining) }} ج</b>
+          </div>
+          <div v-if="result.advance" class="flex justify-between text-blue-700">
+            <span>سلفة مستحقة لنا</span
+            ><b>{{ formatePrice(result.advance) }} ج</b>
+          </div>
         </div>
         <div class="break-all text-xs text-gray-500">فاتورة الشراء:</div>
         <div class="flex flex-wrap gap-1.5">
@@ -172,17 +421,43 @@
             variant="soft"
             size="sm"
             icon="i-lucide-arrow-up-right"
-            @click="navigateTo({ path: '/supplier-invoices', query: { invoice: id } })"
-          >عرض {{ id.slice(0, 6) }}</UButton>
+            @click="
+              navigateTo({ path: '/supplier-invoices', query: { invoice: id } })
+            "
+            >عرض {{ id.slice(0, 6) }}</UButton
+          >
         </div>
       </template>
-      <UAlert v-if="submitError" color="error" variant="soft" :title="submitError" />
+      <UAlert
+        v-if="submitError"
+        color="error"
+        variant="soft"
+        :title="submitError"
+      />
     </div>
     <template #footer>
       <div class="flex w-full flex-col gap-2 sm:flex-row">
-        <UButton v-if="!result" color="success" class="min-h-11 flex-1" icon="i-lucide-package-plus" :loading="busy" :disabled="!canSubmit" @click="submit">تأكيد الفاتورة</UButton>
-        <UButton v-else color="success" class="min-h-11 flex-1" @click="close">تم</UButton>
-        <UButton color="neutral" variant="soft" class="min-h-11 flex-1" :disabled="busy" @click="close">{{ result ? 'إغلاق' : 'إلغاء' }}</UButton>
+        <UButton
+          v-if="!result"
+          color="success"
+          class="min-h-11 flex-1"
+          icon="i-lucide-package-plus"
+          :loading="busy"
+          :disabled="!canSubmit"
+          @click="submit"
+          >تأكيد الفاتورة</UButton
+        >
+        <UButton v-else color="success" class="min-h-11 flex-1" @click="close"
+          >تم</UButton
+        >
+        <UButton
+          color="neutral"
+          variant="soft"
+          class="min-h-11 flex-1"
+          :disabled="busy"
+          @click="close"
+          >{{ result ? "إغلاق" : "إلغاء" }}</UButton
+        >
       </div>
     </template>
   </UiAppDialog>
@@ -205,9 +480,10 @@ interface ImportRow {
   createNew: boolean;
   newPrice: number | null;
   threshold: number | null;
-  priceChoice: "proposed" | "custom";
-  approvedPrice: number | null;
-  customPrice: number | null;
+  /** Optional per-row numbers from the new export columns (unit terms):
+   *  null = not provided → computed defaults apply. */
+  avgOverride: number | null;
+  priceOverride: number | null;
   baseUnitName: string;
   unitId?: string;
   unitName?: string;
@@ -215,12 +491,32 @@ interface ImportRow {
   requestedUnitName: string;
   unitIssue: string;
 }
-interface ImportResult { ids: string[]; total: number; paid: number; remaining: number; advance: number; duplicate: boolean }
+interface ImportResult {
+  ids: string[];
+  total: number;
+  paid: number;
+  remaining: number;
+  advance: number;
+  duplicate: boolean;
+}
 
 const props = defineProps<{ products: Product[]; cashBalance: number }>();
 const emit = defineEmits<{ done: [] }>();
 const open = defineModel<boolean>("open", { required: true });
-const { round2, round4, toNum, movingAverageCost, proposedSellingPrice, purchasableUnitsForProduct, purchaseLineBaseQuantity, purchaseLineBaseCost, purchasePreviewAverage, convertUnitPrice, MAX_PURCHASE_ITEMS: maxItems } = useFinance();
+const {
+  round2,
+  round4,
+  toNum,
+  proposedSellingPrice,
+  purchasableUnitsForProduct,
+  unitSellingPrice,
+  purchaseLineBaseQuantity,
+  purchaseLineBaseCost,
+  purchasePreviewAverage,
+  manualPriceBaseOf,
+  convertUnitPrice,
+  MAX_PURCHASE_ITEMS: maxItems,
+} = useFinance();
 const formatePrice = useHelpers().formatePrice;
 const purchasing = usePurchasing();
 const productsStore = useProductsStore();
@@ -272,37 +568,109 @@ const stageIndex = ref(0);
 const stagePct = ref(0);
 const stageTitle = ref("");
 const stageSubtitle = ref("");
-const productsById = computed(() => new Map(props.products.map((product) => [product.id, product])));
-const priceChoices = [
-  { label: "اعتماد السعر المقترح", value: "proposed" },
-  { label: "تحديد سعر مخصص", value: "custom" },
-];
-const total = computed(() => round2(rows.value.reduce((sum, row) => sum + round2(toNum(row.quantity) * round4(toNum(row.unitCost))), 0)));
-const remaining = computed(() => Math.max(0, round2(total.value - toNum(paidNow.value))));
-const paidError = computed(() => paidNow.value < 0 || paidNow.value - props.cashBalance > 1e-9 ? "المدفوع يجب ألا يتجاوز رصيد الخزنة." : paidNow.value > total.value && !supplier.value?.id ? "اختر المورد لتسجيل الزيادة كسلفة." : "");
-const problemRows = computed(() => rows.value.filter((row) => rowErrors(row).length > 0));
-const canSubmit = computed(() => !!fileHash.value && !!supplier.value?.id && rows.value.length > 0 && !busy.value && !errorCount.value && !paidError.value);
+const productsById = computed(
+  () => new Map(props.products.map((product) => [product.id, product])),
+);
+const total = computed(() =>
+  round2(
+    rows.value.reduce(
+      (sum, row) =>
+        sum + round2(toNum(row.quantity) * round4(toNum(row.unitCost))),
+      0,
+    ),
+  ),
+);
+const remaining = computed(() =>
+  Math.max(0, round2(total.value - toNum(paidNow.value))),
+);
+const paidError = computed(() =>
+  paidNow.value < 0 || paidNow.value - props.cashBalance > 1e-9
+    ? "المدفوع يجب ألا يتجاوز رصيد الخزنة."
+    : paidNow.value > total.value && !supplier.value?.id
+      ? "اختر المورد لتسجيل الزيادة كسلفة."
+      : "",
+);
+const problemRows = computed(() =>
+  rows.value.filter((row) => rowErrors(row).length > 0),
+);
+const canSubmit = computed(
+  () =>
+    !!fileHash.value &&
+    !!supplier.value?.id &&
+    rows.value.length > 0 &&
+    !busy.value &&
+    !errorCount.value &&
+    !paidError.value,
+);
 function rowDuplicateKey(row: ImportRow): string {
-  return row.product?.id ? `id:${row.product.id}|${row.unitId ?? ""}|${Number(row.unitFactor || 1)}` : `new:${row.name.trim().toLocaleLowerCase()}`;
+  return row.product?.id
+    ? `id:${row.product.id}|${row.unitId ?? ""}|${Number(row.unitFactor || 1)}`
+    : `new:${row.name.trim().toLocaleLowerCase()}`;
 }
-const matchedCount = computed(() => rows.value.filter((row) => !!row.product).length);
-const newCount = computed(() => rows.value.filter((row) => !row.product && row.createNew).length);
-const errorCount = computed(() => rows.value.filter((row) => rowErrors(row).length > 0).length);
+const matchedCount = computed(
+  () => rows.value.filter((row) => !!row.product).length,
+);
+const newCount = computed(
+  () => rows.value.filter((row) => !row.product && row.createNew).length,
+);
+const errorCount = computed(
+  () => rows.value.filter((row) => rowErrors(row).length > 0).length,
+);
 
 function numericCell(value: unknown): number | null {
-  if (value === null || value === undefined || typeof value === "boolean" || String(value).trim() === "") return null;
-  const parsed = typeof value === "number" ? value : Number(String(value).trim().replaceAll(",", ""));
+  if (
+    value === null ||
+    value === undefined ||
+    typeof value === "boolean" ||
+    String(value).trim() === ""
+  )
+    return null;
+  const parsed =
+    typeof value === "number"
+      ? value
+      : Number(String(value).trim().replaceAll(",", ""));
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function makeRow(raw: unknown[], rowNumber: number): ImportRow {
+/** Exported order rows write the name as `Product (Unit)`; split it back so
+ *  the unit hint survives even when the unit column is left empty, and so
+ *  new-product names never keep the parenthetical. */
+function splitDisplayName(rawName: string): {
+  base: string;
+  parenUnit: string;
+} {
+  const match = rawName.match(/^(.*?)\s*\(([^()]+)\)\s*$/);
+  if (!match) return { base: rawName.trim(), parenUnit: "" };
+  return {
+    base: (match[1] ?? "").trim() || rawName.trim(),
+    parenUnit: (match[2] ?? "").trim(),
+  };
+}
+
+interface ExtraColumns {
+  unit: number;
+  avg: number;
+  price: number;
+}
+
+function makeRow(
+  raw: unknown[],
+  rowNumber: number,
+  extra: ExtraColumns = { unit: 4, avg: -1, price: -1 },
+): ImportRow {
   const productId = String(raw[0] ?? "").trim();
-  const name = String(raw[1] ?? "").trim();
+  const { base: parsedName, parenUnit } = splitDisplayName(
+    String(raw[1] ?? "").trim(),
+  );
+  const name = parsedName;
   const existing = productId ? productsById.value.get(productId) : undefined;
-  const requestedUnitName = String(raw[4] ?? "").trim();
+  const requestedUnitName =
+    (extra.unit >= 0 ? String(raw[extra.unit] ?? "").trim() : "") || parenUnit;
   const choices = existing ? purchasableUnitsForProduct(existing) : [];
   const base = choices.find((unit) => unit.is_base) ?? choices[0];
-  const matches = requestedUnitName ? choices.filter((unit) => unit.name.trim() === requestedUnitName) : [];
+  const matches = requestedUnitName
+    ? choices.filter((unit) => unit.name.trim() === requestedUnitName)
+    : [];
   const selected = requestedUnitName ? matches[0] : base;
   return {
     rowNumber,
@@ -314,32 +682,54 @@ function makeRow(raw: unknown[], rowNumber: number): ImportRow {
     createNew: false,
     newPrice: null,
     threshold: 5,
-    priceChoice: "proposed",
-    approvedPrice: null,
-    customPrice: null,
+    avgOverride: extra.avg >= 0 ? numericCell(raw[extra.avg]) : null,
+    priceOverride: extra.price >= 0 ? numericCell(raw[extra.price]) : null,
     baseUnitName: !existing && requestedUnitName ? requestedUnitName : "وحدة",
     unitId: selected?.id ?? existing?.base_unit_id ?? "legacy-base",
-    unitName: selected?.name ?? (requestedUnitName || existing?.base_unit_name || "وحدة"),
+    unitName:
+      selected?.name ??
+      (requestedUnitName || existing?.base_unit_name || "وحدة"),
     unitFactor: selected?.factor ?? 1,
     requestedUnitName,
-    unitIssue: existing && requestedUnitName && matches.length !== 1 ? "نوع الوحدة غير موجود أو مكرر لهذا المنتج؛ اختر وحدة شراء صحيحة." : "",
+    unitIssue:
+      existing && requestedUnitName && matches.length !== 1
+        ? "نوع الوحدة غير موجود أو مكرر لهذا المنتج؛ اختر وحدة شراء صحيحة."
+        : "",
   };
 }
 
-function pickProduct(row: ImportRow, product: Product | null | undefined): void {
+function pickProduct(
+  row: ImportRow,
+  product: Product | null | undefined,
+): void {
   if (!product?.id) return;
   row.product = product;
   row.productId = product.id;
   row.name = product.name;
   row.createNew = false;
-  const base = purchasableUnitsForProduct(product).find((unit) => unit.is_base) ?? purchasableUnitsForProduct(product)[0] ?? { id: product.base_unit_id || "legacy-base", name: product.base_unit_name || "وحدة", factor: 1, selling_price: product.price, is_base: true };
-  const matches = row.requestedUnitName ? purchasableUnitsForProduct(product).filter((unit) => unit.name.trim() === row.requestedUnitName) : [];
+  const base = purchasableUnitsForProduct(product).find(
+    (unit) => unit.is_base,
+  ) ??
+    purchasableUnitsForProduct(product)[0] ?? {
+      id: product.base_unit_id || "legacy-base",
+      name: product.base_unit_name || "وحدة",
+      factor: 1,
+      selling_price: product.price,
+      is_base: true,
+    };
+  const matches = row.requestedUnitName
+    ? purchasableUnitsForProduct(product).filter(
+        (unit) => unit.name.trim() === row.requestedUnitName,
+      )
+    : [];
   const selected = matches.length === 1 ? matches[0]! : base;
   row.unitId = selected.id;
   row.unitName = selected.name;
   row.unitFactor = selected.factor;
-  row.unitIssue = row.requestedUnitName && matches.length !== 1 ? "نوع الوحدة غير موجود أو مكرر لهذا المنتج؛ اختر وحدة شراء صحيحة." : "";
-  row.approvedPrice = preview(row).price;
+  row.unitIssue =
+    row.requestedUnitName && matches.length !== 1
+      ? "نوع الوحدة غير موجود أو مكرر لهذا المنتج؛ اختر وحدة شراء صحيحة."
+      : "";
 }
 
 function unitChoices(row: ImportRow): ProductUnit[] {
@@ -347,8 +737,31 @@ function unitChoices(row: ImportRow): ProductUnit[] {
   if (!product) return [];
   return purchasableUnitsForProduct(product);
 }
-function selectedUnit(row: ImportRow): ProductUnit | undefined { return unitChoices(row).find((unit) => unit.id === row.unitId) ?? unitChoices(row)[0]; }
-function pickUnit(row: ImportRow, unit?: ProductUnit): void { if (!unit) return; row.unitCost = row.unitCost === null ? null : convertUnitPrice(row.unitCost, row.unitFactor, unit.factor); row.unitId = unit.id; row.unitName = unit.name; row.unitFactor = unit.factor; row.unitIssue = ""; row.approvedPrice = preview(row).price; }
+function selectedUnit(row: ImportRow): ProductUnit | undefined {
+  return (
+    unitChoices(row).find((unit) => unit.id === row.unitId) ??
+    unitChoices(row)[0]
+  );
+}
+function pickUnit(row: ImportRow, unit?: ProductUnit): void {
+  if (!unit) return;
+  row.unitCost =
+    row.unitCost === null
+      ? null
+      : convertUnitPrice(row.unitCost, row.unitFactor, unit.factor);
+  row.avgOverride =
+    row.avgOverride === null
+      ? null
+      : convertUnitPrice(row.avgOverride, row.unitFactor, unit.factor);
+  row.priceOverride =
+    row.priceOverride === null
+      ? null
+      : convertUnitPrice(row.priceOverride, row.unitFactor, unit.factor);
+  row.unitId = unit.id;
+  row.unitName = unit.name;
+  row.unitFactor = unit.factor;
+  row.unitIssue = "";
+}
 
 async function onFile(event: Event): Promise<void> {
   rows.value = [];
@@ -360,10 +773,14 @@ async function onFile(event: Event): Promise<void> {
   const file = (event.target as HTMLInputElement).files?.[0];
   if (!file) return;
   selectedFileName.value = file.name;
-  selectedFileSize.value = file.size < 1024 * 1024
-    ? `${Math.max(1, Math.round(file.size / 1024))} كيلوبايت`
-    : `${(file.size / (1024 * 1024)).toFixed(1)} ميجابايت`;
-  if (!file.name.toLowerCase().endsWith(".xlsx") || file.size > 10 * 1024 * 1024) {
+  selectedFileSize.value =
+    file.size < 1024 * 1024
+      ? `${Math.max(1, Math.round(file.size / 1024))} كيلوبايت`
+      : `${(file.size / (1024 * 1024)).toFixed(1)} ميجابايت`;
+  if (
+    !file.name.toLowerCase().endsWith(".xlsx") ||
+    file.size > 10 * 1024 * 1024
+  ) {
     fileError.value = "اختر ملف .xlsx لا يتجاوز حجمه 10 ميجابايت.";
     return;
   }
@@ -373,72 +790,277 @@ async function onFile(event: Event): Promise<void> {
     const workbook = XLSX.read(buffer, { type: "array", cellDates: false });
     const sheet = workbook.Sheets[workbook.SheetNames[0] ?? ""];
     if (!sheet) throw new Error("الملف لا يحتوي على ورقة عمل.");
-    const data = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: "", raw: true });
-    const headers = ["رقم المنتج", "اسم المنتج", "الكمية المطلوبة", "تكلفة شراء الوحدة", "نوع الوحدة"];
-    const headerLength = data[0]?.length ?? 0;
-    if (data.length < 2 || (headerLength !== 4 && headerLength !== 5) || headers.slice(0, headerLength).some((header, index) => String(data[0]?.[index] ?? "").trim() !== header)) {
-      throw new Error(`يجب أن يكون ترتيب الأعمدة: ${headers.join("، ")}، أو الأعمدة الأربعة القديمة.`);
+    const data = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+      header: 1,
+      defval: "",
+      raw: true,
+    });
+    const baseHeaders = [
+      "رقم المنتج",
+      "اسم المنتج",
+      "الكمية المطلوبة",
+      "تكلفة شراء الوحدة",
+    ];
+    if (
+      data.length < 2 ||
+      baseHeaders.some(
+        (header, index) => String(data[0]?.[index] ?? "").trim() !== header,
+      )
+    ) {
+      throw new Error(`يجب أن تبدأ الأعمدة بـ: ${baseHeaders.join("، ")}.`);
     }
-    const parsedRows = data.slice(1).filter((row) => row.some((cell) => String(cell ?? "").trim() !== "")).map((row, index) => makeRow(row, index + 2));
+    // Optional columns (legacy unit column + the two new computed columns)
+    // may follow in any order; the new export writes avg then price.
+    const extra: ExtraColumns = { unit: -1, avg: -1, price: -1 };
+    (data[0] ?? []).forEach((cell, index) => {
+      if (index < 4) return;
+      const title = String(cell ?? "").trim();
+      if (title === "نوع الوحدة" && extra.unit < 0) extra.unit = index;
+      else if (title === "متوسط سعر التكلفة الجديد" && extra.avg < 0)
+        extra.avg = index;
+      else if (title === "سعر البيع الجديد" && extra.price < 0)
+        extra.price = index;
+    });
+    if (
+      extra.unit < 0 &&
+      extra.avg < 0 &&
+      extra.price < 0 &&
+      (data[0] ?? []).length > 4
+    )
+      extra.unit = 4;
+    const parsedRows = data
+      .slice(1)
+      .filter(
+        (row) =>
+          row.some((cell) => String(cell ?? "").trim() !== "") &&
+          String(row[1] ?? "").trim() !== "الإجمالي",
+      )
+      .map((row, index) => makeRow(row, index + 2, extra));
     if (!parsedRows.length) throw new Error("لا توجد صفوف أصناف في الملف.");
-    if (parsedRows.length > maxItems) throw new Error(`الحد الأقصى للملف ${maxItems} أصناف حتى تُحفظ فاتورة المورد كاملة مرة واحدة.`);
+    if (parsedRows.length > maxItems)
+      throw new Error(
+        `الحد الأقصى للملف ${maxItems} أصناف حتى تُحفظ فاتورة المورد كاملة مرة واحدة.`,
+      );
     rows.value = parsedRows;
     // Unmatched rows default to new-product creation (the user unchecks +
     // picks manually when it was just a mismatch); their missing fields
     // surface in the compact review section.
     for (const row of parsedRows) {
       if (!row.product) row.createNew = true;
-      row.approvedPrice = preview(row).price;
     }
     const digest = await crypto.subtle.digest("SHA-256", buffer);
-    fileHash.value = [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
+    fileHash.value = [...new Uint8Array(digest)]
+      .map((value) => value.toString(16).padStart(2, "0"))
+      .join("");
     await cashbox.fetchCashbox();
     paidNow.value = Math.min(total.value, cashbox.balance);
   } catch (error) {
-    parseError.value = error instanceof Error ? error.message : "تعذر قراءة الملف.";
+    parseError.value =
+      error instanceof Error ? error.message : "تعذر قراءة الملف.";
     rows.value = [];
   }
 }
 
 function currentProduct(row: ImportRow): Product | undefined {
-  return row.product?.id ? productsById.value.get(row.product.id) ?? row.product : undefined;
+  return row.product?.id
+    ? (productsById.value.get(row.product.id) ?? row.product)
+    : undefined;
 }
-function preview(row: ImportRow) {
+/** Recorded unitterms references for one import row (what "unchanged" means). */
+function recordedOf(
+  product: Product,
+  row: ImportRow,
+): { factor: number; oldUnitAvg: number; oldUnitPrice: number | null } {
+  const factor = row.unitFactor || 1;
+  const unit = product.units?.find((u) => u.id === row.unitId);
+  return {
+    factor,
+    oldUnitAvg: round4(toNum(product.cost_price) * factor),
+    oldUnitPrice: unit ? unitSellingPrice(product, unit) : null,
+  };
+}
+/** Sibling rows of the same existing product whose file-provided average or
+ *  price genuinely differ from recorded AND disagree with this row's.
+ *  Untouched cached values (equal to recorded) are ignored, not conflicts.
+ *  Sibling averages agreeing within 2 cents are the same decision (Excel
+ *  ROUNDs each unit row to 2 decimals, so opposite rounding alone can drift
+ *  a cent). Multi-row export-fresh prices (each unit following the shared
+ *  average by its own recorded margin) are ignored, not conflicts — margins
+ *  legitimately differ across units. */
+function rowGroupConflict(row: ImportRow): string | null {
+  if (!row.product?.id) return null;
   const product = currentProduct(row);
-  if (!product) return { avg: null, rate: null, price: null, applies: false };
-  // Same canonical helpers as the committed purchase transaction.
-  const baseQty = purchaseLineBaseQuantity(row.quantity ?? 0, row.unitFactor || 1);
-  const baseCost = purchaseLineBaseCost(row.unitCost ?? 0, row.unitFactor || 1);
-  const avg = round4(purchasePreviewAverage(product.stock_quantity, product.cost_price, baseQty, baseCost));
-  const result = proposedSellingPrice(product.cost_price, product.price, avg);
-  return { avg, rate: result.rate, price: result.proposed, applies: avg - toNum(product.price) > 1e-9 };
-}
-function priceDifference(row: ImportRow): number | null {
-  const result = preview(row);
-  return result.price === null ? null : round2(result.price - toNum(currentProduct(row)?.price));
+  if (!product) return null;
+  const siblings = rows.value.filter(
+    (other) => other.product?.id === row.product!.id,
+  );
+  const mine = recordedOf(product, row);
+  const avgBase =
+    row.avgOverride == null ||
+    Math.abs(toNum(row.avgOverride) - mine.oldUnitAvg) <= 0.005
+      ? null
+      : round4(toNum(row.avgOverride) / mine.factor);
+  const priceBase = manualPriceBaseOf(product, row, siblings.length);
+  for (const other of siblings) {
+    if (other === row) continue;
+    const theirs = recordedOf(product, other);
+    const otherAvg =
+      other.avgOverride == null ||
+      Math.abs(toNum(other.avgOverride) - theirs.oldUnitAvg) <= 0.005
+        ? null
+        : round4(toNum(other.avgOverride) / theirs.factor);
+    if (
+      avgBase !== null &&
+      otherAvg !== null &&
+      Math.abs(avgBase - otherAvg) > 0.02
+    )
+      return "قيم متوسط التكلفة مختلفة لنفس المنتج في الملف.";
+    const otherPrice = manualPriceBaseOf(product, other, siblings.length);
+    if (
+      priceBase !== null &&
+      otherPrice !== null &&
+      Math.abs(priceBase - otherPrice) > 0.005
+    )
+      return "قيم سعر البيع مختلفة لنفس المنتج في الملف.";
+  }
+  return null;
 }
 function rowErrors(row: ImportRow): string[] {
   const errors: string[] = [];
   if (row.unitIssue) errors.push(row.unitIssue);
-  if (rows.value.some((other) => other !== row && rowDuplicateKey(other) === rowDuplicateKey(row))) errors.push("صف مكرر لنفس المنتج ونفس الوحدة.");
-  if (!(row.quantity !== null && Number.isFinite(row.quantity) && row.quantity > 0)) errors.push("أدخل كمية موجبة وصالحة.");
-  else if (!Number.isInteger(row.quantity)) errors.push("الكمية يجب أن تكون رقمًا صحيحًا.");
-  if (!(row.unitCost !== null && Number.isFinite(row.unitCost) && row.unitCost >= 0)) errors.push("أدخل تكلفة وحدة غير سالبة وصالحة.");
-  if (!row.product && !row.createNew) errors.push("اختر إنشاء منتج جديد بعد مراجعة الاسم.");
+  if (
+    rows.value.some(
+      (other) =>
+        other !== row && rowDuplicateKey(other) === rowDuplicateKey(row),
+    )
+  )
+    errors.push("صف مكرر لنفس المنتج ونفس الوحدة.");
+  if (
+    !(
+      row.quantity !== null &&
+      Number.isFinite(row.quantity) &&
+      row.quantity > 0
+    )
+  )
+    errors.push("أدخل كمية موجبة وصالحة.");
+  else if (!Number.isInteger(row.quantity))
+    errors.push("الكمية يجب أن تكون رقمًا صحيحًا.");
+  if (
+    !(
+      row.unitCost !== null &&
+      Number.isFinite(row.unitCost) &&
+      row.unitCost >= 0
+    )
+  )
+    errors.push("أدخل تكلفة وحدة غير سالبة وصالحة.");
+  if (
+    row.avgOverride !== null &&
+    row.avgOverride !== undefined &&
+    (!Number.isFinite(row.avgOverride) || row.avgOverride < 0)
+  )
+    errors.push("متوسط التكلفة الجديد غير صالح.");
+  if (
+    row.priceOverride !== null &&
+    row.priceOverride !== undefined &&
+    (!Number.isFinite(row.priceOverride) || row.priceOverride < 0)
+  )
+    errors.push("سعر البيع الجديد غير صالح.");
+  const conflict = rowGroupConflict(row);
+  if (conflict) errors.push(conflict);
+  if (!row.product && !row.createNew)
+    errors.push("اختر إنشاء منتج جديد بعد مراجعة الاسم.");
   if (!row.name.trim()) errors.push("اسم المنتج مطلوب.");
   if (!row.product && row.createNew) {
-    if (!(row.newPrice !== null && Number.isFinite(row.newPrice) && row.newPrice > 0)) errors.push("سعر البيع للمنتج الجديد مطلوب.");
-    if (row.threshold === null || !Number.isFinite(row.threshold) || row.threshold < 0) errors.push("مؤشر النقص يجب ألا يكون سالبًا.");
-    else if (!Number.isInteger(row.threshold)) errors.push("مؤشر النقص يجب أن يكون رقمًا صحيحًا.");
-    if (!row.baseUnitName.trim()) errors.push("اسم وحدة المخزون الأساسية مطلوب.");
-  }
-  const price = preview(row);
-  if (row.product && price.applies) {
-    if (row.priceChoice === "proposed" && price.price === null) errors.push("تعذر اشتقاق نسبة الربح؛ اختر سعرًا مخصصًا.");
-    if (row.priceChoice === "proposed" && !(row.approvedPrice !== null && Number.isFinite(row.approvedPrice) && row.approvedPrice >= 0)) errors.push("السعر المقترح غير صالح.");
-    if (row.priceChoice === "custom" && !(row.customPrice !== null && Number.isFinite(row.customPrice) && row.customPrice >= 0)) errors.push("أدخل سعر بيع مخصصًا.");
+    if (
+      !(
+        row.newPrice !== null &&
+        Number.isFinite(row.newPrice) &&
+        row.newPrice > 0
+      )
+    )
+      errors.push("سعر البيع للمنتج الجديد مطلوب.");
+    if (
+      row.threshold === null ||
+      !Number.isFinite(row.threshold) ||
+      row.threshold < 0
+    )
+      errors.push("مؤشر النقص يجب ألا يكون سالبًا.");
+    if (!row.baseUnitName.trim())
+      errors.push("اسم وحدة المخزون الأساسية مطلوب.");
   }
   return errors;
+}
+/** One pricing decision per existing product (shared by all its rows so the
+ *  transaction's uniformity rule holds): file numbers win when they genuinely
+ *  differ from recorded (stale cached values are recomputed instead),
+ *  otherwise the same weighted/midpoint + margin defaults as quick-buy. */
+function productPricingOf(
+  product: Product,
+  productRows: ImportRow[],
+): PriceDecision {
+  const stock = toNum(product.stock_quantity);
+  const oldBase = toNum(product.cost_price);
+  const basePrice = toNum(product.price);
+  let totalBase = 0;
+  let totalCostValue = 0;
+  let firstAvg: number | null = null;
+  let firstPrice: number | null = null;
+  for (const row of productRows) {
+    const factor = row.unitFactor || 1;
+    const baseQty = purchaseLineBaseQuantity(row.quantity ?? 0, factor);
+    const baseCost = purchaseLineBaseCost(row.unitCost ?? 0, factor);
+    totalBase = round2(totalBase + baseQty);
+    totalCostValue += baseQty * baseCost;
+    if (firstAvg === null && row.avgOverride != null) {
+      const oldUnitAvg = round4(oldBase * factor);
+      if (Math.abs(toNum(row.avgOverride) - oldUnitAvg) > 0.005)
+        firstAvg = round4(toNum(row.avgOverride) / factor);
+    }
+    if (firstPrice === null && row.priceOverride != null) {
+      // Export-fresh multi-row prices (each unit on the shared average by its
+      // own margin) carry no decision — the base row (or file order without
+      // one) decides, other units follow their margins in the transaction.
+      const manual = manualPriceBaseOf(product, row, productRows.length);
+      if (manual !== null) firstPrice = manual;
+    }
+  }
+  const combined = totalBase > 0 ? totalCostValue / totalBase : 0;
+  const differs = Math.abs(combined - oldBase) > 1e-9;
+  const avgBase =
+    firstAvg !== null
+      ? firstAvg
+      : stock > 0
+        ? round4(purchasePreviewAverage(stock, oldBase, totalBase, combined))
+        : oldBase > 0 && differs
+          ? round4((oldBase + combined) / 2)
+          : round4(combined);
+  const override = {
+    approvedAverage: avgBase,
+    averageBasis: { stock: round2(stock), cost: round4(oldBase) },
+  };
+  const proposal = proposedSellingPrice(oldBase, basePrice, avgBase);
+  if (firstPrice !== null)
+    return {
+      mode: "custom",
+      price: firstPrice,
+      approvedProposed: proposal.proposed,
+      ...override,
+    };
+  if (proposal.proposed !== null && avgBase - basePrice > 1e-9)
+    return {
+      mode: "custom",
+      price: proposal.proposed,
+      approvedProposed: proposal.proposed,
+      ...override,
+    };
+  if (avgBase - basePrice > 1e-9)
+    return {
+      mode: "custom",
+      price: avgBase,
+      approvedProposed: proposal.proposed,
+      ...override,
+    };
+  return { mode: "keep", ...override };
 }
 
 async function submit(): Promise<void> {
@@ -451,12 +1073,24 @@ async function submit(): Promise<void> {
   stageTitle.value = "";
   stageSubtitle.value = "";
   try {
+    // One shared pricing decision per existing product (uniformity rule).
+    const pricingByProduct = new Map<string, PriceDecision>();
+    for (const row of rows.value) {
+      const product = row.product?.id ? currentProduct(row) : undefined;
+      if (!product?.id) continue;
+      if (!pricingByProduct.has(product.id)) {
+        pricingByProduct.set(
+          product.id,
+          productPricingOf(
+            product,
+            rows.value.filter((other) => other.product?.id === product.id),
+          ),
+        );
+      }
+    }
     const items = rows.value.map((row) => {
-      const p = preview(row);
-      const pricing: PriceDecision = row.product && p.applies
-        ? row.priceChoice === "custom"
-          ? { mode: "custom", price: row.customPrice ?? 0, approvedProposed: p.price }
-          : { mode: "proposed", approvedProposed: p.price ?? 0, price: row.approvedPrice ?? p.price ?? 0 }
+      const pricing: PriceDecision = row.product?.id
+        ? (pricingByProduct.get(row.product.id) ?? { mode: "keep" })
         : { mode: "keep" };
       return {
         product_id: row.product?.id ?? null,
@@ -471,7 +1105,18 @@ async function submit(): Promise<void> {
         unit_factor: row.unitFactor,
         base_unit_name: row.product ? undefined : row.baseUnitName,
         base_unit_id: row.product ? undefined : "base",
-        units: row.product ? undefined : [{ id: "base", name: row.baseUnitName, factor: 1, selling_price: row.newPrice, is_base: true }],
+        units: row.product
+          ? undefined
+          : [
+              {
+                id: "base",
+                name: row.baseUnitName,
+                factor: 1,
+                selling_price: row.newPrice,
+                is_base: true,
+                low_stock_threshold: row.threshold ?? 5,
+              },
+            ],
       };
     });
     if (items.length > maxItems) {
@@ -520,14 +1165,16 @@ async function submit(): Promise<void> {
       ids: execution.id ? [execution.id] : [],
       total: execution.total ?? total.value,
       paid: execution.paid ?? round2(toNum(paidNow.value)),
-      remaining: execution.remaining ?? round2(total.value - toNum(paidNow.value)),
+      remaining:
+        execution.remaining ?? round2(total.value - toNum(paidNow.value)),
       advance: execution.advance ?? 0,
       duplicate: !!execution.duplicate,
     };
     result.value = purchaseResult;
     emit("done");
   } catch (error) {
-    submitError.value = error instanceof Error ? error.message : "تعذر تنفيذ الاستيراد.";
+    submitError.value =
+      error instanceof Error ? error.message : "تعذر تنفيذ الاستيراد.";
   } finally {
     busy.value = false;
   }
@@ -551,26 +1198,4 @@ watch(open, (value) => {
     void supplierStore.fetchSuppliers();
   }
 });
-
-watch(
-  () => rows.value.map((row) => ({ rowNumber: row.rowNumber, quantity: row.quantity, unitCost: row.unitCost, productId: row.product?.id })),
-  (current, previous) => {
-    const previousByRow = new Map(previous.map((row) => [row.rowNumber, row]));
-    for (const row of rows.value) {
-      const old = previousByRow.get(row.rowNumber);
-      if (!old || old.quantity === row.quantity && old.unitCost === row.unitCost && old.productId === row.product?.id) continue;
-      row.approvedPrice = preview(row).price;
-    }
-  },
-  { deep: true },
-);
-
-watch(
-  () => props.products.map((product) => `${product.id}:${product.stock_quantity}:${product.cost_price}:${product.price}`),
-  () => {
-    for (const row of rows.value) {
-      if (row.product && row.priceChoice === "proposed") row.approvedPrice = preview(row).price;
-    }
-  },
-);
 </script>

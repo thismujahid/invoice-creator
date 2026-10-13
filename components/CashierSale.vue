@@ -2,7 +2,7 @@
   <div class="invoice-creator-view" dir="rtl">
     <UCard variant="outline" class="w-full">
       <UAlert v-if="editId" color="warning" variant="soft" title="تعديل فاتورة سابقة" class="mb-3" />
-      <UAlert v-if="lowStockCount > 0" color="warning" variant="soft" icon="i-lucide-triangle-alert" :title="'تنبيه: ' + lowStockCount + ' منتجات قليلة الكمية بالمخزون'" class="mb-3" />
+      <UAlert v-if="shortageCount > 0" color="warning" variant="soft" icon="i-lucide-triangle-alert" :title="'تنبيه: ' + shortageCount + ' وحدة قليلة الكمية بالمخزون'" class="mb-3" />
       <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <UFormField label="اسم العميل" required class="min-w-0">
           <USelectMenu v-model="customer" :items="customers.list" label-key="name" by="id" v-model:search-term="customerSearch" :search-input="{ placeholder: 'بحث عن عميل...', icon: 'i-lucide-search' }" :loading="loading" placeholder="اسم العميل" size="lg" class="w-full" />
@@ -121,7 +121,7 @@ const receiptOpen = ref(false);
 const previewOpen = ref(false);
 const receiptRef = ref<{ startPrint: () => Promise<unknown> } | null>(null);
 const requestId = ref(crypto.randomUUID());
-const lowStockCount = computed(() => products.lowStockCount + products.outOfStockProducts.length);
+const shortageCount = computed(() => products.shortageUnitCount);
 
 function addLine(): void { lines.value.push({ key: crypto.randomUUID(), productId: "", unitId: "", quantity: 1, option: "", expanded: true }); }
 function removeLine(index: number): void { lines.value.splice(index, 1); if (!lines.value.length) addLine(); }

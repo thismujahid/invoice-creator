@@ -18,11 +18,11 @@
           </UButton>
         </div>
         <UAlert
-          v-if="lowStockCount > 0"
+          v-if="shortageCount > 0"
           color="warning"
           variant="soft"
           icon="i-lucide-triangle-alert"
-          :title="`تنبيه: ${lowStockCount} منتجات قليلة الكمية بالمخزون`"
+          :title="`تنبيه: ${shortageCount} وحدة قليلة الكمية بالمخزون`"
           :actions="[{ label: 'عرضها في المنتجات', color: 'warning', variant: 'soft', onClick: () => navigateTo('/products') }]"
           class="mb-3"
         />
@@ -572,7 +572,7 @@ definePageMeta({ title: "إنشاء فاتورة" });
 const { formatePrice, calcTotal, formatInvoiceLineName } = useHelpers();
 const { unitsForProduct, unitSellingPrice, lineBaseQuantity, normalizePhone, round2, stockQuantityLabel } = useFinance();
 const products = useProductsStore();
-const lowStockCount = computed(() => products.lowStockCount + products.outOfStockProducts.length);
+const shortageCount = computed(() => products.shortageUnitCount);
 const invoices = useInvoicesStore();
 const customers = useCustomersStore();
 const authStore = useAuth();

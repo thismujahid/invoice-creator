@@ -380,10 +380,87 @@ export function purchaseUnitProposals(
   });
 }
 
+/** One exported purchase-order row of the same product (self included). */
+export interface AvgFormulaSibling {
+  /** Excel data-row number of the sibling row. */
+  row: number;
+  /** Unit factor of the sibling row (base units per sibling unit). */
+  factor: number;
+  /** Untouched cost reference of the sibling row (its own denomination). */
+  costRef: number;
+}
+
+/** Excel formula for the editable "new average cost" cell of a purchase-order
+ *  row. Single-row products keep the legacy per-row blend (byte-identical).
+ *  Products exported as SEVERAL unit rows share one aggregate blend across
+ *  all sibling rows — every sibling implies the SAME base average, so the
+ *  import approves one unambiguous decision and per-row blends can no longer
+ *  false-positive as "different averages for the same product". Pure string
+ *  builder — testable without Excel. */
+export function shortageAvgFormula(args: {
+  ownRow: number;
+  oldUnitAvg: number;
+  costRef: number;
+  stockUnit: number;
+  factor: number;
+  /** Every exported row of the same product, self included. */
+  siblings: AvgFormulaSibling[];
+  /** Recorded stock/average in BASE terms (2-decimal baked constants). */
+  stockBase: number;
+  oldBase: number;
+}): string {
+  const { ownRow, oldUnitAvg, costRef, stockUnit, factor, siblings, stockBase, oldBase } = args;
+  const oldRef = oldUnitAvg > 0 ? oldUnitAvg : costRef;
+  const mid = oldRef > 0 ? `(${oldRef}+D${ownRow})/2` : `D${ownRow}`;
+  const unch = oldRef > 0 ? `${oldRef}` : `D${ownRow}`;
+  if (siblings.length < 2) {
+    const weighted = `(${stockUnit}*${oldRef}+C${ownRow}*D${ownRow})/(${stockUnit}+C${ownRow})`;
+    return `IF(ABS(D${ownRow}-${costRef})<0.005,${unch},ROUND(IF(OR(C${ownRow}="",C${ownRow}=0),${mid},IF(${stockUnit}<=0,${mid},${weighted})),2))`;
+  }
+  const qtyExpr = siblings.map((s) => `C${s.row}*${s.factor}`).join("+");
+  const valExpr = siblings.map((s) => `C${s.row}*D${s.row}`).join("+");
+  const zeroExpr = `AND(${siblings.map((s) => `OR(C${s.row}="",C${s.row}=0)`).join(",")})`;
+  const unchExpr = `AND(${siblings.map((s) => `ABS(D${s.row}-${s.costRef})<0.005`).join(",")})`;
+  // No recorded average: fall back to the siblings' own cost references
+  // (their mean in base terms) instead of diluting toward zero.
+  const aggOld = oldBase > 0
+    ? oldBase
+    : round4(siblings.reduce((sum, s) => sum + s.costRef / (s.factor > 0 ? s.factor : 1), 0) / siblings.length);
+  const aggExpr = `((${stockBase}*${aggOld})+(${valExpr}))/((${stockBase})+(${qtyExpr}))`;
+  return `IF(${unchExpr},${unch},ROUND(IF(${zeroExpr},${mid},${factor}*(${aggExpr})),2))`;
+}
+
+/** Base-converted manual selling price of one import row, or null when the
+ *  row carries no genuine manual price: untouched (equals recorded), or —
+ *  for multi-row products only — following its own average cell by its
+ *  recorded margin (export-fresh: each unit preserves its own margin, so
+ *  margins legitimately differ across units and must not be compared in base
+ *  terms). Single-row behavior is exactly the legacy rule. */
+export function manualPriceBaseOf(
+  product: Pick<Product, "cost_price" | "units">,
+  row: { priceOverride: number | null | undefined; avgOverride: number | null | undefined; unitId?: string; unitFactor?: number | null },
+  siblingCount: number,
+): number | null {
+  if (row.priceOverride === null || row.priceOverride === undefined) return null;
+  const full = product as Product;
+  const unit = (full.units ?? []).find((u) => u.id === row.unitId);
+  const oldUnitPrice = unit ? unitSellingPrice(full, unit) : null;
+  if (oldUnitPrice !== null && Math.abs(toNum(row.priceOverride) - oldUnitPrice) <= 0.005) return null;
+  if (siblingCount > 1) {
+    const factor = Number(row.unitFactor) > 0 ? Number(row.unitFactor) : 1;
+    const oldUnitAvg = round4(toNum(full.cost_price) * factor);
+    if (oldUnitPrice !== null && oldUnitAvg > 0) {
+      const eUsed = row.avgOverride !== null && row.avgOverride !== undefined ? toNum(row.avgOverride) : oldUnitAvg;
+      const { proposed } = proposedSellingPrice(oldUnitAvg, oldUnitPrice, eUsed);
+      if (proposed !== null && Math.abs(toNum(row.priceOverride) - proposed) <= 0.02) return null;
+    }
+  }
+  return round4(toNum(row.priceOverride) / (Number(row.unitFactor) > 0 ? Number(row.unitFactor) : 1));
+}
+
 /** Estimated collected (cash-in-hand) share of gross profit.
  *  Proportional to the paid share of net total — an approximation, since
- *  payments are not tracked per product line. */
-export function collectedProfitOf(
+ *  payments are not tracked per product line. */export function collectedProfitOf(
   lines: Pick<InvoiceProductLine, "product_price" | "product_cost_price" | "product_quantity">[] | null | undefined,
   paidAmount: unknown,
   netTotal: unknown,
@@ -486,11 +563,25 @@ export function proposedSellingPrice(
   return { rate, proposed: round2(na * (1 + rate)) };
 }
 
-/** Explicit selling-price decision for a purchase (S2/S5). */
+/** Explicit selling-price decision for a purchase (S2/S5).
+ *  `approvedAverage` (base-unit terms, with the `averageBasis` snapshot it was
+ *  derived from) lets a dialog hand the user an editable average cost: the
+ *  transaction re-checks the snapshot against fresh reads and saves the
+ *  approved value instead of recomputing the moving average. Absent = the
+ *  transaction computes the canonical weighted average itself. */
+export interface AverageOverride {
+  approvedAverage?: number | null;
+  averageBasis?: { stock: number; cost: number } | null;
+  /** When true, `price`/`approvedProposed` are denominated in the purchased
+   *  line's unit and only THAT unit's selling price may change — every other
+   *  unit keeps its price (quick-buy dialog). Absent = legacy behavior where
+   *  the base price moves and all sellable units follow their own margins. */
+  singleUnit?: boolean;
+}
 export type PriceDecision =
-  | { mode: "keep" }
-  | { mode: "proposed"; approvedProposed: number; price?: number }
-  | { mode: "custom"; price: number; approvedProposed?: number | null };
+  | ({ mode: "keep" } & AverageOverride)
+  | ({ mode: "proposed"; approvedProposed: number; price?: number } & AverageOverride)
+  | ({ mode: "custom"; price: number; approvedProposed?: number | null } & AverageOverride);
 
 /** Firestore rule reads are limited per atomic request; keep headroom for
  *  both product→movement and movement→product links for every item. */
@@ -838,9 +929,147 @@ export function lowStockThresholdOf(p: Pick<Product, "low_stock_threshold">): nu
   return Number.isFinite(n) && n >= 0 ? n : 5;
 }
 
-/** Unified shortage rule (S3): stock < threshold. Never uses `count`. */
-export function isLowStock(p: Pick<Product, "stock_quantity" | "low_stock_threshold" | "is_active">): boolean {
+/** Per-unit low-stock threshold in the unit's OWN denomination.
+ *  null = no threshold configured for this unit (never triggers). */
+export function unitLowThresholdOf(unit: Pick<ProductUnit, "low_stock_threshold">): number | null {
+  const v = (unit as { low_stock_threshold?: unknown }).low_stock_threshold;
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/** True when at least one configured unit defines its own threshold.
+ *  Unit-level thresholds then replace the legacy product-level threshold. */
+export function productHasUnitThresholds(product: Pick<Product, "units">): boolean {
+  return unitsForProduct(product as Product).some((unit) => unitLowThresholdOf(unit) !== null);
+}
+
+/** True when the on-hand stock (expressed in this unit's denomination)
+ *  is below the unit's own threshold. Units without a threshold never fire. */
+export function isUnitLowStock(product: Pick<Product, "stock_quantity" | "units" | "base_unit_id" | "base_unit_name" | "price" | "cost_price">, unit: ProductUnit): boolean {
+  const threshold = unitLowThresholdOf(unit);
+  if (threshold === null) return false;
+  return unitStockDisplay(product as Product, unit) - threshold < -1e-9;
+}
+
+/** Every unit currently below its own threshold (detail rows for the
+ *  shortage dialog and the per-unit purchase-order export). */
+export function lowStockUnitsOf(product: Product): ProductUnit[] {
+  return unitsForProduct(product).filter((unit) => isUnitLowStock(product, unit));
+}
+
+/** Human display of one unit's threshold in its own denomination. */
+export function unitThresholdDisplayOf(unit: Pick<ProductUnit, "name" | "low_stock_threshold">): string {
+  const threshold = unitLowThresholdOf(unit);
+  if (threshold === null) return "—";
+  return `${String(round4(threshold))} ${(unit as ProductUnit).name || "وحدة"}`;
+}
+
+/** Cap for the per-unit purchase-price history log. */
+export const MAX_PURCHASE_PRICE_HISTORY = 20;
+
+export interface PurchasePriceRecord { price: number; at: number }
+
+/** Parse a unit's purchase-price history log (`"price-ts,price-ts,..."`,
+ *  latest first) into records. Anything malformed is skipped. */
+export function parsePurchasePriceHistory(history: unknown): PurchasePriceRecord[] {
+  if (typeof history !== "string" || !history.trim()) return [];
+  const out: PurchasePriceRecord[] = [];
+  for (const chunk of history.split(",")) {
+    const [priceRaw, atRaw] = chunk.split("-");
+    const price = Number((priceRaw ?? "").trim());
+    const at = Number((atRaw ?? "").trim());
+    if (!Number.isFinite(price) || price < 0 || !Number.isFinite(at) || at <= 0) continue;
+    out.push({ price: round4(price), at: Math.floor(at) });
+  }
+  return out;
+}
+
+/** Prepend a purchase price to the history log (latest first), keeping the
+ *  log bounded. The numeric `purchase_price` mirror stays untouched here. */
+export function prependPurchasePriceHistory(existing: unknown, price: number, at: number, cap: number = MAX_PURCHASE_PRICE_HISTORY): string {
+  const records = parsePurchasePriceHistory(existing);
+  records.unshift({ price: round4(toNum(price)), at: Math.floor(toNum(at)) });
+  return records
+    .filter((r) => Number.isFinite(r.price) && r.price >= 0 && Number.isFinite(r.at) && r.at > 0)
+    .slice(0, Math.max(1, Math.floor(cap)))
+    .map((r) => `${r.price}-${r.at}`)
+    .join(",");
+}
+
+/** True when the product has any ENABLED shortage threshold (strictly above
+ *  zero). A zero threshold means "no alert" — the product never joins the
+ *  shortage list, even at zero/negative stock. Units without a threshold
+ *  never count; products with no unit thresholds at all fall back to the
+ *  legacy product-level threshold (default 5), preserving legacy behavior. */
+export function hasShortageAlert(product: Pick<Product, "low_stock_threshold" | "units">): boolean {
+  if (productHasUnitThresholds(product as Product)) {
+    return unitsForProduct(product as Product).some((unit) => {
+      const threshold = unitLowThresholdOf(unit);
+      return threshold !== null && threshold > 0;
+    });
+  }
+  return lowStockThresholdOf(product) > 0;
+}
+
+/** One (product, unit) shortage pair — the row unit of the shortage dialog,
+ *  its Excel export, and the shortage button count. */
+export interface ShortageUnit {
+  product: Product;
+  unit: ProductUnit;
+}
+
+/** Purchasable units driving the shortage dialog and its Excel export:
+ *  unit-mode keeps only enabled thresholds (> 0, zero/null never appear);
+ *  legacy products (no unit thresholds at all) keep every purchasable unit. */
+export function shortageDisplayUnitsOf(product: Product): ProductUnit[] {
+  const purchasable = purchasableUnitsForProduct(product);
+  const fallback = purchasable.length
+    ? purchasable
+    : unitsForProduct(product).slice(0, 1);
+  if (!fallback.length) return [];
+  if (productHasUnitThresholds(product)) {
+    const enabled = fallback.filter((u) => {
+      const threshold = unitLowThresholdOf(u);
+      return threshold !== null && threshold > 0;
+    });
+    if (enabled.length) return enabled;
+    return unitsForProduct(product).filter((u) => {
+      const threshold = unitLowThresholdOf(u);
+      return threshold !== null && threshold > 0;
+    });
+  }
+  return fallback;
+}
+
+/** Every shortage (product, unit) row — THE single source for the dialog
+ *  table, its Excel export, and the shortage count, so all three always
+ *  agree (counts are per unit, not per product). */
+export function shortageUnitRowsOf(products: Product[]): ShortageUnit[] {
+  return products
+    .filter(
+      (p) =>
+        (p as { is_active?: unknown }).is_active !== false &&
+        hasShortageAlert(p) &&
+        (isNegativeStock(p) || isOutOfStock(p) || isLowStock(p)),
+    )
+    .sort(
+      (a, b) =>
+        toNum(a.stock_quantity) - toNum(b.stock_quantity) ||
+        a.name.localeCompare(b.name),
+    )
+    .flatMap((p) => shortageDisplayUnitsOf(p).map((unit) => ({ product: p, unit })));
+}
+
+/** Unified shortage rule (S3): stock < threshold. Never uses `count`.
+ *  Prefers per-unit thresholds when any unit defines one; otherwise falls
+ *  back to the legacy product-level threshold. */
+export function isLowStock(p: Pick<Product, "stock_quantity" | "low_stock_threshold" | "is_active" | "units">): boolean {
   if ((p as { is_active?: unknown }).is_active === false) return false;
+  const product = p as Product;
+  if (productHasUnitThresholds(product)) {
+    return unitsForProduct(product).some((unit) => isUnitLowStock(product, unit));
+  }
   return toNum(p.stock_quantity) - lowStockThresholdOf(p) < -1e-9;
 }
 
@@ -903,6 +1132,19 @@ export const useFinance = () => ({
   normalizeName,
   lowStockThresholdOf,
   thresholdDisplayOf,
+  unitLowThresholdOf,
+  productHasUnitThresholds,
+  hasShortageAlert,
+  shortageDisplayUnitsOf,
+  shortageUnitRowsOf,
+  shortageAvgFormula,
+  manualPriceBaseOf,
+  isUnitLowStock,
+  lowStockUnitsOf,
+  unitThresholdDisplayOf,
+  MAX_PURCHASE_PRICE_HISTORY,
+  parsePurchasePriceHistory,
+  prependPurchasePriceHistory,
   isLowStock,
   isOutOfStock,
   isNegativeStock,
