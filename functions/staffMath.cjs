@@ -20,6 +20,7 @@ function safeProduct(id, data) {
     is_base: unit.is_base === true,
     can_sell: unit.can_sell !== false,
     stock_quantity: unit.stock_quantity ?? null,
+    average_cost: unit.average_cost ?? null,
     allows_fractional: unit.allows_fractional === true,
     low_stock_threshold: unit.low_stock_threshold ?? null,
   }));

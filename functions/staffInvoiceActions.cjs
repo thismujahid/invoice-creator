@@ -148,7 +148,7 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
     const relatedPayments = paymentHistory?.docs.filter((doc) => (doc.data().allocations || []).some((item) => item.type === "invoice" && item.reference_id === id)) || [];
     if (returns.size + cashHistory.size + relatedPayments.length > 350) unavailable("سجل الفاتورة كبير جدًا للتعديل المباشر.");
     return db.runTransaction(async (tx) => {
-      const role = await authorize(request, tx);
+      await authorize(request, tx);
       const oldSnaps = await Promise.all([tx.get(opRef), tx.get(invoiceRef),
         ...returns.docs.map((doc) => tx.get(doc.ref)), ...cashHistory.docs.map((doc) => tx.get(doc.ref)),
         ...relatedPayments.map((doc) => tx.get(doc.ref))]);
@@ -206,8 +206,8 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
         const listed = unit.selling_price;
         if (listed == null && (!oldLine || oldLine.unit_id !== unitId)) invalid("Selling price is unavailable.");
         const requestedPrice = entry?.product_price;
-        if (role === "admin" && (typeof requestedPrice !== "number" || !Number.isFinite(requestedPrice) || requestedPrice < 0)) invalid("Invalid selling price.");
-        const price = role === "admin" ? requestedPrice : oldLine && oldLine.unit_id === unitId ? number(oldLine.product_price) : number(listed);
+        if (typeof requestedPrice !== "number" || !Number.isFinite(requestedPrice) || requestedPrice < 0) invalid("Invalid selling price.");
+        const price = requestedPrice;
         const sameUnit = oldLine && oldLine.unit_id === unit.id;
         const oldBase = sameUnit ? baseQuantity(oldLine) : 0;
         const oldGroups = sameUnit ? costGroups(oldLine) : [];
@@ -245,7 +245,7 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
         discount, discount_percentage: request.data?.discount_percentage === true,
         discount_for: text(request.data?.discount_for, 100) || null, paid_amount: money(paid) };
       for (const key of extras) {
-        const value = role === "admin" ? request.data?.[key] ?? 0 : original[key] ?? 0;
+        const value = request.data?.[key] ?? 0;
         if (!Number.isFinite(Number(value)) || Number(value) < 0) invalid("Invalid invoice amount.");
         updated[key] = number(value);
       }
@@ -333,7 +333,7 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
           reference_label: `فاتورة بيع لـ ${customer.data().name}`, note: "فرق تعديل فاتورة",
           created_by: request.auth.uid, created_at: now });
       }
-      const result = { id };
+      const result = { id, receipt: { ...updated, id, edit_revision: invoiceRevision(updated) } };
       tx.create(opRef, { result, created_at: now });
       return result;
     });

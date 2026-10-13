@@ -52,7 +52,8 @@
       </table>
       <div class="sticky bottom-0 z-10 bg-white pt-1">
         <div class="inv-footer">
-          <div v-if="invoiceData.debt"><strong>القديم/</strong> <span>{{ formatePrice(invoiceData.debt) }}</span></div>
+          <div v-if="oldDebt > 0"><strong>القديم/</strong> <span>{{ formatePrice(oldDebt) }}</span></div>
+          <div v-if="walletBalance > 0 && !Number(invoiceData.credit_used || 0)"><strong>رصيد المحفظة/</strong> <span>{{ formatePrice(walletBalance) }}</span></div>
           <div v-if="invoiceData.amount_of_mahros"><strong>محروس/</strong> <span>{{ formatePrice(invoiceData.amount_of_mahros) }}</span></div>
           <div v-if="invoiceData.amount_of_animal_feeds"><strong>العلف/</strong> <span>{{ formatePrice(invoiceData.amount_of_animal_feeds) }}</span></div>
           <div v-if="invoiceData.delivery_price"><strong>التوصيل/</strong> <span>{{ formatePrice(invoiceData.delivery_price) }}</span></div>
@@ -138,6 +139,7 @@ import type { InvoiceReturn } from "~/types/finance";
 
 const props = defineProps<{
   invoiceData: Invoice;
+  openingBalance?: { credit: number; debt: number } | null;
   viewMode?: boolean;
   isForAdmin?: boolean;
   returns?: InvoiceReturn[];
@@ -147,6 +149,8 @@ const { notify } = useAppToast();
 const printing = ref(false);
 const { saveDataTo, updateItem } = useFirebase();
 const emit = defineEmits(["reset", "saved", "close"]);
+const oldDebt = computed(() => Number(props.openingBalance?.debt ?? props.invoiceData.debt ?? 0));
+const walletBalance = computed(() => Number(props.openingBalance?.credit ?? 0));
 
 const mappedProducts = computed(() => {
   // Empty draft lines (no product picked yet) never render or print.
@@ -213,7 +217,7 @@ async function startPrint(saveOnly?: boolean) {
   }
   const _time = resolveTime(props.invoiceData.date, props.invoiceData.time);
   void _time;
-  if (!costConfirmed.value) {
+  if (!props.viewMode && !costConfirmed.value) {
     // Same-unit comparison: selected-unit price vs derived selected-unit
     // average (base average × factor). Never compare against base cost directly.
     const belowCost = lines.some((element) => {

@@ -227,33 +227,13 @@ exports.getCashierReturnJournal = onCall(async (request) => {
 });
 
 exports.getCashierInvoice = onCall(async (request) => {
-  const role = await roleOf(request);
+  await roleOf(request);
   const id = cleanText(request.data?.id, 128);
   if (!id) fail("Select an invoice.");
   const doc = await db.doc(`invoices/${id}`).get();
   if (!doc.exists) throw new HttpsError("not-found", "Invoice not found.");
   const invoice = doc.data();
-  if (role === "admin") return { ...invoice, id: doc.id, edit_revision: invoiceRevision(invoice), products: (invoice.products || []).map((line, index) => ({ ...line, line_id: line.line_id || `legacy-${index}` })) };
-  return {
-    id: doc.id, edit_revision: invoiceRevision(invoice), customer_id: invoice.customer_id ?? null, customer_name: invoice.customer_name ?? "", customer_phone: invoice.customer_phone ?? null,
-    date: invoice.date ?? null, time: invoice.time ?? invoice.date ?? null,
-    debt: invoice.debt ?? null, delivery_price: invoice.delivery_price ?? null,
-    amount_of_animal_feeds: invoice.amount_of_animal_feeds ?? null,
-    amount_of_mahros: invoice.amount_of_mahros ?? null,
-    discount: invoice.discount ?? null, discount_percentage: invoice.discount_percentage === true,
-    discount_for: invoice.discount_for ?? null, paid_amount: invoice.paid_amount ?? null, credit_used: invoice.credit_used ?? 0, credit_restored: invoice.credit_restored ?? 0,
-    remaining: invoice.remaining ?? null,
-    inventory_applied: invoice.inventory_applied === true,
-    cashbox_applied: invoice.cashbox_applied === true,
-    products: (Array.isArray(invoice.products) ? invoice.products : []).map((line, index) => ({
-      line_id: line.line_id || `legacy-${index}`,
-      product_id: line.product_id ?? null, product_name: line.product_name ?? "",
-      product_quantity: line.product_quantity ?? 0, product_price: line.product_price ?? 0,
-      unit_id: line.unit_id ?? null, unit_name: line.unit_name ?? null,
-      unit_factor: line.unit_factor ?? 1, base_quantity: line.base_quantity ?? line.product_quantity ?? 0,
-      option: line.option ?? null,
-    })),
-  };
+  return { ...invoice, id: doc.id, edit_revision: invoiceRevision(invoice), products: (invoice.products || []).map((line, index) => ({ ...line, line_id: line.line_id || `legacy-${index}` })) };
 });
 
 exports.getCashierDebtBook = onCall(async (request) => {
@@ -447,7 +427,7 @@ exports.createStaffSale = onCall(async (request) => {
   const saleRef = db.collection("invoices").doc();
   const opRef = operationRef(request, "sale");
   const outcome = await db.runTransaction(async (tx) => {
-    const role = await authorize(request, tx);
+    await authorize(request, tx);
     const previousOperation = await tx.get(opRef);
     if (previousOperation.exists) return previousOperation.data().result;
     const ids = [...new Set(rawLines.map((line) => cleanText(line.product_id, 128)))];
@@ -472,9 +452,7 @@ exports.createStaffSale = onCall(async (request) => {
       const quantity = raw.product_quantity;
       if (!validNumber(quantity, 0.000001) || Math.abs(quantity - cost4(quantity)) > 1e-9) fail("Enter a valid quantity with at most four decimal places.");
       if (unit.allows_fractional !== true && Math.abs(quantity - Math.round(quantity)) > 1e-9) fail("This unit does not allow fractional quantities.");
-      const listedPrice = unit.price;
-      const requestedPrice = Number(raw.product_price);
-      if (role === "cashier" && (!validNumber(listedPrice) || !validNumber(requestedPrice) || Math.abs(requestedPrice - listedPrice) > 0.005)) fail("The selling price changed. Refresh the product.");
+      const requestedPrice = raw.product_price;
       if (!validNumber(requestedPrice)) fail("Enter a valid selling price.");
       const stockKey = `${id}||${unit.id}`;
       needs.set(stockKey, cost4((needs.get(stockKey) || 0) + quantity));
@@ -499,12 +477,11 @@ exports.createStaffSale = onCall(async (request) => {
       if (!validNumber(value)) fail(`Invalid ${key}.`);
       return value;
     };
-    const previous = numeric("debt");
+    const previous = 0;
     const delivery = numeric("delivery_price");
     const feeds = numeric("amount_of_animal_feeds");
     const mahros = numeric("amount_of_mahros");
     const discount = numeric("discount");
-    if (role === "cashier" && (previous || delivery || feeds || mahros)) fail("Cashier invoices cannot contain manual charges.");
     const grossBeforeDiscount = money(lines.reduce((sum, line) => sum + line.product_price * line.product_quantity, 0) + previous + delivery + feeds + mahros);
     if ((input.discount_percentage === true && discount > 100) || (input.discount_percentage !== true && discount - grossBeforeDiscount > 0.005)) fail("Discount exceeds the invoice total.");
     const settled = money(paid + creditUsed);
@@ -520,7 +497,7 @@ exports.createStaffSale = onCall(async (request) => {
     const invoice = {
       customer_id: customerId, customer_name: name, customer_phone: phone,
       customer_name_norm: name.trim().toLocaleLowerCase(), customer_phone_digits: String(phone ?? "").replace(/\D/g, ""),
-      products: lines, debt: previous, delivery_price: delivery, amount_of_animal_feeds: feeds,
+      products: lines, delivery_price: delivery, amount_of_animal_feeds: feeds,
       amount_of_mahros: mahros, discount, discount_percentage: input.discount_percentage === true,
       discount_for: cleanText(input.discount_for, 100) || null,
       paid_amount: settled, credit_used: money(creditUsed), remaining, inventory_applied: true, cashbox_applied: paid > 0,
@@ -577,7 +554,7 @@ exports.createStaffSale = onCall(async (request) => {
         reference_label: `فاتورة بيع لـ ${name}`, note: null, created_by: request.auth.uid, created_at: now,
       });
     }
-    const result = { id: saleRef.id, receipt: { ...invoice, id: saleRef.id, products: lines.map(({ product_cost_price, base_cost_snapshot, cost_groups, ...line }) => line) } };
+    const result = { id: saleRef.id, receipt: { ...invoice, id: saleRef.id, edit_revision: invoiceRevision(invoice) } };
     tx.create(opRef, { result, created_at: now });
     return result;
   });
