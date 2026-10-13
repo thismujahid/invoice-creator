@@ -146,7 +146,7 @@
         <UCard variant="outline">
           <div class="text-lg font-bold text-blue-700 sm:text-xl">{{ products.inventoryReady ? formatePrice(sellableInventory.expectedProfit) : "…" }}</div>
           <div class="text-xs text-gray-500">ربح محتمل من المخزون الحالي</div>
-          <div class="mt-1 text-xs text-gray-400">ليس ضمن ربح الفترة · بأسعار وحدة الأساس الحالية</div>
+          <div class="mt-1 text-xs text-gray-400">ليس ضمن ربح الفترة · بأسعار وتكلفة كل وحدة متاحة للبيع</div>
           <div v-if="forecastNote && products.inventoryReady" class="mt-1 text-xs text-amber-700">{{ forecastNote }}</div>
         </UCard>
         <UCard variant="outline">
@@ -812,7 +812,7 @@ import type { CashTransaction, InvoiceReturn, PurchaseInvoice, SupplierReturn } 
 
 definePageMeta({ title: "الخزنة" });
 const { formatePrice } = useHelpers();
-const { inventoryAggregates, round2, toNum } = useFinance();
+const { inventoryAggregates, inventoryDataIssues, round2, toNum } = useFinance();
 const cashbox = useCashbox();
 const products = useProductsStore();
 const migration = useMigration();
@@ -1019,7 +1019,7 @@ const stockSearch = ref("");
 const missingStock = computed(() =>
   products.list.filter(
     (p) =>
-      p.id && (p.stock_quantity === null || p.stock_quantity === undefined),
+      p.id && !p.units?.length && (p.stock_quantity === null || p.stock_quantity === undefined),
   ),
 );
 // Search within not-yet-counted products (entered quantities are preserved
@@ -1243,12 +1243,12 @@ const businessHealth = computed<{ color: "error" | "warning" | "success" | "info
   return { color: "info", title: "المبيعات لا تحقق ربحًا إجماليًا في الفترة", description: expenseNote };
 });
 const inventoryValuationNote = computed(() => {
-  const missing = products.list.filter((p) => p.stock_quantity === null || p.stock_quantity === undefined || p.cost_price === null || p.cost_price === undefined).length;
-  return missing > 0 ? `${missing} صنف ببيانات ناقصة — التقييم غير مكتمل` : "";
+  const missing = inventoryDataIssues(products.list).valuation;
+  return missing > 0 ? `${missing} وحدة ببيانات ناقصة — التقييم غير مكتمل` : "";
 });
 const forecastNote = computed(() => {
-  const missing = products.activeProducts.filter((p) => toNum(p.stock_quantity) > 0 && (p.price === null || p.price === undefined || p.cost_price === null || p.cost_price === undefined)).length;
-  return missing ? `${missing} صنف بلا سعر أو تكلفة؛ التوقع غير مكتمل` : "";
+  const missing = inventoryDataIssues(products.activeProducts).forecast;
+  return missing ? `${missing} وحدة بلا سعر أو تكلفة؛ التوقع غير مكتمل` : "";
 });
 const shortagesOpen = ref(false);
 const shortageAlert = computed(() => {

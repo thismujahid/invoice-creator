@@ -53,8 +53,7 @@
         >
       </div>
       <p v-if="orderRows.length" class="text-xs text-gray-400">
-        الجدول يطابق ملف الإكسل: صف لكل وحدة شراء لها مؤشر نقص مفعّل — الوحدات
-        بدون مؤشر أو ذات المؤشر الصفري لا تظهر هنا.
+        تظهر وحدات الشراء التي رصيدها أقل من مؤشر نقصها فقط.
       </p>
       <UAlert
         v-if="!orderRows.length"
@@ -170,23 +169,17 @@ const props = defineProps<{ products: Product[]; showCost: boolean }>();
 const open = defineModel<boolean>("open", { required: true });
 const { formatePrice } = useHelpers();
 const {
-  isNegativeStock,
-  isOutOfStock,
   isLowStock,
   isUnitLowStock,
   toNum,
-  round2,
   round4,
   purchasableUnitsForProduct,
   unitsForProduct,
   unitPurchasePrice,
-  unitSellingPrice,
   unitAverageCost,
   unitStockDisplay,
   unitLowThresholdOf,
   shortageUnitRowsOf,
-  shortageAvgFormula,
-  orderMarginRate,
   unitThresholdDisplayOf,
   lowStockThresholdOf,
 } = useFinance();
@@ -240,8 +233,9 @@ const orderRows = computed<OrderRow[]>(() =>
   baseRows.value
     .map(({ product: p, unit }) => {
         const hasUnitThreshold = unitLowThresholdOf(unit) !== null;
-        const negative = isNegativeStock(p);
-        const out = !negative && isOutOfStock(p);
+        const quantity = unitStockDisplay(p, unit);
+        const negative = quantity < 0;
+        const out = quantity === 0;
         const low =
           !negative && !out
             ? hasUnitThreshold
@@ -290,16 +284,11 @@ const filteredRows = computed(() =>
   orderRows.value.filter((row) => matchesSearch(row.product, row.unit.name)),
 );
 
-// Selection defaults to everything; prune rows that disappear (e.g. after
-// muting) and auto-select newly arriving rows.
 watch(
   () => orderRows.value.map((r) => r.key).join("|"),
   () => {
     const keys = new Set(orderRows.value.map((r) => r.key));
     selectedKeys.value = selectedKeys.value.filter((k) => keys.has(k));
-    for (const k of keys) {
-      if (!selectedKeys.value.includes(k)) selectedKeys.value.push(k);
-    }
   },
   { immediate: true },
 );
@@ -340,106 +329,22 @@ async function exportOrder(): Promise<void> {
   const picked = selectedRows.value;
   if (!picked.length) return;
   const XLSX = await import("xlsx/dist/xlsx.full.min.js");
-  // One row per selected (product, unit) — identical math to the previous
-  // product-wide export, but only for the checked rows: id | `Product (Unit)`
-  // | qty(C) | unit cost(D) | new avg(E) | new price(F) | line total(G = C*D).
-  // Rows are fully independent (no cross-row references): editing one row
-  // changes only its own cells. Multi-row same-product values are per-row
-  // estimates; the import aggregates the real average from all rows.
-  // A final الإجمالي row sums G. Cached values equal the untouched state so
-  // an unedited file imports exactly what was computed. All money shown or
-  // baked here is rounded to 2 decimals (ROUND(...,2) wraps every computed
-  // branch); only the editable cost cell keeps full precision so gram-level
-  // costs never lose accuracy. Change detection uses a 0.005 tolerance so
-  // baked constants stay robust.
-  const num = (v: number): number => round2(v);
-  const rows: unknown[][] = [
-    [
-      "رقم المنتج",
-      "اسم المنتج",
-      "الكمية المطلوبة",
-      "تكلفة شراء الوحدة",
-      "متوسط سعر التكلفة الجديد",
-      "سعر البيع الجديد",
-      "الإجمالي",
-    ],
-  ];
-  let r = 1; // header row; data rows start at 2
-  for (const { product: p, unit } of picked) {
-    const oldBase = toNum(p.cost_price);
-    const stockBase = toNum(p.stock_quantity);
-    r += 1;
-    const factor = Number(unit.factor) > 0 ? Number(unit.factor) : 1;
-    const oldUnitAvg = num(oldBase * factor);
-    const lastCost = unitPurchasePrice(p, unit);
-    const prefilledCost = lastCost ?? oldUnitAvg;
-    const costRef = num(prefilledCost);
-    const unitPrice = unitSellingPrice(p, unit);
-    const stockUnit = num(stockBase / factor);
-    // Margin over the recorded average, else over the last purchase cost —
-    // so the price cell carries the old markup even with no recorded average.
-    const rate = orderMarginRate(oldUnitAvg, unitPrice, costRef);
-    const rateBaked = rate === null ? null : Number(rate.toFixed(6));
-    // Average formula blends ONLY this row (rows never reference each other:
-    // editing one row changes just its own cells). Multi-row same-product
-    // values are estimates; the import aggregates the real average from all
-    // rows' quantities/costs.
-    const avgFormula = shortageAvgFormula({
-      ownRow: r,
-      oldUnitAvg,
-      costRef,
-      stockUnit,
-    });
-    const avgCached = oldUnitAvg > 0 ? oldUnitAvg : num(prefilledCost);
-    // Price formula: follows the average with the baked margin, 2 decimals.
-    let priceFormula: string;
-    let priceCached: number | undefined;
-    if (rateBaked !== null) {
-      priceFormula = `IF(E${r}="","",ROUND(E${r}*(1+${rateBaked}),2))`;
-      priceCached =
-        unitPrice === null || unitPrice === undefined
-          ? undefined
-          : num(toNum(unitPrice));
-    } else if (unitPrice !== null && unitPrice !== undefined) {
-      priceFormula = `ROUND(IF(ABS(E${r}-${avgCached})<0.005,${num(toNum(unitPrice))},E${r}),2)`;
-      priceCached = num(toNum(unitPrice));
-    } else {
-      priceFormula = `ROUND(IF(E${r}="","",E${r}),2)`;
-      priceCached = undefined;
-    }
+  const rows: unknown[][] = [[
+    "رقم المنتج", "اسم المنتج", "الكمية المطلوبة", "تكلفة شراء الوحدة", "الإجمالي",
+  ]];
+  for (const [index, { product, unit }] of picked.entries()) {
+    const rowNumber = index + 2;
     rows.push([
-      p.id ?? "",
-      `${p.name} (${unit?.name ?? p.base_unit_name ?? "وحدة"})`,
+      product.id ?? "",
+      `${product.name} (${unit.name})`,
       "",
-      prefilledCost,
-      { t: "n", v: avgCached, f: avgFormula },
-      priceCached === undefined
-        ? { t: "n", f: priceFormula }
-        : { t: "n", v: priceCached, f: priceFormula },
-      { t: "n", f: `IF(OR(C${r}="",D${r}=""),"",ROUND(C${r}*D${r},2))` },
+      unitPurchasePrice(product, unit) ?? unit.average_cost ?? 0,
+      { t: "n", f: `IF(OR(C${rowNumber}="",D${rowNumber}=""),"",ROUND(C${rowNumber}*D${rowNumber},2))` },
     ]);
   }
-  // Total row: sums the line totals (import skips it by name).
-  const lastRow = r;
-  rows.push([
-    "",
-    "الإجمالي",
-    "",
-    "",
-    "",
-    "",
-    { t: "n", v: 0, f: `SUM(G2:G${lastRow})` },
-  ]);
+  rows.push(["", "الإجمالي", "", "", { t: "n", v: 0, f: `SUM(E2:E${picked.length + 1})` }]);
   const sheet = XLSX.utils.aoa_to_sheet(rows);
-  sheet["!cols"] = [
-    { wch: 24 },
-    { wch: 32 },
-    { wch: 20 },
-    { wch: 24 },
-    { wch: 26 },
-    { wch: 22 },
-    { wch: 20 },
-  ];
+  sheet["!cols"] = [{ wch: 24 }, { wch: 32 }, { wch: 20 }, { wch: 24 }, { wch: 20 }];
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, sheet, "طلب شراء");
   XLSX.writeFile(

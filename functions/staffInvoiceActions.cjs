@@ -148,7 +148,7 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
     const relatedPayments = paymentHistory?.docs.filter((doc) => (doc.data().allocations || []).some((item) => item.type === "invoice" && item.reference_id === id)) || [];
     if (returns.size + cashHistory.size + relatedPayments.length > 350) unavailable("سجل الفاتورة كبير جدًا للتعديل المباشر.");
     return db.runTransaction(async (tx) => {
-      await authorize(request, tx);
+      const role = await authorize(request, tx);
       const oldSnaps = await Promise.all([tx.get(opRef), tx.get(invoiceRef),
         ...returns.docs.map((doc) => tx.get(doc.ref)), ...cashHistory.docs.map((doc) => tx.get(doc.ref)),
         ...relatedPayments.map((doc) => tx.get(doc.ref))]);
@@ -178,6 +178,7 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
         if (!oldPhone || String(customer.data().phone ?? "").replace(/\D/g, "") !== oldPhone || String(customer.data().name || "").trim() !== String(original.customer_name || "").trim()) unavailable("تعذر التحقق من عميل الفاتورة القديمة.");
       }
       const products = new Map(productSnaps.map((snapshot) => [snapshot.id, snapshot]));
+      const unitKey = (productId, unitId) => `${productId}||${unitId}`;
       const usedOld = new Set();
       const restores = [];
       const takes = new Map();
@@ -190,42 +191,50 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
         const unitId = text(entry?.unit_id, 128) || product.base_unit_id || "legacy-base";
         const configured = Array.isArray(product.units) && product.units.length ? product.units
           : [{ id: product.base_unit_id || "legacy-base", name: product.base_unit_name || "وحدة", factor: 1, selling_price: product.price, is_base: true }];
-        const unit = configured.find((item) => item.id === unitId && item.can_sell !== false && number(item.factor) > 0);
+        const unit = configured.find((item) => item.id === unitId && item.can_sell !== false && number(item.selling_price) > 0);
         if (!unit) invalid("Selling unit is unavailable.");
-        const factor = number(unit.factor);
-        const base = money(quantity * factor);
+        if (unit.allows_fractional !== true && !Number.isInteger(quantity)) invalid("This unit does not allow fractional quantities.");
+        const factor = 1;
+        const base = money(quantity);
         if (base <= 0) invalid("Quantity is too small.");
         const oldId = text(entry?.line_id, 128);
         let oldIndex = oldId.startsWith("legacy-") ? Number(oldId.slice(7)) : oldLines.findIndex((line) => line.line_id === oldId && oldId);
         if (!Number.isInteger(oldIndex) || oldIndex < 0 || oldIndex >= oldLines.length || usedOld.has(oldIndex) || oldLines[oldIndex].product_id !== productId) oldIndex = -1;
         if (oldIndex >= 0) usedOld.add(oldIndex);
         const oldLine = oldIndex >= 0 ? oldLines[oldIndex] : null;
-        const listed = unit.selling_price ?? ((unit.is_base || unit.id === product.base_unit_id) ? product.price : null);
+        const listed = unit.selling_price;
         if (listed == null && (!oldLine || oldLine.unit_id !== unitId)) invalid("Selling price is unavailable.");
-        const price = oldLine && oldLine.unit_id === unitId ? number(oldLine.product_price) : number(listed);
-        const oldBase = oldLine ? baseQuantity(oldLine) : 0;
-        const oldGroups = oldLine ? costGroups(oldLine) : [];
+        const requestedPrice = entry?.product_price;
+        if (role === "admin" && (typeof requestedPrice !== "number" || !Number.isFinite(requestedPrice) || requestedPrice < 0)) invalid("Invalid selling price.");
+        const price = role === "admin" ? requestedPrice : oldLine && oldLine.unit_id === unitId ? number(oldLine.product_price) : number(listed);
+        const sameUnit = oldLine && oldLine.unit_id === unit.id;
+        const oldBase = sameUnit ? baseQuantity(oldLine) : 0;
+        const oldGroups = sameUnit ? costGroups(oldLine) : [];
+        if (oldLine && !sameUnit) for (const group of costGroups(oldLine)) restores.push({ product_id: productId, product_name: oldLine.product_name, unit_id: oldLine.unit_id, unit_name: oldLine.unit_name, qty: group.base_quantity, unit_cost: group.unit_cost });
         let keep = base;
         const groups = [];
         for (const group of oldGroups) {
           const retained = money(Math.min(keep, group.base_quantity));
           if (retained > 0) groups.push({ base_quantity: retained, unit_cost: group.unit_cost });
           const restored = money(group.base_quantity - retained);
-          if (restored > 0) restores.push({ product_id: productId, product_name: oldLine.product_name, qty: restored, unit_cost: group.unit_cost });
+          if (restored > 0) restores.push({ product_id: productId, product_name: oldLine.product_name, unit_id: unit.id, unit_name: unit.name, qty: restored, unit_cost: group.unit_cost });
           keep = money(keep - retained);
         }
-        const currentCost = cost4(product.cost_price);
+        const currentCost = cost4(unit.average_cost ?? product.cost_price);
         if (keep > 0) groups.push({ base_quantity: keep, unit_cost: currentCost });
         const added = Math.max(0, money(base - oldBase));
-        if (added) takes.set(productId, money(number(takes.get(productId)) + added));
+        if (added) {
+          const key = unitKey(productId, unit.id);
+          takes.set(key, money(number(takes.get(key)) + added));
+        }
         const average = cost4(groups.reduce((sum, group) => sum + group.base_quantity * group.unit_cost, 0) / base);
         return { line_id: oldLine?.line_id || `${id}-edit-${index}`, product_id: productId, product_name: product.name,
           product_quantity: quantity, product_price: price, unit_id: unit.id, unit_name: unit.name,
-          unit_factor: factor, base_quantity: base, product_cost_price: average, base_cost_snapshot: average,
+          unit_factor: 1, base_quantity: base, product_cost_price: average, base_cost_snapshot: average,
           cost_groups: groups, option: text(entry?.option, 120) || null, total: money(quantity * price) };
       });
       for (const [index, oldLine] of oldLines.entries()) if (!usedOld.has(index) && oldLine.product_id) {
-        for (const group of costGroups(oldLine)) restores.push({ product_id: oldLine.product_id, product_name: oldLine.product_name, qty: group.base_quantity, unit_cost: group.unit_cost });
+        for (const group of costGroups(oldLine)) restores.push({ product_id: oldLine.product_id, product_name: oldLine.product_name, unit_id: oldLine.unit_id, unit_name: oldLine.unit_name, qty: group.base_quantity, unit_cost: group.unit_cost });
       }
       restores.reverse();
       const extras = ["debt", "delivery_price", "amount_of_animal_feeds", "amount_of_mahros"];
@@ -234,7 +243,11 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
         customer_phone_digits: String(customer.data().phone ?? "").replace(/\D/g, ""), products: lines,
         discount, discount_percentage: request.data?.discount_percentage === true,
         discount_for: text(request.data?.discount_for, 100) || null, paid_amount: money(paid) };
-      for (const key of extras) updated[key] = original[key] ?? 0;
+      for (const key of extras) {
+        const value = role === "admin" ? request.data?.[key] ?? 0 : original[key] ?? 0;
+        if (!Number.isFinite(Number(value)) || Number(value) < 0) invalid("Invalid invoice amount.");
+        updated[key] = number(value);
+      }
       const totals = invoiceTotal(updated);
       if ((updated.discount_percentage && discount > 100) || discount - totals.gross > 0.005 || paid - totals.net > 0.005) invalid("Discount or paid amount exceeds the invoice total.");
       updated.remaining = money(totals.net - paid);
@@ -246,9 +259,14 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
         const snap = products.get(productId) || await tx.get(db.doc(`products/${productId}`));
         if (!snap?.exists) unavailable("أحد منتجات الفاتورة لم يعد موجودًا.");
         products.set(productId, snap);
-        const restored = restores.filter((item) => item.product_id === productId);
-        const take = number(takes.get(productId));
-        if (take - number(snap.data().stock_quantity) - restored.reduce((sum, item) => sum + item.qty, 0) > 0.005) unavailable("كمية المنتج تتجاوز المخزون المتاح.");
+        const units = Array.isArray(snap.data().units) ? snap.data().units : [];
+        for (const [key, take] of takes) {
+          const [pid, unitId] = key.split("||");
+          if (pid !== productId) continue;
+          const unit = units.find((item) => item.id === unitId);
+          const restored = restores.filter((item) => item.product_id === productId && item.unit_id === unitId).reduce((sum, item) => sum + item.qty, 0);
+          if (!unit || number(take) - number(unit.stock_quantity) - restored > 0.005) unavailable("كمية الوحدة تتجاوز المخزون المتاح.");
+        }
       }
       const now = FieldValue.serverTimestamp();
       tx.update(invoiceRef, { ...updated, inventory_applied: true, cashbox_applied: true, updated_at: now });
@@ -274,30 +292,35 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
         ids.push(movement.id);
         movementIds.set(group.product_id, ids);
         tx.create(movement, { type: "sale", product_id: group.product_id, product_name: group.product_name,
-          quantity: group.qty, unit_name: "وحدة مخزون أساسية", unit_factor: 1, base_quantity: group.qty,
+          quantity: group.qty, unit_quantity: group.qty, unit_id: group.unit_id || null, unit_name: group.unit_name || "وحدة", unit_factor: 1, base_quantity: group.qty,
           direction: "in", unit_cost: group.unit_cost, invoice_id: id, reason: "invoice_edit",
           note: "تعديل فاتورة", seq: seq++, created_by: request.auth.uid, created_at: now });
       }
-      for (const [productId, quantity] of takes) {
+      for (const [key, quantity] of takes) {
+        const [productId, unitId] = key.split("||");
+        const unit = (products.get(productId).data().units || []).find((item) => item.id === unitId);
         const movement = db.collection("inventory_transactions").doc();
         const ids = movementIds.get(productId) || [];
         ids.push(movement.id);
         movementIds.set(productId, ids);
         tx.create(movement, { type: "sale", product_id: productId, product_name: products.get(productId).data().name,
-          quantity, unit_name: "وحدة مخزون أساسية", unit_factor: 1, base_quantity: quantity,
-          direction: "out", unit_cost: cost4(products.get(productId).data().cost_price), invoice_id: id,
+          quantity, unit_quantity: quantity, unit_id: unitId, unit_name: unit?.name || "وحدة", unit_factor: 1, base_quantity: quantity,
+          direction: "out", unit_cost: cost4(unit?.average_cost ?? products.get(productId).data().cost_price), invoice_id: id,
           reason: "invoice_edit", note: "تعديل فاتورة", seq: seq++, created_by: request.auth.uid, created_at: now });
       }
       for (const productId of affected) {
         const snap = products.get(productId);
-        const take = number(takes.get(productId));
-        const inflows = restores.filter((item) => item.product_id === productId);
-        const start = money(number(snap.data().stock_quantity) - take);
-        const added = money(inflows.reduce((sum, item) => sum + item.qty, 0));
-        const value = inflows.reduce((sum, item) => sum + item.qty * item.unit_cost, 0);
-        const stock = money(start + added);
-        const patch = { stock_quantity: stock };
-        if (added > 0) patch.cost_price = cost4(start > 0 ? (start * number(snap.data().cost_price) + value) / (start + added) : value / added);
+        const nextUnits = (snap.data().units || []).map((unit) => {
+          const key = unitKey(productId, unit.id);
+          const take = number(takes.get(key));
+          const inflows = restores.filter((item) => item.product_id === productId && item.unit_id === unit.id);
+          const start = money(number(unit.stock_quantity) - take);
+          const added = money(inflows.reduce((sum, item) => sum + item.qty, 0));
+          const value = inflows.reduce((sum, item) => sum + item.qty * item.unit_cost, 0);
+          if (!take && !added) return unit;
+          return { ...unit, stock_quantity: money(start + added), average_cost: added > 0 ? cost4(start > 0 ? (start * number(unit.average_cost) + value) / (start + added) : value / added) : unit.average_cost };
+        });
+        const patch = { units: nextUnits };
         const ids = movementIds.get(productId);
         if (ids?.length) { patch.last_inventory_transaction_id = ids.at(-1); patch.last_inventory_transaction_ids = ids; }
         tx.update(snap.ref, patch);
@@ -361,8 +384,8 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
         if (!row || seen.has(key) || typeof quantity !== "number" || !Number.isFinite(quantity) || money(quantity) <= 0 || money(quantity * row.unit_factor) <= 0 || quantity - row.maxQty > 0.005) invalid("Return quantity exceeds the available quantity.");
         seen.add(key);
         items.push({ product_id: row.product_id, product_name: row.product_name, quantity: money(quantity),
-          unit_id: row.unit_id, unit_name: row.unit_name, unit_factor: row.unit_factor,
-          base_quantity: money(quantity * row.unit_factor), original_unit_price: row.unit_price,
+          unit_id: row.unit_id, unit_name: row.unit_name, unit_factor: 1,
+          base_quantity: money(quantity), original_unit_price: row.unit_price,
           original_unit_cost: row.unit_cost, source_line_index: row.lineIndex,
           source_cost_group_index: row.groupIndex, refund_amount: money(row.unit_price * quantity * ratio) });
       }
@@ -377,6 +400,12 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
       const [cash, credit, ...products] = await Promise.all([cashRefund > 0 ? tx.get(db.doc("cashbox/current")) : Promise.resolve(null), creditRef && (creditRestored > 0 || creditIssued > 0) ? tx.get(creditRef) : Promise.resolve(null), ...productIds.map((productId) => tx.get(db.doc(`products/${productId}`)))]);
       if (cashRefund > 0 && (!cash?.exists || number(cash.data().balance) + 0.005 < cashRefund)) unavailable("رصيد الخزنة لا يكفي للمرتجع النقدي.");
       if (products.some((product) => !product.exists)) unavailable("أحد منتجات الفاتورة لم يعد موجودًا.");
+      for (const item of items) {
+        const product = products.find((snapshot) => snapshot.id === item.product_id).data();
+        const unit = (product.units || []).find((candidate) => candidate.id === item.unit_id);
+        if (!unit) unavailable("وحدة المنتج لم تعد موجودة.");
+        if (unit.allows_fractional !== true && !Number.isInteger(item.quantity)) invalid("This unit does not allow fractional quantities.");
+      }
       const now = FieldValue.serverTimestamp();
       const movementIds = new Map();
       for (const [seq, item] of items.entries()) {
@@ -385,21 +414,23 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
         ids.push(movement.id);
         movementIds.set(item.product_id, ids);
         tx.create(movement, { type: "refund", product_id: item.product_id, product_name: item.product_name,
-          quantity: item.quantity, unit_id: item.unit_id, unit_name: item.unit_name,
-          unit_factor: item.unit_factor, base_quantity: item.base_quantity, direction: "in",
+          quantity: item.quantity, unit_quantity: item.quantity, unit_id: item.unit_id, unit_name: item.unit_name,
+          unit_factor: 1, base_quantity: item.quantity, direction: "in",
           unit_cost: item.original_unit_cost, invoice_id: id, return_id: returnRef.id,
           note: null, seq, created_by: request.auth.uid, created_at: now });
       }
       for (const [index, productId] of productIds.entries()) {
         const product = products[index].data();
-        const inflows = items.filter((item) => item.product_id === productId);
-        const oldStock = number(product.stock_quantity);
-        const added = money(inflows.reduce((sum, item) => sum + item.base_quantity, 0));
-        const value = inflows.reduce((sum, item) => sum + item.base_quantity * item.original_unit_cost, 0);
-        const stock = money(oldStock + added);
-        const average = cost4(oldStock > 0 ? (oldStock * number(product.cost_price) + value) / (oldStock + added) : value / added);
+        const nextUnits = (product.units || []).map((unit) => {
+          const inflows = items.filter((item) => item.product_id === productId && item.unit_id === unit.id);
+          if (!inflows.length) return unit;
+          const oldStock = number(unit.stock_quantity);
+          const added = money(inflows.reduce((sum, item) => sum + item.quantity, 0));
+          const value = inflows.reduce((sum, item) => sum + item.quantity * item.original_unit_cost, 0);
+          return { ...unit, stock_quantity: money(oldStock + added), average_cost: cost4(oldStock > 0 ? (oldStock * number(unit.average_cost) + value) / (oldStock + added) : value / added) };
+        });
         const ids = movementIds.get(productId);
-        tx.update(products[index].ref, { stock_quantity: stock, cost_price: average,
+        tx.update(products[index].ref, { units: nextUnits,
           last_inventory_transaction_id: ids.at(-1), last_inventory_transaction_ids: ids });
       }
       const merged = { ...stored };

@@ -230,12 +230,13 @@ exports.getCashierReturnJournal = onCall(async (request) => {
 });
 
 exports.getCashierInvoice = onCall(async (request) => {
-  if (await roleOf(request) !== "cashier") throw new HttpsError("permission-denied", "Cashier only.");
+  const role = await roleOf(request);
   const id = cleanText(request.data?.id, 128);
   if (!id) fail("Select an invoice.");
   const doc = await db.doc(`invoices/${id}`).get();
   if (!doc.exists) throw new HttpsError("not-found", "Invoice not found.");
   const invoice = doc.data();
+  if (role === "admin") return { ...invoice, id: doc.id, edit_revision: invoiceRevision(invoice), products: (invoice.products || []).map((line, index) => ({ ...line, line_id: line.line_id || `legacy-${index}` })) };
   return {
     id: doc.id, edit_revision: invoiceRevision(invoice), customer_id: invoice.customer_id ?? null, customer_name: invoice.customer_name ?? "", customer_phone: invoice.customer_phone ?? null,
     date: invoice.date ?? null, time: invoice.time ?? invoice.date ?? null,
@@ -245,6 +246,8 @@ exports.getCashierInvoice = onCall(async (request) => {
     discount: invoice.discount ?? null, discount_percentage: invoice.discount_percentage === true,
     discount_for: invoice.discount_for ?? null, paid_amount: invoice.paid_amount ?? null, credit_used: invoice.credit_used ?? 0, credit_restored: invoice.credit_restored ?? 0,
     remaining: invoice.remaining ?? null,
+    inventory_applied: invoice.inventory_applied === true,
+    cashbox_applied: invoice.cashbox_applied === true,
     products: (Array.isArray(invoice.products) ? invoice.products : []).map((line, index) => ({
       line_id: line.line_id || `legacy-${index}`,
       product_id: line.product_id ?? null, product_name: line.product_name ?? "",
@@ -431,6 +434,7 @@ function sellableUnit(product, id) {
   const unit = units.find((item) => item.id === id);
   if (!unit || unit.can_sell === false || !validNumber(Number(unit.factor), 0.000001)) fail("The selected selling unit is unavailable.");
   const price = unit.selling_price ?? ((unit.is_base || unit.id === product.base_unit_id) ? product.price : null);
+  if (!(Number(price) > 0)) fail("The selected selling unit is unavailable.");
   return { ...unit, price };
 }
 
@@ -466,29 +470,32 @@ exports.createStaffSale = onCall(async (request) => {
       const snapshot = products.get(id);
       if (!snapshot?.exists || snapshot.data().is_active === false) fail("A product is unavailable.");
       const product = snapshot.data();
-      const unitId = cleanText(raw.unit_id, 128) || product.base_unit_id || product.units?.find((unit) => unit.is_base)?.id || "legacy-base";
+      const unitId = cleanText(raw.unit_id, 128) || product.units?.[0]?.id || "legacy-base";
       const unit = sellableUnit(product, unitId);
       const quantity = raw.product_quantity;
-      if (!validNumber(quantity, 0.000001) || !validNumber(Number(unit.factor), 0.000001)) fail("Enter a valid quantity.");
-      const baseQuantity = money(quantity * Number(unit.factor));
-      if (baseQuantity <= 0) fail("Quantity is too small.");
+      if (!validNumber(quantity, 0.000001)) fail("Enter a valid quantity.");
+      if (unit.allows_fractional !== true && Math.abs(quantity - Math.round(quantity)) > 1e-9) fail("This unit does not allow fractional quantities.");
       const listedPrice = unit.price;
       const requestedPrice = Number(raw.product_price);
       if (role === "cashier" && (!validNumber(listedPrice) || !validNumber(requestedPrice) || Math.abs(requestedPrice - listedPrice) > 0.005)) fail("The selling price changed. Refresh the product.");
       if (!validNumber(requestedPrice)) fail("Enter a valid selling price.");
-      needs.set(id, money((needs.get(id) || 0) + baseQuantity));
-      const baseCost = cost4(Number(product.cost_price || 0));
+      const stockKey = `${id}||${unit.id}`;
+      needs.set(stockKey, money((needs.get(stockKey) || 0) + quantity));
+      const unitCost = cost4(Number((unit.average_cost ?? product.cost_price) || 0));
       return {
         line_id: `${saleRef.id}-${index}`, product_id: id, product_name: product.name,
-        unit_id: unit.id, unit_name: unit.name, unit_factor: Number(unit.factor),
-        product_quantity: quantity, base_quantity: baseQuantity, product_price: requestedPrice,
-        product_cost_price: baseCost, base_cost_snapshot: baseCost,
-        cost_groups: [{ base_quantity: baseQuantity, unit_cost: baseCost }],
+        unit_id: unit.id, unit_name: unit.name, unit_factor: 1,
+        product_quantity: quantity, base_quantity: quantity, product_price: requestedPrice,
+        product_cost_price: unitCost, base_cost_snapshot: unitCost,
+        cost_groups: [{ base_quantity: quantity, unit_cost: unitCost }],
         option: cleanText(raw.option, 120), total: money(requestedPrice * quantity),
       };
     });
-    for (const [id, need] of needs) {
-      if (need - Number(products.get(id).data().stock_quantity || 0) > 1e-9) throw new HttpsError("failed-precondition", `Insufficient stock for ${products.get(id).data().name}.`);
+    for (const [key, need] of needs) {
+      const [id, unitId] = key.split("||");
+      const product = products.get(id).data();
+      const unit = (product.units || []).find((entry) => entry.id === unitId);
+      if (!unit || need - Number(unit.stock_quantity || 0) > 1e-9) throw new HttpsError("failed-precondition", `Insufficient stock for ${product.name}.`);
     }
     const numeric = (key) => {
       const value = input[key] == null || input[key] === "" ? 0 : Number(input[key]);
@@ -554,17 +561,16 @@ exports.createStaffSale = onCall(async (request) => {
       tx.create(movement, {
         type: "sale", product_id: line.product_id, product_name: line.product_name,
         quantity: line.product_quantity, unit_id: line.unit_id, unit_name: line.unit_name,
-        unit_factor: line.unit_factor, base_quantity: line.base_quantity, direction: "out",
+        unit_factor: 1, unit_quantity: line.product_quantity, base_quantity: line.product_quantity, direction: "out",
         unit_cost: line.product_cost_price, invoice_id: saleRef.id, note: null,
         seq: index, created_by: request.auth.uid, created_at: now,
       });
     });
-    for (const [id, need] of needs) {
+    for (const id of ids) {
+      const product = products.get(id).data();
+      const units = product.units.map((unit) => ({ ...unit, stock_quantity: cost4(Number(unit.stock_quantity || 0) - (needs.get(`${id}||${unit.id}`) || 0)) }));
       const movementIds = movementsByProduct.get(id);
-      tx.update(db.doc(`products/${id}`), {
-        stock_quantity: money(Number(products.get(id).data().stock_quantity || 0) - need),
-        last_inventory_transaction_id: movementIds.at(-1), last_inventory_transaction_ids: movementIds,
-      });
+      tx.update(db.doc(`products/${id}`), { units, last_inventory_transaction_id: movementIds.at(-1), last_inventory_transaction_ids: movementIds });
     }
     if (paid > 0) {
       tx.update(db.doc("cashbox/current"), { balance: money(Number(cash.data().balance || 0) + paid), updated_at: now });

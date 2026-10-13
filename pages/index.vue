@@ -53,6 +53,13 @@
               :refresher="loadCustomers"
               @done="onPickCustomer"
             />
+            <div v-if="invoiceData.customer_id && !invoiceData.id" class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500">
+              <span>رصيد متاح للعميل: <strong class="text-emerald-700">{{ creditLoading ? 'جار التحميل...' : `${formatePrice(creditBalance)} ج` }}</strong></span>
+              <template v-if="creditBalance">
+                <label for="invoice-customer-credit">استخدام الرصيد:</label>
+                <UInputNumber id="invoice-customer-credit" v-model="invoiceData.credit_used" :min="0" :max="Math.min(creditBalance, totalOfInvoice)" :step="0.01" size="xs" class="w-28" />
+              </template>
+            </div>
           </UFormField>
           <UFormField label="القديم">
             <div class="flex gap-1.5">
@@ -242,13 +249,6 @@
                     @update:model-value="(prod) => onPickProduct(form, prod)"
                   />
                 </UFormField>
-                <UFormField label="خيار معين">
-                  <UInput
-                    v-model="form.option"
-                    placeholder="خيار معين"
-                    class="w-full"
-                  />
-                </UFormField>
                 <UFormField v-if="unitsOf(form).length > 1" label="الوحدة">
                   <USelectMenu :model-value="selectedUnit(form)" :items="unitsOf(form)" label-key="name" by="id" :search-input="false" class="w-full" @update:model-value="(unit) => onPickUnit(form, unit)" />
                 </UFormField>
@@ -384,13 +384,6 @@
                   "
                 />
               </UFormField>
-            </div>
-            <div v-if="invoiceData.customer_id && !invoiceData.id" class="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm">
-              <div class="flex justify-between gap-2"><span>رصيد متاح للعميل</span><strong>{{ creditLoading ? 'جار التحميل...' : `${formatePrice(creditBalance)} ج` }}</strong></div>
-              <UFormField v-if="creditBalance" label="استخدام من رصيد العميل" class="mt-2">
-                <UInputNumber v-model="invoiceData.credit_used" :min="0" :max="Math.min(creditBalance, totalOfInvoice)" :step="0.01" class="w-full" />
-              </UFormField>
-              <p class="mt-1 text-xs text-emerald-800">يُحتسب كسداد من رصيد سابق، ولا يُخفّض قيمة المبيعات.</p>
             </div>
             <div class="grid grid-cols-1 gap-3">
               <UFormField label="النقد المدفوع">
@@ -868,19 +861,19 @@ function selectedProd(form: InvoiceProductLine): Product | undefined {
 function unitsOf(form: InvoiceProductLine): ProductUnit[] {
   const product = selectedProd(form);
   if (!product) return [];
-  // All saved units are selectable on sale lines (purchase-only included).
-  return unitsForProduct(product);
+  return sellableUnitsForProduct(product);
 }
 function selectedUnit(form: InvoiceProductLine): ProductUnit | undefined {
   const options = unitsOf(form);
-  return options.find((unit) => unit.id === form.unit_id) ?? options.find((unit) => unit.is_base) ?? options[0];
+  return options.find((unit) => unit.id === form.unit_id) ?? options[0];
 }
 function onPickUnit(form: InvoiceProductLine, unit?: ProductUnit): void {
   if (!unit) return;
   form.unit_id = unit.id;
   form.unit_name = unit.name;
-  form.unit_factor = unit.factor;
-  form.base_quantity = Number(form.product_quantity || 0) * unit.factor;
+  form.unit_factor = 1;
+  form.base_quantity = Number(form.product_quantity || 0);
+  if (!invoiceData.value.id || !form.cost_groups?.length) form.product_cost_price = Number(unit.average_cost ?? 0);
   const product = selectedProd(form);
   const price = product ? unitSellingPrice(product, unit) : null;
   form.product_price = price === null ? 0 : price;
@@ -895,8 +888,7 @@ function setProdSearch(form: InvoiceProductLine, v: string): void {
 }
 function productMenuItems(form: InvoiceProductLine): Product[] {
   const q = (prodSearch.get(form) ?? "").trim().toLowerCase();
-  // Only sellable products: stock_quantity > 0 (unset/null counts as 0).
-  const inStock = products.list.filter((p) => (p.stock_quantity ?? 0) > 0);
+  const inStock = products.list.filter((p) => sellableUnitsForProduct(p).some((unit) => Number(unit.stock_quantity ?? 0) > 0));
   const base = q
     ? inStock.filter((p) => p.name?.toLowerCase().includes(q))
     : [...inStock];
@@ -925,25 +917,19 @@ function onPickProduct(
   }
   // Canonical store object + clear the line search (same fix as customers).
   const real = products.list.find((p) => p.id === prod.id) ?? prod;
-  // Stock validation at pick time: refuse out-of-stock or insufficient stock.
-  const available = real?.stock_quantity ?? 0;
   const wanted = Number(form.product_quantity || 0);
-  if (!(available > 0)) {
-    notify(`المنتج "${real?.name || ""}" غير متوفر بالمخزون حالياً.`, "error");
+  const availableUnits = sellableUnitsForProduct(real);
+  const selected = availableUnits.find((unit) => Number(unit.stock_quantity ?? 0) > 0) ?? availableUnits[0];
+  if (!selected) {
+    notify("لا توجد وحدات بيع لهذا المنتج. راجع إعدادات وحداته.", "error");
     return;
   }
-  const availableUnits = unitsForProduct(real);
-  const baseUnit = availableUnits.find((unit) => unit.is_base) ?? availableUnits[0];
-  if (!baseUnit) {
-    notify("لا توجد وحدات لهذا المنتج. راجع إعدادات وحداته.", "error");
-    return;
-  }
-  let need = round2(wanted * Number(baseUnit?.factor || 1));
+  let need = round2(wanted);
   for (const line of invoiceData.value.products) {
-    if (line === form || line.product_id !== real.id) continue;
-    need = round2(need + lineBaseQuantity(line));
+    if (line === form || line.product_id !== real.id || line.unit_id !== selected.id) continue;
+    need = round2(need + Number(line.product_quantity || 0));
   }
-  const allowed = availableOf(real.id ?? "");
+  const allowed = availableOf(real.id ?? "", selected.id);
   if (need - allowed > 1e-9) {
     notify(
       `إجمالي المطلوب (${need}) يتجاوز المتاح بالمخزون (${allowed}). خفّض الكمية أولاً.`,
@@ -951,11 +937,11 @@ function onPickProduct(
     );
     return;
   }
-  form.product_price = unitSellingPrice(real, baseUnit) ?? 0;
+  form.product_price = unitSellingPrice(real, selected) ?? 0;
   form.product_id = real?.id ?? "";
-  form.product_cost_price = Number(real?.cost_price ?? 0);
+  form.product_cost_price = Number(selected.average_cost ?? 0);
   form.product_name = real?.name ?? "";
-  onPickUnit(form, baseUnit);
+  onPickUnit(form, selected);
   // Never auto-collapse: the line stays expanded until the user locks it
   // explicitly with collapseLine() (إغلاق).
   expandedLines.add(form);
@@ -966,9 +952,6 @@ function onProductModalDone(prod: Product | null | undefined): void {
   if (productModalLine.value) onPickProduct(productModalLine.value, prod);
   productModalLine.value = null;
 }
-// Free-typed quantity drafts (object identity, never persisted).
-// Quantities are integers only; fractional typing stays as a visible draft
-// without committing until the value is a valid integer.
 const qtyDrafts = reactive(new Map<InvoiceProductLine, string>());
 function qtyText(form: InvoiceProductLine): string {
   const d = qtyDrafts.get(form);
@@ -984,17 +967,19 @@ function setQtyText(form: InvoiceProductLine, v: string): void {
     return;
   }
   const n = Number(t);
-  if (!Number.isFinite(n) || !Number.isInteger(n)) {
-    qtyDrafts.set(form, v); // fractional/garbage: keep visible, don't commit
+  const unit = selectedUnit(form);
+  if (!Number.isFinite(n) || (unit?.allows_fractional !== true && !Number.isInteger(n))) {
+    qtyDrafts.set(form, v);
     return;
   }
   form.product_quantity = Math.max(0, n);
-  form.base_quantity = form.product_quantity * Number(form.unit_factor || 1);
+  form.base_quantity = form.product_quantity;
   qtyDrafts.delete(form);
 }
 // Expanded/collapsed state by object identity (never persisted to Firestore).
 const expandedLines = reactive(new Set<InvoiceProductLine>());
 const originalReserved = reactive(new Map<string, number>());
+function stockKey(productId: string, unitId: string | null | undefined): string { return `${productId}||${unitId ?? ""}`; }
 function isExpanded(form: InvoiceProductLine): boolean {
   return expandedLines.has(form) || !form.product_id;
 }
@@ -1004,40 +989,49 @@ function expandLine(form: InvoiceProductLine): void {
 // Live stock info per line (reactive to store + typed qty).
 function stockLabelOf(form: InvoiceProductLine): string {
   const product = products.list.find((item) => item.id === form.product_id);
-  if (!product) return "—";
-  if (invoiceData.value.id) return stockQuantityLabel(product);
-  const remaining = Math.max(0, round2(availableOf(form.product_id ?? "") - (needByProduct.value.get(form.product_id ?? "") ?? 0)));
-  return stockQuantityLabel(product, remaining);
+  const unit = selectedUnit(form);
+  if (!product || !unit) return "—";
+  if (invoiceData.value.id) return `${round2(Number(unit.stock_quantity ?? 0))} ${unit.name}`;
+  const key = stockKey(form.product_id ?? "", unit.id);
+  const remaining = Math.max(0, round2(availableOf(form.product_id ?? "", unit.id) - (needByProduct.value.get(key) ?? 0)));
+  return `${remaining} ${unit.name}`;
 }
 const needByProduct = computed(() => {
   const need = new Map<string, number>();
   for (const line of invoiceData.value.products) {
-    if (!line.product_id) continue;
-    need.set(line.product_id, round2((need.get(line.product_id) ?? 0) + lineBaseQuantity(line)));
+    if (!line.product_id || !line.unit_id) continue;
+    const key = stockKey(line.product_id, line.unit_id);
+    need.set(key, round2((need.get(key) ?? 0) + Number(line.product_quantity || 0)));
   }
   return need;
 });
-function availableOf(productId: string): number {
-  const stock = Number(products.list.find((p) => p.id === productId)?.stock_quantity ?? 0);
-  return round2(stock + (originalReserved.get(productId) ?? 0));
+function availableOf(productId: string, unitId: string): number {
+  const product = products.list.find((p) => p.id === productId);
+  const unit = product?.units?.find((candidate) => candidate.id === unitId);
+  return round2(Number(unit?.stock_quantity ?? product?.stock_quantity ?? 0) + (originalReserved.get(stockKey(productId, unitId)) ?? 0));
 }
-function exceedsByProduct(productId: string): { need: number; available: number } | null {
-  if (!productId) return null;
-  const need = needByProduct.value.get(productId) ?? 0;
-  const available = availableOf(productId);
+function exceedsByProduct(productId: string, unitId: string | null | undefined): { need: number; available: number } | null {
+  if (!productId || !unitId) return null;
+  const need = needByProduct.value.get(stockKey(productId, unitId)) ?? 0;
+  const available = availableOf(productId, unitId);
   return need - available > 1e-9 ? { need, available } : null;
 }
 function qtyExceeds(form: InvoiceProductLine): boolean {
-  return form.product_id ? exceedsByProduct(form.product_id) !== null : false;
+  return form.product_id ? exceedsByProduct(form.product_id, form.unit_id) !== null : false;
 }
 function exceedText(form: InvoiceProductLine): string {
-  const info = form.product_id ? exceedsByProduct(form.product_id) : null;
+  const info = form.product_id ? exceedsByProduct(form.product_id, form.unit_id) : null;
   if (!info) return "";
   const product = products.list.find((item) => item.id === form.product_id);
   if (!product) return "الكمية المطلوبة تتجاوز المخزون المتاح.";
-  return `إجمالي المطلوب ${stockQuantityLabel(product, info.need)} يتجاوز المتاح ${stockQuantityLabel(product, info.available)}.`;
+  const unit = selectedUnit(form);
+  return `إجمالي المطلوب ${info.need} ${unit?.name ?? "وحدة"} يتجاوز المتاح ${info.available} ${unit?.name ?? "وحدة"}.`;
 }
 function validateStock(): boolean {
+  if (invoiceData.value.products.some((item) => selectedUnit(item)?.allows_fractional !== true && !Number.isInteger(Number(item.product_quantity)))) {
+    notify("هذه الوحدة لا تقبل كميات كسرية.", "error");
+    return false;
+  }
   const line = invoiceData.value.products.find((item) => item.product_id && qtyExceeds(item));
   if (!line) return true;
   notify(`كمية ${line.product_name} المطلوبة تتجاوز المتاح بالمخزون. خفّض الكمية قبل الحفظ.`, "error");
@@ -1058,17 +1052,14 @@ function applyCurrentPrice(form: InvoiceProductLine): void {
   if (current === null) return;
   form.product_price = current;
 }
-// Quick +/- steppers (integer quantities only, floor at 0).
 function changeQty(form: InvoiceProductLine, delta: number): void {
-  const next = Math.trunc(Number(form.product_quantity || 0)) + Math.trunc(delta);
+  const next = Number(form.product_quantity || 0) + delta;
   form.product_quantity = Math.max(0, Number.isFinite(next) ? next : 0);
-  form.base_quantity = form.product_quantity * Number(form.unit_factor || 1);
+  form.base_quantity = form.product_quantity;
   qtyDrafts.delete(form);
 }
-// Quantities are integers — step is always 1.
-function stepOf(_form: InvoiceProductLine): number {
-  void _form;
-  return 1;
+function stepOf(form: InvoiceProductLine): number {
+  return selectedUnit(form)?.allows_fractional === true ? 0.01 : 1;
 }
 // Explicit lock: collapse the line, then auto-append a fresh line on top
 // so the entry flow continues (only when no empty line exists).
@@ -1095,12 +1086,12 @@ function collapseLine(form: InvoiceProductLine): void {
     Number(form.product_quantity || 0) +
     Number(duplicateLine?.product_quantity || 0);
 
-  let need = round2(mergedQuantity * Number(form.unit_factor || 1));
+  let need = round2(mergedQuantity);
   for (const line of invoiceData.value.products) {
-    if (line === form || line === duplicateLine || line.product_id !== form.product_id) continue;
-    need = round2(need + lineBaseQuantity(line));
+    if (line === form || line === duplicateLine || line.product_id !== form.product_id || line.unit_id !== form.unit_id) continue;
+    need = round2(need + Number(line.product_quantity || 0));
   }
-  const allowed = availableOf(form.product_id ?? "");
+  const allowed = availableOf(form.product_id ?? "", form.unit_id ?? "");
   if (need - allowed > 1e-9) {
     notify(
       `إجمالي المطلوب (${need}) يتجاوز المتاح بالمخزون (${allowed}) لمنتج ${form.product_name}.`,
@@ -1112,8 +1103,7 @@ function collapseLine(form: InvoiceProductLine): void {
   let lineToCollapse = form;
   if (duplicateLine) {
     duplicateLine.product_quantity = mergedQuantity;
-    duplicateLine.base_quantity =
-      mergedQuantity * Number(duplicateLine.unit_factor || 1);
+    duplicateLine.base_quantity = mergedQuantity;
     expandedLines.delete(duplicateLine);
     lineToCollapse = duplicateLine;
     const duplicateIndex = invoiceData.value.products.indexOf(form);
@@ -1210,18 +1200,33 @@ function updateProdsPrices(preserveHistoricalCosts = false): void {
         if (!unit) return;
         item.unit_id = unit.id;
         item.unit_name = unit.name;
-        item.unit_factor = unit.factor;
+        item.unit_factor = 1;
         item.product_price = unitSellingPrice(prod, unit) ?? 0;
-        item.base_quantity = Number(item.product_quantity || 0) * unit.factor;
+        item.base_quantity = Number(item.product_quantity || 0);
       }
       // Never rewrite historical line costs of a persisted invoice (§1.2).
       if (!preserveHistoricalCosts) {
-        item.product_cost_price = Number(prod.cost_price ?? 0);
+        item.product_cost_price = Number(unit?.average_cost ?? 0);
       }
       item.product_name = prod.name;
     }
   });
 }
+watch(() => products.list, (current, previous) => {
+  if (invoiceData.value.id) return;
+  for (const line of invoiceData.value.products) {
+    const product = current.find((item) => item.id === line.product_id);
+    const unit = product?.units?.find((item) => item.id === line.unit_id);
+    if (!product || !unit) continue;
+    const oldUnit = previous?.find((item) => item.id === line.product_id)?.units?.find((item) => item.id === line.unit_id);
+    if (!oldUnit || Number(line.product_price) === Number(oldUnit.selling_price)) line.product_price = Number(unit.selling_price ?? 0);
+    line.product_cost_price = Number(unit.average_cost ?? 0);
+    line.product_name = product.name;
+    line.unit_name = unit.name;
+    line.unit_factor = 1;
+    line.base_quantity = Number(line.product_quantity || 0);
+  }
+});
 async function updateInvoiceData(): Promise<void> {
   updating.value = true;
   try {
@@ -1254,8 +1259,9 @@ onMounted(async () => {
     const src = invoices.invoiceToEdit;
     if (src.id && (src as { inventory_applied?: boolean }).inventory_applied === true) {
       for (const line of src.products ?? []) {
-        if (!line.product_id) continue;
-        originalReserved.set(line.product_id, round2((originalReserved.get(line.product_id) ?? 0) + lineBaseQuantity(line)));
+        if (!line.product_id || !line.unit_id) continue;
+        const key = stockKey(line.product_id, line.unit_id);
+        originalReserved.set(key, round2((originalReserved.get(key) ?? 0) + Number(line.product_quantity || 0)));
       }
     }
     const d = toDateSafe(src.date) ?? new Date();

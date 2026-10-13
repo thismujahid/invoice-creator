@@ -19,6 +19,9 @@ function safeProduct(id, data) {
     selling_price: unit.selling_price ?? ((unit.is_base || unit.id === data.base_unit_id) ? data.price ?? null : null),
     is_base: unit.is_base === true,
     can_sell: unit.can_sell !== false,
+    stock_quantity: unit.stock_quantity ?? null,
+    allows_fractional: unit.allows_fractional === true,
+    low_stock_threshold: unit.low_stock_threshold ?? null,
   }));
   return {
     id, name: data.name, price: data.price ?? null, stock_quantity: data.stock_quantity ?? null,

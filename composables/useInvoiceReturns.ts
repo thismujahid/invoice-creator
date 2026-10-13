@@ -1,7 +1,7 @@
 import { collection, doc, getDocs, limit as fsLimit, orderBy, query, where } from "firebase/firestore";
 import type { InvoiceReturn, InvoiceReturnItem } from "~/types/finance";
-import type { Invoice } from "~/types";
-import { applyStockGroup, lineBaseQuantity, lineRefundValue, lineUnitFactor, netRatioOf, outstandingDebtOf, round2, round4, splitCustomerReturn, toNum } from "./finance";
+import type { Invoice, ProductUnit } from "~/types";
+import { lineBaseQuantity, lineRefundValue, lineUnitFactor, netRatioOf, outstandingDebtOf, round2, round4, splitCustomerReturn, toNum } from "./finance";
 import { summarizeInvoice, writeDebtSummary } from "./debtSummaries";
 import { writeCustomerSummaryDelta, writeInvoiceStatsDelta } from "./performanceSummaries";
 
@@ -259,8 +259,8 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
               quantity: take,
               unit_id: fresh.products[ln.index]?.unit_id ?? null,
               unit_name: fresh.products[ln.index]?.unit_name ?? null,
-              unit_factor: lineUnitFactor(fresh.products[ln.index] ?? { unit_factor: 1 }),
-              base_quantity: round2(take * lineUnitFactor(fresh.products[ln.index] ?? { unit_factor: 1 })),
+              unit_factor: 1,
+              base_quantity: take,
               original_unit_price: ln.price,
               original_unit_cost: ln.unitCost,
               source_line_index: ln.index,
@@ -283,15 +283,19 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
         creditIssued = settlement.creditIssued;
         if ((creditIssued > 0 || creditRestored > 0) && !fresh.customer_id) throw new Error("VALIDATION:اربط الفاتورة بعميل قبل حفظ رصيد له.");
         // 4. Stock + products must exist.
-        const stocks = new Map<string, { stock: number; cost: number }>();
+        const stocks = new Map<string, { units: ProductUnit[] }>();
         for (const it of retItems) {
           if (stocks.has(it.product_id)) continue;
           const pSnap = await tx.get(doc(db, "products", it.product_id));
           if (!pSnap.exists()) throw new Error(`VALIDATION:المنتج ${it.product_name} غير موجود بالمخزون.`);
           stocks.set(it.product_id, {
-            stock: toNum(pSnap.data().stock_quantity),
-            cost: toNum(pSnap.data().cost_price),
+            units: Array.isArray(pSnap.data().units) ? pSnap.data().units : [],
           });
+        }
+        for (const item of retItems) {
+          const unit = stocks.get(item.product_id)?.units.find((entry) => entry.id === item.unit_id);
+          if (!unit) throw new Error("VALIDATION:وحدة المنتج الأصلية لم تعد موجودة.");
+          if (unit.allows_fractional !== true && !Number.isInteger(item.quantity)) throw new Error("VALIDATION:هذه الوحدة لا تقبل كميات كسرية.");
         }
         // 5. Cashbox only when real cash leaves.
         let cashBal = 0;
@@ -343,8 +347,9 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
             quantity: it.quantity,
             unit_id: it.unit_id ?? null,
             unit_name: it.unit_name ?? null,
-            unit_factor: it.unit_factor ?? 1,
-            base_quantity: it.base_quantity ?? it.quantity,
+            unit_factor: 1,
+            unit_quantity: it.quantity,
+            base_quantity: it.quantity,
             direction: "in",
             unit_cost: it.original_unit_cost,
             invoice_id: invoice.id,
@@ -357,13 +362,20 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
         }
         for (const pid of restoredPids) {
           const st = stocks.get(pid)!;
-          const inflows = retItems
-            .filter((it) => it.product_id === pid)
-            .map((it) => ({ qty: Number(it.base_quantity ?? it.quantity), cost: it.original_unit_cost as number | null }));
-          const applied = applyStockGroup(st.stock, st.cost, 0, inflows);
+          const nextUnits = st.units.map((unit) => {
+            const inflows = retItems.filter((it) => it.product_id === pid && it.unit_id === unit.id);
+            if (!inflows.length) return unit;
+            const oldStock = toNum(unit.stock_quantity);
+            const added = round2(inflows.reduce((sum, item) => sum + item.quantity, 0));
+            const value = inflows.reduce((sum, item) => sum + item.quantity * toNum(item.original_unit_cost), 0);
+            return {
+              ...unit,
+              stock_quantity: round2(oldStock + added),
+              average_cost: round4(oldStock > 0 ? (oldStock * toNum(unit.average_cost) + value) / (oldStock + added) : value / added),
+            };
+          });
           tx.update(doc(db, "products", pid), {
-            stock_quantity: applied.stock,
-            cost_price: applied.avg ?? st.cost,
+            units: nextUnits,
             last_inventory_transaction_id: lastMovementByProduct.get(pid),
             last_inventory_transaction_ids: movementIdsByProduct.get(pid) ?? [],
           });

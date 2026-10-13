@@ -31,6 +31,7 @@ import {
   restoreGroupsForEdit,
   sellableUnitsForProduct,
   stockQuantityLabel,
+  shortageUnitRowsOf,
   splitSupplierReturn,
   splitCustomerReturn,
   unitSellingPrice,
@@ -52,6 +53,20 @@ test("stock label decomposes quantities across configured units", () => {
   assert.equal(stockQuantityLabel(product, 9), "9 مكعب");
   assert.equal(stockQuantityLabel({ ...product, units: [product.units[0]] }, 99), "99 مكعب");
   assert.equal(stockQuantityLabel({ ...product, stock_quantity: null }), "غير مُدخل");
+});
+
+test("shortage list includes only each unit below its own threshold", () => {
+  const product = { id: "tea", name: "شاي العروسة", units: [
+    { id: "eighth", name: "ثمن", factor: 1, purchase_price: 8.5, stock_quantity: 2, low_stock_threshold: 3 },
+    { id: "quarter", name: "ربع", factor: 1, purchase_price: 49.75, stock_quantity: 10, low_stock_threshold: 3 },
+  ] };
+  assert.deepEqual(shortageUnitRowsOf([product]).map(({ unit }) => unit.id), ["eighth"]);
+  assert.deepEqual(shortageUnitRowsOf([{ ...product, units: product.units.map((unit) => ({ ...unit, stock_quantity: 3 })) }]), []);
+  assert.equal(shortageUnitRowsOf([{ ...product, is_active: false }]).length, 0);
+  assert.deepEqual(shortageUnitRowsOf([{ ...product, units: [
+    { ...product.units[0], stock_quantity: 0 },
+    { ...product.units[1], stock_quantity: 0, low_stock_threshold: 0 },
+  ] }]).map(({ unit }) => unit.id), ["eighth"]);
 });
 
 test("invoice line name does not repeat an identical base unit", () => {
@@ -525,12 +540,8 @@ test("shortage export rows stay independent per unit row", () => {
   const single = shortageAvgFormula({
     ownRow: 2, oldUnitAvg: 10, costRef: 10, stockUnit: 0,
   });
-  // Output keeps the legacy per-row shape byte-identical.
-  assert.equal(
-    single,
-    "IF(ABS(D2-10)<0.005,10,ROUND(IF(OR(C2=\"\",C2=0),(10+D2)/2,IF(0<=0,(10+D2)/2,(0*10+C2*D2)/(0+C2))),2))",
-  );
-  assert.equal(evalExcel(single, { C2: "", D2: 12 }), 11);
+  assert.equal(evalExcel(single, { C2: "", D2: 12 }), 10);
+  assert.equal(evalExcel(single, { C2: 10, D2: 12 }), 12);
   // Two unit rows of one product blend ONLY their own row: editing row 3
   // never changes row 2 (piece ×1 at row 2, pack ×12 at row 3).
   const piece = shortageAvgFormula({
@@ -545,8 +556,8 @@ test("shortage export rows stay independent per unit row", () => {
   // Edited costs + quantities: per-row blends (11 vs 130) — independent.
   const ePiece = evalExcel(piece, { C2: 10, D2: 12 });
   const ePack = evalExcel(pack, { C3: 2, D3: 140 });
-  assert.equal(ePiece, 11);
-  assert.equal(ePack, 130);
+  assert.equal(ePiece, 12);
+  assert.equal(ePack, 140);
   // With stock on hand each row blends with the baked stock alone.
   const sPiece = shortageAvgFormula({
     ownRow: 2, oldUnitAvg: 10, costRef: 10, stockUnit: 20,
@@ -556,7 +567,8 @@ test("shortage export rows stay independent per unit row", () => {
   const zPiece = shortageAvgFormula({
     ownRow: 2, oldUnitAvg: 0, costRef: 10, stockUnit: 5,
   });
-  assert.equal(evalExcel(zPiece, { C2: "", D2: 12 }), 11);
+  assert.equal(evalExcel(zPiece, { C2: "", D2: 12 }), 0);
+  assert.equal(evalExcel(zPiece, { C2: 5, D2: 12 }), 6);
 });
 
 test("manual import prices ignore export-fresh multi-row margins", () => {
@@ -620,8 +632,8 @@ test("null-average multi-unit file with F=E prices passes the check", () => {
   const fRob = shortageAvgFormula({ ownRow: 3, oldUnitAvg: 0, costRef: 22, stockUnit: 2.5 });
   const eTamn = evalExcel(fTamn, { C2: 10, D2: 12 });
   const eRob = evalExcel(fRob, { C3: 10, D3: 24 });
-  assert.ok(Math.abs(eTamn - 10.67) < 0.02, `tamn avg ${eTamn}`);
-  assert.ok(Math.abs(eRob - 23.6) < 0.02, `rob avg ${eRob}`);
+  assert.equal(eTamn, 8);
+  assert.equal(eRob, 19.2);
   const rows = [
     { avgOverride: eTamn, priceOverride: eTamn, unitId: "tomn", unitFactor: 1 },
     { avgOverride: eRob, priceOverride: eRob, unitId: "rob", unitFactor: 2 },

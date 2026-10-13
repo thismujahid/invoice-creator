@@ -949,24 +949,18 @@ const purchaseProduct = computed(() =>
   prodsList.value.find((p) => p.id === purchaseId.value),
 );
 const purchaseCurrentCost = computed(() =>
-  toNum(purchaseProduct.value?.cost_price),
+  toNum(purchaseUnit.value?.average_cost),
 );
 const purchaseBaseQty = computed(() =>
-  purchaseLineBaseQuantity(
-    purchaseQty.value ?? 0,
-    purchaseUnit.value?.factor ?? 1,
-  ),
+  purchaseQty.value ?? 0,
 );
 const purchaseBaseCost = computed(() =>
-  purchaseLineBaseCost(
-    purchaseCost.value ?? 0,
-    purchaseUnit.value?.factor ?? 1,
-  ),
+  purchaseCost.value ?? 0,
 );
 const purchasePreviewAvg = computed(() =>
   round4(
     purchasePreviewAverage(
-      purchaseProduct.value?.stock_quantity,
+      purchaseUnit.value?.stock_quantity,
       purchaseCurrentCost.value,
       purchaseBaseQty.value,
       purchaseBaseCost.value,
@@ -974,9 +968,9 @@ const purchasePreviewAvg = computed(() =>
   ),
 );
 // Factor of the selected purchase unit (all card money is shown in its terms).
-const purchaseFactor = computed(() => purchaseUnit.value?.factor ?? 1);
+const purchaseFactor = computed(() => 1);
 const purchaseHasHistory = computed(
-  () => toNum(purchaseProduct.value?.stock_quantity) > 0,
+  () => toNum(purchaseUnit.value?.stock_quantity) > 0,
 );
 const purchaseHasRecordedAvg = computed(() => purchaseCurrentCost.value > 0);
 const purchaseInputsReady = computed(
@@ -1170,7 +1164,7 @@ async function doPurchase(): Promise<void> {
   const card = costCardShown.value;
   const showPrice = priceFieldShown.value;
   const basis = {
-    stock: round2(toNum(purchaseProduct.value?.stock_quantity)),
+    stock: round2(toNum(purchaseUnit.value?.stock_quantity)),
     cost: round4(toNum(purchaseCurrentCost.value)),
   };
   let pricing: PriceDecision;

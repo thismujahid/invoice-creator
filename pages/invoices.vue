@@ -742,7 +742,14 @@ const paginateArray = computed(() => {
 // (DataCloneError), so unwrap Vue reactivity with toRaw() and fall back
 // to JSON on failure. Dates/Timestamps survive as ISO strings or
 // {seconds,nanoseconds} plain objects — both handled by toDateSafe().
-function copyInvoiceForEdit(source: Invoice, stripId: boolean): void {
+async function copyInvoiceForEdit(source: Invoice, stripId: boolean): Promise<void> {
+  if (!stripId && source.id) {
+    try {
+      invoicesStore.invoiceToEdit = await callStaff<{ id: string }, Invoice>("getCashierInvoice", { id: source.id });
+      await navigateTo("/");
+    } catch { notifyToast("تعذر فتح الفاتورة للتعديل. أعد المحاولة.", "error"); }
+    return;
+  }
   const raw = toRaw(source) as Invoice;
   let clone: Invoice;
   try {

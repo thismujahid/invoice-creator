@@ -3,20 +3,18 @@ import { and, collection, doc, getDocs, limit as fsLimit, orderBy, or, query, st
 import type { Invoice } from "~/types";
 import type { InvoiceReturn } from "~/types/finance";
 import { toDateSafe } from "~/types";
-import { applyStockGroup, invoiceEditCashOutflowError, invoiceEditCustomerChangeError, invoiceEditPaymentError, invoiceEditStockChanges, invoiceHasReturnHistory, invoiceTotals, lineBaseQuantity, lineUnitFactor, merchandiseProfitOf, round2, round4, toNum } from "~/composables/finance";
-import { summarizeInvoice, writeDebtSummary } from "~/composables/debtSummaries";
-import { customerSummaryId, writeCustomerSummaryDelta, writeInvoiceStatsDelta } from "~/composables/performanceSummaries";
+import { merchandiseProfitOf, round2, toNum } from "~/composables/finance";
+import { writeInvoiceStatsDelta } from "~/composables/performanceSummaries";
 import { formatInvoiceLineName } from "~/composables/helpers";
 
-const STOCK_EPS = 1e-9;
 const INVOICE_PAGE_SIZE = 25;
 
 export const useInvoicesStore = defineStore("invoices", () => {
-  const { readFrom, saveDataTo, updateItem, db, serverTimestamp, getDoc } = useFirebase();
-  const authStore = useAuth();
+  const { readFrom, saveDataTo, updateItem, db, getDoc } = useFirebase();
   const { notify } = useAppToast();
   const list = ref<Invoice[]>([]);
   const invoiceToEdit = ref<Invoice | undefined>(undefined);
+  let pendingEdit: { fingerprint: string; requestId: string } | null = null;
   let pendingCreate: { fingerprint: string; requestId: string } | null = null;
 
   // Substring search without per-keystroke full scans:
@@ -330,261 +328,18 @@ export const useInvoicesStore = defineStore("invoices", () => {
     id: string,
     payload: Omit<Invoice, "id">,
   ): Promise<{ ok: true; cashSkipped: boolean } | { ok: false; error: string }> {
-    const lines = (payload.products ?? [])
-      .filter((l) => l.product_id && toNum(l.product_quantity) > 0)
-      .map((line) => ({ ...line, base_quantity: round2(toNum(line.product_quantity) * lineUnitFactor(line)) }));
-    if (!lines.length) return { ok: false, error: "لا يمكن حفظ فاتورة فارغة." };
+    if (!payload.edit_revision) return { ok: false, error: "أعد فتح الفاتورة قبل تعديلها." };
     try {
-      const preliminary = await getDoc(doc(db, "invoices", id));
-      if (!preliminary.exists()) return { ok: false, error: "الفاتورة غير موجودة." };
-      const preliminaryData = preliminary.data() as Record<string, unknown>;
-      const [returnSnapshot, cashHistorySnapshot, debtPaymentSnapshot] = await Promise.all([
-        getDocs(query(collection(db, "invoice_returns"), where("invoice_id", "==", id))),
-        getDocs(query(collection(db, "cash_transactions"), where("invoice_id", "==", id))),
-        preliminaryData.customer_id
-          ? getDocs(query(collection(db, "debt_payments"), where("customer_id", "==", preliminaryData.customer_id)))
-          : Promise.resolve(null),
-      ]);
-      const returnRefs = returnSnapshot.docs.map((item) => item.ref);
-      const cashHistoryRefs = cashHistorySnapshot.docs.map((item) => item.ref);
-      const debtPaymentRefs = debtPaymentSnapshot?.docs
-        .filter((item) => Array.isArray(item.data().allocations) && (item.data().allocations as { type?: string; reference_id?: string }[])
-          .some((allocation) => allocation.type === "invoice" && allocation.reference_id === id))
-        .map((item) => item.ref) ?? [];
-      if (returnRefs.length + cashHistoryRefs.length + debtPaymentRefs.length > 350) {
-        return { ok: false, error: "يتعذر التحقق من سجل الفاتورة بأمان. يرجى مراجعة الدعم قبل تعديلها." };
-      }
-      let cashSkipped = false;
-      await runTx(async (tx) => {
-        // 1. Persisted original — never diff against stale UI state.
-        const invRef = doc(db, "invoices", id);
-        const invSnap = await tx.get(invRef);
-        if (!invSnap.exists()) throw new Error("VALIDATION:الفاتورة غير موجودة.");
-        const orig = invSnap.data() as Record<string, unknown>;
-        if (toNum(orig.credit_used) > 0) throw new Error("VALIDATION:لا يمكن تعديل فاتورة استُخدم فيها رصيد العميل. استخدم المرتجع والتسوية.");
-        const oldLines = (Array.isArray(orig.products) ? orig.products : []) as Invoice["products"];
-        const returnRecords = await Promise.all(returnRefs.map((ref) => tx.get(ref)));
-        const cashHistory = await Promise.all(cashHistoryRefs.map((ref) => tx.get(ref)));
-        const debtPaymentRecords = await Promise.all(debtPaymentRefs.map((ref) => tx.get(ref)));
-        const hasReturnHistory = invoiceHasReturnHistory(
-          returnRecords.some((record) => record.exists()),
-          orig.returned_base_quantity,
-          orig.return_status,
-          orig.returned as Record<string, unknown> | null | undefined,
-        );
-        if (hasReturnHistory) {
-          throw new Error("VALIDATION:لا يمكن تعديل فاتورة تحتوي على مرتجع. استخدم عمليات المرتجع والتسوية بدلاً من تعديل الفاتورة.");
-        }
-        const hasDebtPaymentHistory = Number(orig.debt_payment_count) > 0
-          || cashHistory.some((record) => record.exists() && (record.data().type === "invoice_payment" || !!record.data().debt_payment_id))
-          || debtPaymentRecords.some((record) => record.exists())
-          || (round2(toNum(orig.paid_amount)) !== round2(toNum(preliminaryData.paid_amount))
-            || round2(toNum(orig.remaining)) !== round2(toNum(preliminaryData.remaining)));
-        const oldInvoice = { ...orig, id } as unknown as Invoice;
-        const oldCustomerSummaryId = customerSummaryId(oldInvoice);
-        const newCustomerSummaryId = customerSummaryId(payload as Invoice);
-        if (invoiceEditCustomerChangeError(oldCustomerSummaryId, newCustomerSummaryId, hasDebtPaymentHistory)) {
-          throw new Error("VALIDATION:لا يمكن تغيير العميل بعد تسجيل دفعة على الفاتورة.");
-        }
-        const requestedPayable = invoiceTotals({ ...payload, paid_amount: 0 }).net;
-        const rawPaid = payload.paid_amount;
-        const newPaid = Number(rawPaid ?? 0);
-        const paidError = invoiceEditPaymentError(payload);
-        if (paidError === "paid amount must be a valid non-negative number") throw new Error("VALIDATION:المبلغ المدفوع يجب أن يكون رقماً صالحاً ويساوي صفراً أو أكثر.");
-        if (paidError === "paid amount cannot exceed invoice total") throw new Error("VALIDATION:المبلغ المدفوع لا يمكن أن يتجاوز إجمالي الفاتورة.");
-        const oldPaid = orig.paid_amount === null || orig.paid_amount === undefined
-          ? invoiceTotals({ ...(oldInvoice as object), paid_amount: 0 } as Invoice).net
-          : round2(toNum(orig.paid_amount));
-        const normalizedPaid = round2(newPaid);
-        const remaining = round2(requestedPayable - normalizedPaid);
-        if (remaining < -STOCK_EPS) throw new Error("VALIDATION:المتبقي على الفاتورة لا يمكن أن يكون سالباً.");
-        const preliminaryChanges = invoiceEditStockChanges(oldLines, lines, new Map());
-        const affectedIds = [...new Set([
-          ...preliminaryChanges.takes.map((movement) => movement.product_id),
-          ...preliminaryChanges.restores.map((movement) => movement.product_id),
-        ])];
-        const currentCostByProduct = new Map<string, number>();
-        const stocks = new Map<string, { stock: number; cost: number; name: string }>();
-        for (const productId of affectedIds) {
-          const productSnap = await tx.get(doc(db, "products", productId));
-          const name = String(lines.find((line) => line.product_id === productId)?.product_name
-            ?? oldLines.find((line) => line.product_id === productId)?.product_name ?? "");
-          if (!productSnap.exists()) throw new Error(`VALIDATION:المنتج ${name} غير موجود بالمخزون.`);
-          const stock = toNum(productSnap.data().stock_quantity);
-          const cost = round4(toNum(productSnap.data().cost_price));
-          stocks.set(productId, { stock, cost, name: String(productSnap.data().name || name) });
-          currentCostByProduct.set(productId, cost);
-        }
-        const editChanges = invoiceEditStockChanges(oldLines, lines, currentCostByProduct);
-        const effectiveLines = editChanges.lines;
-        const effectivePayload = {
-          ...payload,
-          products: effectiveLines,
-          paid_amount: normalizedPaid,
-          remaining,
-        };
-        const paidDelta = round2(normalizedPaid - oldPaid);
-        const takes = editChanges.takes;
-        const restores = editChanges.restores;
-        const pids = [...new Set([...takes.map((movement) => movement.product_id), ...restores.map((movement) => movement.product_id)])];
-        for (const d of takes) {
-          const restoredQuantity = restores.filter((group) => group.product_id === d.product_id)
-            .reduce((sum, group) => sum + group.qty, 0);
-          if (-d.delta - ((stocks.get(d.product_id)?.stock ?? 0) + restoredQuantity) > STOCK_EPS) {
-            throw new Error(`VALIDATION:الكمية المطلوبة تتجاوز المخزون المتاح لمنتج ${d.product_name}.`);
-          }
-        }
-        // 3. Cashbox state. Any paid delta requires an initialized cashbox;
-        // otherwise the whole edit is rejected (no partial effects).
-        const cashRef = doc(db, "cashbox", "current");
-        const cashSnap = await tx.get(cashRef);
-        const cashReady = cashSnap.exists();
-        const cashBal = cashReady ? round2(Number(cashSnap.data()?.balance || 0)) : 0;
-        if (paidDelta !== 0 && !cashReady) {
-          throw new Error("VALIDATION:لا يمكن تغيير المبلغ المدفوع قبل تهيئة الخزنة. هيّئ الخزنة أولاً ثم أعد الحفظ.");
-        }
-        if (paidDelta < 0 && invoiceEditCashOutflowError(cashBal, paidDelta)) {
-          throw new Error("VALIDATION:رصيد الخزنة لا يكفي لتقليل المبلغ المدفوع بهذه القيمة.");
-        }
-        cashSkipped = false;
-        const now = serverTimestamp();
-        const by = (authStore.currentUserKey as string) || null;
-        // 4. Invoice doc.
-        tx.update(invRef, {
-          ...(effectivePayload as Record<string, unknown>),
-          products: effectiveLines,
-          inventory_applied: true,
-          cashbox_applied: true,
-          ...invoiceSearchKeys(effectivePayload.customer_name, effectivePayload.customer_phone),
-        });
-        writeDebtSummary(tx, db, {
-          invoice_id: id,
-          customer_id: (effectivePayload.customer_id as string) || null,
-          customer_name: effectivePayload.customer_name ?? null,
-          customer_phone: (effectivePayload.customer_phone as string | number | null) ?? null,
-          date: (effectivePayload.date as unknown) ?? null,
-          ...summarizeInvoice(effectivePayload as Invoice),
-        });
-        const oldSummary = summarizeInvoice(orig as unknown as Invoice);
-        const newSummary = summarizeInvoice(effectivePayload as Invoice);
-        writeInvoiceStatsDelta(tx, db, oldInvoice, effectivePayload as Invoice);
-        if (oldCustomerSummaryId === newCustomerSummaryId) {
-          writeCustomerSummaryDelta(tx, db, effectivePayload as Invoice, {
-            total_sales: round2(newSummary.sales - oldSummary.sales),
-            outstanding_debt: round2(newSummary.remaining - oldSummary.remaining),
-          });
-        } else {
-          writeCustomerSummaryDelta(tx, db, orig as unknown as Invoice, {
-            invoice_count: -1,
-            total_sales: -oldSummary.sales,
-            outstanding_debt: -oldSummary.remaining,
-          });
-          writeCustomerSummaryDelta(tx, db, effectivePayload as Invoice, {
-            invoice_count: 1,
-            total_sales: newSummary.sales,
-            outstanding_debt: newSummary.remaining,
-          });
-        }
-        // 5. Stock + logs. Takes leave cost untouched; each restore group
-        // re-enters at its own historical cost with its own log. Product
-        // updates go through the canonical applyStockGroup (mirrors replay).
-        let seq = 0;
-        const lastMovementByProduct = new Map<string, string>();
-        const movementIdsByProduct = new Map<string, string[]>();
-        for (const g of restores) {
-          const movementRef = doc(collection(db, "inventory_transactions"));
-          lastMovementByProduct.set(g.product_id, movementRef.id);
-          const movementIds = movementIdsByProduct.get(g.product_id) ?? [];
-          movementIds.push(movementRef.id);
-          movementIdsByProduct.set(g.product_id, movementIds);
-          tx.set(movementRef, {
-            type: "sale",
-            product_id: g.product_id,
-            product_name: g.product_name,
-            quantity: g.qty,
-            unit_name: "وحدة مخزون أساسية",
-            unit_factor: 1,
-            base_quantity: g.qty,
-            direction: "in",
-            unit_cost: g.unit_cost,
-            invoice_id: id,
-            reason: "invoice_edit",
-            note: "تعديل فاتورة",
-            seq: seq++,
-            created_by: by,
-            created_at: now,
-          });
-        }
-        for (const d of takes) {
-          const movementRef = doc(collection(db, "inventory_transactions"));
-          if (!lastMovementByProduct.has(d.product_id)) {
-            lastMovementByProduct.set(d.product_id, movementRef.id);
-          }
-          const movementIds = movementIdsByProduct.get(d.product_id) ?? [];
-          movementIds.push(movementRef.id);
-          movementIdsByProduct.set(d.product_id, movementIds);
-          tx.set(movementRef, {
-            type: "sale",
-            product_id: d.product_id,
-            product_name: d.product_name,
-            quantity: Math.abs(d.delta),
-            unit_name: "وحدة مخزون أساسية",
-            unit_factor: 1,
-            base_quantity: Math.abs(d.delta),
-            direction: "out",
-            unit_cost: round2(d.unit_cost),
-            invoice_id: id,
-            reason: "invoice_edit",
-            note: "تعديل فاتورة",
-            seq: seq++,
-            created_by: by,
-            created_at: now,
-          });
-        }
-        for (const pid of pids) {
-          const st = stocks.get(pid)!;
-          const takeQty = round2(-(takes.find((d) => d.product_id === pid)?.delta ?? 0));
-          const inflows = restores
-            .filter((g) => g.product_id === pid)
-            .map((g) => ({ qty: g.qty, cost: g.unit_cost as number | null }));
-          const r = applyStockGroup(st.stock, st.cost, takeQty, inflows);
-          const patch: Record<string, unknown> = {
-            stock_quantity: r.stock,
-            last_inventory_transaction_id: lastMovementByProduct.get(pid),
-            last_inventory_transaction_ids: movementIdsByProduct.get(pid) ?? [],
-          };
-          if (inflows.length > 0 && r.avg !== undefined) {
-            patch.cost_price = r.avg;
-          }
-          tx.update(doc(db, "products", pid), patch);
-        }
-        // 6. Cash delta (corrective dir + matching log).
-        if (paidDelta !== 0 && cashReady) {
-          const dir = paidDelta > 0 ? "in" : "out";
-          tx.set(cashRef, { balance: round2(cashBal + paidDelta), updated_at: now }, { merge: true });
-          tx.set(doc(collection(db, "cash_transactions")), {
-            type: "invoice_edit_adjustment",
-            direction: dir,
-            amount: Math.abs(paidDelta),
-            invoice_id: id,
-            reference_type: "invoice",
-            reference_id: id,
-            reference_label: `فاتورة بيع لـ ${effectivePayload.customer_name || "عميل"}`,
-            note: "فرق تعديل فاتورة",
-            created_by: by,
-            created_at: now,
-          });
-        }
-      });
+      const fingerprint = JSON.stringify({ id, payload });
+      if (pendingEdit?.fingerprint !== fingerprint) pendingEdit = { fingerprint, requestId: crypto.randomUUID() };
+      await callStaff("updateStaffInvoice", { ...payload, id, requestId: pendingEdit.requestId });
+      pendingEdit = null;
       useProductsStore().invalidateCache();
       invalidateCache();
-      return { ok: true, cashSkipped };
-    } catch (e) {
-      if (e instanceof Error && e.message.startsWith("VALIDATION:")) {
-        return { ok: false, error: e.message.slice("VALIDATION:".length) };
-      }
-      console.error(e);
-      return { ok: false, error: "تعذر حفظ العملية، لم يتم تعديل الخزنة أو المخزون." };
+      return { ok: true, cashSkipped: false };
+    } catch (error) {
+      console.error(error);
+      return { ok: false, error: "تعذر تعديل الفاتورة. قد تكون الفاتورة أو المخزون تغيرا؛ أعد فتحها وحاول مرة أخرى." };
     }
   }
 

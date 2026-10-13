@@ -170,10 +170,6 @@ service cloud.firestore {
     match /products/{id} {
       allow read: if isStaff();
       allow create: if isStaff()
-        && request.resource.data.price is number
-        && request.resource.data.cost_price is number
-        && request.resource.data.get('stock_quantity', 0) is number
-        && request.resource.data.get('stock_quantity', 0) >= 0
         && request.resource.data.get('low_stock_threshold', 5) is number
         && request.resource.data.get('low_stock_threshold', 5) >= 0
         && request.resource.data.get('units', []) is list
@@ -186,6 +182,8 @@ service cloud.firestore {
           || hasFreshCostAdjustment(id))
         && (!('base_unit_id' in resource.data)
           || request.resource.data.get('base_unit_id', null) == resource.data.get('base_unit_id', null))
+        && request.resource.data.get('units', []) is list
+        && request.resource.data.get('units', []).size() > 0
         && request.resource.data.get('low_stock_threshold', 5) is number
         && request.resource.data.get('low_stock_threshold', 5) >= 0);
       allow delete: if isAdmin();

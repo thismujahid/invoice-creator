@@ -48,12 +48,11 @@
         <!-- Unit lines: compact text display (responsive) + edit/delete only -->
         <div class="space-y-2">
           <div
-            class="flex items-center justify-between gap-2 rounded-lg border border-emerald-200 bg-emerald-50/50 p-2"
+            class="flex items-center justify-between gap-2 rounded-lg border border-gray-100 p-2"
           >
             <div class="min-w-0 text-xs">
               <span class="font-bold">
                 {{ productForm.base_unit_name?.trim() || "وحدة" }}
-                <span class="font-normal text-gray-400">(الوحدة الأساسية)</span>
               </span>
               <span class="mt-0.5 block text-gray-500">
                 <template v-if="isEditMode"
@@ -93,11 +92,21 @@
                 color="neutral"
                 variant="soft"
                 icon="i-lucide-pencil"
-                aria-label="تعديل الوحدة الأساسية"
+                aria-label="تعديل الوحدة"
                 :disabled="saving"
                 @click="openUnitModal('base')"
                 >تعديل</UButton
               >
+              <UButton
+                v-if="additionalUnits.length > 0"
+                size="xs"
+                color="error"
+                variant="ghost"
+                icon="i-lucide-trash-2"
+                aria-label="حذف الوحدة"
+                :disabled="saving"
+                @click="removeUnit('base')"
+              />
             </div>
           </div>
           <div
@@ -107,8 +116,7 @@
           >
             <div class="min-w-0 text-xs">
               <span class="font-bold"
-                >{{ unit.name?.trim() || "وحدة جديدة" }} = {{ unit.factor }}
-                {{ productForm.base_unit_name?.trim() || "وحدة" }}</span
+                >{{ unit.name?.trim() || "وحدة جديدة" }}</span
               >
               <span class="text-gray-400">
                 · {{ unitUsageLabel(unit.usage) }}
@@ -163,6 +171,7 @@
                 >تعديل</UButton
               >
               <UButton
+                v-if="additionalUnits.length > 0"
                 size="xs"
                 color="error"
                 variant="ghost"
@@ -193,21 +202,7 @@
               placeholder="مثال: علبة، مكعب، كيس"
               size="lg"
               class="w-full"
-              :disabled="saving || (unitDraft.isBase && baseUnitLocked)"
-            />
-          </UFormField>
-          <UFormField
-            v-if="!unitDraft.isBase"
-            label="تحتوي وحدات أساسية"
-            required
-          >
-            <UInputNumber
-              v-model="unitDraft.factor"
-              :min="1"
-              :step="0.01"
-              size="lg"
-              class="w-full"
-              dir="ltr"
+              :disabled="saving"
             />
           </UFormField>
           <UFormField
@@ -224,7 +219,7 @@
               placeholder="بدون تنبيه"
             />
           </UFormField>
-          <UFormField v-if="!unitDraft.isBase" label="الاستخدام">
+          <UFormField label="الاستخدام">
             <USelect
               v-model="unitDraft.usage"
               :items="unitUsageItems"
@@ -235,6 +230,10 @@
               @update:model-value="(usage) => setUnitUsage(unitDraft, usage)"
             />
           </UFormField>
+          <UCheckbox
+            v-model="unitDraft.allows_fractional"
+            label="تقبل الكسور"
+          />
           <UFormField v-if="unitDraft.can_sell" label="سعر البيع" required>
             <UInputNumber
               v-model="unitDraft.selling_price"
@@ -361,8 +360,11 @@ const baseSalePrice = ref<number | null>(null);
 const basePurchasePrice = ref<number | null>(null);
 // Shortage threshold of the BASE unit, in base-unit terms (null = no alert).
 const baseThreshold = ref<number | null>(null);
+const baseAllowsFractional = ref(false);
+const baseUsage = ref<UnitUsage>("both");
 // Purchase-price history log of the BASE unit (reference only, never edited).
 const baseHistory = ref<string | null>(null);
+const baseUnitSnapshot = ref<ProductUnit | null>(null);
 const historyOpen = ref(false);
 const historyUnitName = ref("");
 const historyLog = ref<string | null>(null);
@@ -377,9 +379,6 @@ const unitUsageItems = [
   { label: "للبيع فقط", value: "sell" },
   { label: "للشراء والبيع", value: "both" },
 ];
-const baseUnitLocked = computed(
-  () => !!(props.edit?.base_unit_id && props.edit?.base_unit_name),
-);
 const saving = ref(false);
 const submitError = ref("");
 const errors = ref<{
@@ -423,7 +422,7 @@ function unitUsageLabel(usage: unknown): string {
 }
 // Canonical display: average cost derived from base average (never stored per-unit).
 const avgBaseValue = computed(() => {
-  const raw = (productForm.value.cost_price ??
+  const raw = (baseUnitSnapshot.value?.average_cost ??
     basePurchasePrice.value) as unknown;
   if (raw === null || raw === undefined || raw === "") return null;
   const v = Number(raw);
@@ -432,24 +431,22 @@ const avgBaseValue = computed(() => {
 const avgBaseText = computed(() =>
   avgBaseValue.value === null ? "—" : `${formatePrice(avgBaseValue.value)} ج`,
 );
-function unitAvgText(unit: { factor: unknown }): string {
-  if (avgBaseValue.value === null) return "—";
-  const f = Number(unit.factor);
-  if (!Number.isFinite(f) || f <= 0) return "—";
-  return `${formatePrice(avgBaseValue.value * f)} ج`;
+function unitAvgText(unit: ProductUnit): string {
+  const avg = unit.average_cost ?? unit.purchase_price;
+  return avg == null ? "—" : `${formatePrice(avg)} ج`;
 }
 function unitMarginText(unit: {
   selling_price: unknown;
-  factor: unknown;
+  average_cost?: number | null;
+  purchase_price?: number | null;
 }): string {
+  const avg = unit.average_cost ?? unit.purchase_price;
   if (
-    avgBaseValue.value === null ||
+    avg == null ||
     unit.selling_price === null ||
     unit.selling_price === undefined
   )
     return "—";
-  const f = Number(unit.factor);
-  const avg = avgBaseValue.value * (Number.isFinite(f) && f > 0 ? f : 1);
   if (!(avg > 0)) return "—";
   const rate = (Number(unit.selling_price) - avg) / avg;
   return `${Math.round(rate * 10000) / 100}%`;
@@ -458,7 +455,7 @@ function unitMarginText(unit: {
 const baseMarginText = computed(() =>
   baseSalePrice.value == null
     ? "—"
-    : unitMarginText({ selling_price: baseSalePrice.value, factor: 1 }),
+    : unitMarginText({ selling_price: baseSalePrice.value, average_cost: avgBaseValue.value }),
 );
 // Unit editor modal: one draft edited in a focused dialog (mobile-friendly
 // slideover) instead of cramped inline grid inputs.
@@ -479,13 +476,14 @@ const unitDraft = ref<UnitDraft>({
   low_stock_threshold: null,
   can_purchase: true,
   can_sell: true,
+  allows_fractional: false,
   usage: "both",
 });
 const unitModalTitle = computed(() =>
   unitDraft.value.key === "new"
     ? "إضافة وحدة جديدة"
     : unitDraft.value.isBase
-      ? "تعديل الوحدة الأساسية"
+      ? "تعديل الوحدة"
       : "تعديل الوحدة",
 );
 function openUnitModal(target: number | "base" | "new"): void {
@@ -500,9 +498,10 @@ function openUnitModal(target: number | "base" | "new"): void {
       selling_price: baseSalePrice.value,
       purchase_price: basePurchasePrice.value,
       low_stock_threshold: baseThreshold.value,
-      can_purchase: true,
-      can_sell: true,
-      usage: "both",
+      can_purchase: baseUsage.value !== "sell",
+      can_sell: baseUsage.value !== "purchase",
+      allows_fractional: baseAllowsFractional.value,
+      usage: baseUsage.value,
     };
   } else if (target === "new") {
     unitDraft.value = {
@@ -516,6 +515,7 @@ function openUnitModal(target: number | "base" | "new"): void {
       low_stock_threshold: null,
       can_purchase: true,
       can_sell: true,
+      allows_fractional: false,
       usage: "both",
     };
   } else {
@@ -532,6 +532,7 @@ function openUnitModal(target: number | "base" | "new"): void {
       low_stock_threshold: unit.low_stock_threshold ?? null,
       can_purchase: unit.can_purchase ?? true,
       can_sell: unit.can_sell ?? true,
+      allows_fractional: unit.allows_fractional === true,
       usage: unit.usage,
     };
   }
@@ -544,19 +545,9 @@ function confirmUnitModal(): void {
     return;
   }
   if (
-    !d.isBase &&
-    (!Number.isFinite(Number(d.factor)) || !(Number(d.factor) > 1))
-  ) {
-    unitModalError.value =
-      "معامل التحويل يجب أن يكون أكبر من 1 (يسمح بالكسور مثل 1.5).";
-    return;
-  }
-  if (
-    d.can_sell &&
-    (d.selling_price === null ||
-      d.selling_price === undefined ||
-      !Number.isFinite(Number(d.selling_price)) ||
-      Number(d.selling_price) < 0)
+    d.selling_price !== null &&
+    d.selling_price !== undefined &&
+    (!Number.isFinite(Number(d.selling_price)) || Number(d.selling_price) < 0)
   ) {
     unitModalError.value = "أدخل سعر بيع صالحًا للوحدة.";
     return;
@@ -576,10 +567,7 @@ function confirmUnitModal(): void {
     rawThr === null || rawThr === undefined || rawThr === ""
       ? null
       : Number(rawThr);
-  if (
-    normThr !== null &&
-    (!Number.isFinite(normThr) || normThr < 0)
-  ) {
+  if (normThr !== null && (!Number.isFinite(normThr) || normThr < 0)) {
     unitModalError.value = "مؤشر النقص يجب أن يكون صفرًا أو رقمًا موجبًا.";
     return;
   }
@@ -587,18 +575,21 @@ function confirmUnitModal(): void {
     productForm.value.base_unit_name = d.name.trim();
     baseSalePrice.value = d.selling_price ?? null;
     baseThreshold.value = normThr;
+    baseAllowsFractional.value = d.allows_fractional === true;
+    baseUsage.value = d.usage;
     // Purchase reference is system-managed after creation.
     if (!isEditMode.value) basePurchasePrice.value = d.purchase_price ?? null;
   } else if (d.key === "new") {
     additionalUnits.value.push({
       id: d.id,
       name: d.name.trim(),
-      factor: Number(d.factor),
+      factor: 1,
       selling_price: d.selling_price ?? null,
       purchase_price: d.purchase_price ?? null,
       low_stock_threshold: normThr,
       can_purchase: d.can_purchase,
       can_sell: d.can_sell,
+      allows_fractional: d.allows_fractional === true,
       usage: d.usage,
     });
   } else {
@@ -606,11 +597,12 @@ function confirmUnitModal(): void {
     const unit = additionalUnits.value[d.key];
     if (!unit) return;
     unit.name = d.name.trim();
-    unit.factor = Number(d.factor);
+    unit.factor = 1;
     unit.usage = d.usage;
     unit.can_purchase = d.can_purchase;
     unit.can_sell = d.can_sell;
     unit.selling_price = d.selling_price ?? null;
+    unit.allows_fractional = d.allows_fractional === true;
     unit.low_stock_threshold = normThr;
     if (!isEditMode.value) unit.purchase_price = d.purchase_price ?? null;
   }
@@ -622,7 +614,24 @@ function setUnitUsage(unit: EditableProductUnit, usage: unknown): void {
   unit.can_purchase = usage !== "sell";
   unit.can_sell = usage !== "purchase";
 }
-function removeUnit(index: number): void {
+function setPrimaryUnit(unit: ProductUnit): void {
+  baseUnitSnapshot.value = { ...unit };
+  productForm.value.base_unit_id = unit.id;
+  productForm.value.base_unit_name = unit.name;
+  baseSalePrice.value = unit.selling_price;
+  basePurchasePrice.value = unit.purchase_price ?? null;
+  baseThreshold.value = unit.low_stock_threshold ?? null;
+  baseAllowsFractional.value = unit.allows_fractional === true;
+  baseUsage.value = unit.can_purchase === false ? "sell" : unit.can_sell === false ? "purchase" : "both";
+  baseHistory.value = unit.purchase_price_history ?? null;
+}
+function removeUnit(index: number | "base"): void {
+  if (!additionalUnits.value.length) return;
+  if (index === "base") {
+    const next = additionalUnits.value.shift();
+    if (next) setPrimaryUnit(next);
+    return;
+  }
   additionalUnits.value.splice(index, 1);
 }
 
@@ -632,31 +641,6 @@ function validate(): boolean {
   const e: typeof errors.value = {};
   const nameRes = requiredRule(productForm.value.name?.trim());
   if (nameRes !== true) e.name = nameRes;
-  // Base sale price is always required (it mirrors product.price).
-  const saleRes = requiredRule(baseSalePrice.value);
-  if (saleRes !== true) e.base_sale = "سعر بيع الوحدة الأساسية مطلوب.";
-  else {
-    const neg = positiveNumberRule(baseSalePrice.value);
-    if (neg !== true) e.base_sale = neg;
-  }
-  // Base purchase price is entered on create only; edits never touch costs
-  // (§7: purchase/return movements own them afterwards).
-  if (!isEditMode.value) {
-    const costRes = requiredRule(basePurchasePrice.value);
-    if (costRes !== true) e.base_purchase = "سعر شراء الوحدة الأساسية مطلوب.";
-    else {
-      const neg = positiveNumberRule(basePurchasePrice.value);
-      if (neg !== true) e.base_purchase = neg;
-    }
-  }
-  // Purchase may never exceed sale on the base unit (create mode).
-  if (!isEditMode.value && !e.base_sale && !e.base_purchase) {
-    const cost = Number(basePurchasePrice.value);
-    const price = Number(baseSalePrice.value);
-    if (cost - price > 1e-9) {
-      e.base_purchase = "سعر الشراء لا يمكن أن يكون أعلى من سعر البيع.";
-    }
-  }
   if (!productForm.value.base_unit_name?.trim())
     e.base_unit_name = "اسم وحدة المخزون الأساسية مطلوب.";
   const unitIds = new Set<string>();
@@ -675,14 +659,13 @@ function validate(): boolean {
     if (
       !unit.name.trim() ||
       !Number.isFinite(Number(unit.factor)) ||
-      !(Number(unit.factor) > 1) ||
+      Number(unit.factor) !== 1 ||
       unitIds.has(unit.id) ||
       badPurchase ||
       badThreshold ||
-      (unit.can_sell &&
-        (unit.selling_price === null ||
-          unit.selling_price === undefined ||
-          !Number.isFinite(Number(unit.selling_price)) ||
+      (unit.selling_price !== null &&
+        unit.selling_price !== undefined &&
+        (!Number.isFinite(Number(unit.selling_price)) ||
           Number(unit.selling_price) < 0))
     ) {
       e.units = `راجع بيانات الوحدة رقم ${index + 1}، وتأكد من إدخال سعر بيعها إذا كانت للبيع.`;
@@ -708,16 +691,13 @@ async function saveProduct() {
   try {
     let id = productForm.value?.id;
     const baseId = productForm.value.base_unit_id || "base";
-    // Mirror the base row into the legacy top-level fields so rules and
-    // legacy readers keep working unchanged.
-    productForm.value.price = baseSalePrice.value;
-    if (!productForm.value?.id) {
-      productForm.value.cost_price = basePurchasePrice.value;
-    }
+    productForm.value.price = null;
+    productForm.value.cost_price = null;
     // Shortage thresholds are stored per unit, each in its unit's own
     // denomination. The legacy product-level fields are never written.
     const units: ProductUnit[] = [
       {
+        ...baseUnitSnapshot.value,
         id: baseId,
         name: productForm.value.base_unit_name?.trim() || "وحدة",
         factor: 1,
@@ -725,8 +705,11 @@ async function saveProduct() {
         purchase_price: basePurchasePrice.value,
         low_stock_threshold: baseThreshold.value ?? null,
         is_base: true,
-        can_purchase: true,
-        can_sell: true,
+        can_purchase: baseUsage.value !== "sell",
+        can_sell: baseUsage.value !== "purchase",
+        allows_fractional: baseAllowsFractional.value,
+        stock_quantity: baseUnitSnapshot.value?.stock_quantity ?? 0,
+        average_cost: baseUnitSnapshot.value?.average_cost ?? basePurchasePrice.value ?? 0,
       },
       ...additionalUnits.value.map(({ usage: _usage, ...unit }) => ({
         ...unit,
@@ -745,6 +728,8 @@ async function saveProduct() {
             ? null
             : Number(unit.low_stock_threshold),
         is_base: false,
+        stock_quantity: Number(unit.stock_quantity ?? 0),
+        average_cost: Number(unit.average_cost ?? unit.purchase_price ?? 0),
       })),
     ];
     // Strip the legacy product-level threshold (old docs keep theirs; new
@@ -752,17 +737,20 @@ async function saveProduct() {
     const {
       low_stock_threshold: _legacyThreshold,
       low_stock_unit_id: _legacyUnit,
+      base_unit_name: _legacyBaseName,
+      base_unit_id: _legacyBaseId,
       ...cleanData
     } = productForm.value;
     void _legacyThreshold;
     void _legacyUnit;
+    void _legacyBaseName;
+    void _legacyBaseId;
     if (productForm.value?.id) {
       // Edit mode never writes cost_price (§7: system-managed).
       const { cost_price: _locked, ...editData } = cleanData;
       void _locked;
       await productsStore.updateProduct(productForm.value.id, {
         ...editData,
-        base_unit_id: baseId,
         units,
       });
     } else {
@@ -781,7 +769,10 @@ async function saveProduct() {
     baseSalePrice.value = null;
     basePurchasePrice.value = null;
     baseThreshold.value = null;
+    baseAllowsFractional.value = false;
+    baseUsage.value = "both";
     baseHistory.value = null;
+    baseUnitSnapshot.value = null;
     additionalUnits.value = [];
     closeDialog();
   } catch (err) {
@@ -808,18 +799,27 @@ watch(
     const editUnits = props.edit?.units ?? [];
     const baseEntry =
       editUnits.find((unit) => unit.is_base) ??
-      editUnits.find((unit) => unit.id === props.edit?.base_unit_id);
+      editUnits.find((unit) => unit.id === props.edit?.base_unit_id) ?? editUnits[0];
     baseSalePrice.value = baseEntry?.selling_price ?? props.edit?.price ?? null;
     basePurchasePrice.value =
       baseEntry?.purchase_price ?? props.edit?.cost_price ?? null;
     // Per-unit thresholds hydrate as stored (each in its unit's own
     // denomination); units without one simply show no alert.
     baseThreshold.value = baseEntry?.low_stock_threshold ?? null;
+    baseAllowsFractional.value = baseEntry?.allows_fractional === true;
+    baseUsage.value =
+      baseEntry?.can_purchase === false
+        ? "sell"
+        : baseEntry?.can_sell === false
+          ? "purchase"
+          : "both";
     baseHistory.value = baseEntry?.purchase_price_history ?? null;
+    baseUnitSnapshot.value = null;
+    if (baseEntry) setPrimaryUnit(baseEntry);
     additionalUnits.value =
       props.edit?.units
         ?.filter(
-          (unit) => !unit.is_base && unit.id !== props.edit?.base_unit_id,
+          (unit) => unit.id !== baseEntry?.id,
         )
         .map((unit) => {
           const canPurchase = unit.can_purchase !== false;
@@ -848,6 +848,8 @@ watch(
       baseSalePrice.value = null;
       basePurchasePrice.value = null;
       baseThreshold.value = null;
+      baseAllowsFractional.value = false;
+      baseUsage.value = "both";
     }
   },
   { immediate: true },

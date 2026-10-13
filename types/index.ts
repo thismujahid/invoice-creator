@@ -42,6 +42,8 @@ export interface ProductUnit {
   name: string;
   factor: number;
   selling_price: number | null;
+  stock_quantity?: number | null;
+  average_cost?: number | null;
   /** Last purchase unit-cost for THIS unit (reference value, in the unit's
    *  own denomination). The moving average lives once, in base-unit terms,
    *  on Product.cost_price — per-unit averages are derived, never stored. */
@@ -57,6 +59,7 @@ export interface ProductUnit {
    *  When ANY unit of a product defines a threshold, unit-level evaluation
    *  replaces the legacy product-level threshold. */
   low_stock_threshold?: number | null;
+  allows_fractional?: boolean;
   is_base?: boolean;
   can_purchase?: boolean;
   can_sell?: boolean;

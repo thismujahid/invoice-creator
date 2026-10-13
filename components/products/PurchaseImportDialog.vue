@@ -1,5 +1,5 @@
 <template>
-  <UiAppDialog v-model:open="open" title="استيراد كميات ومنتجات">
+  <UiAppDialog v-model:open="open" title="استيراد كميات ومنتجات" width="sm:max-w-4xl">
     <div class="space-y-4">
       <template v-if="!result">
         <UFormField label="ملف طلب الشراء" :error="fileError || undefined">
@@ -78,11 +78,10 @@
           </div>
           <div v-if="problemRows.length" class="space-y-2">
             <p class="text-xs font-bold text-amber-700">
-              صفوف تحتاج مراجعة ({{ problemRows.length }}) — لن تُحفظ أي بيانات
-              قبل حل جميع الأخطاء والتأكيد
+              الصفوف التالية تحتاج تصحيحًا قبل تأكيد الفاتورة.
             </p>
             <div
-              class="max-h-[38vh] space-y-2 overflow-y-auto overscroll-contain pe-1"
+              class="space-y-2"
             >
               <UCard
                 v-for="row in problemRows"
@@ -157,14 +156,14 @@
                   </UFormField>
                 </div>
                 <div class="grid grid-cols-2 gap-2">
-                  <UFormField :label="`الكمية (${row.unitName || 'وحدة'})`"
+                  <UFormField :label="`الكمية (${row.product ? row.unitName : row.baseUnitName})`"
                     ><UInputNumber
                       v-model="row.quantity"
-                      :min="1"
-                      :step="1"
+                      :min="0.0001"
+                      :step="selectedUnit(row)?.allows_fractional || row.allowsFractional ? 0.01 : 1"
                       class="w-full"
                   /></UFormField>
-                  <UFormField :label="`تكلفة ${row.unitName || 'الوحدة'}`"
+                  <UFormField :label="`تكلفة ${row.product ? row.unitName : row.baseUnitName}`"
                     ><UInputNumber
                       v-model="row.unitCost"
                       :min="0"
@@ -194,7 +193,7 @@
                         class="w-full"
                     /></UFormField>
                     <UFormField
-                      label="مؤشر النقص (للوحدة الأساسية)"
+                      label="مؤشر النقص لهذه الوحدة"
                       hint="الافتراضي 5"
                       ><UInputNumber
                         v-model="row.threshold"
@@ -202,13 +201,14 @@
                         :step="1"
                         class="w-full"
                     /></UFormField>
-                    <UFormField label="وحدة المخزون الأساسية" required
+                    <UFormField label="اسم الوحدة" required
                       ><UInput
                         v-model="row.baseUnitName"
                         placeholder="مثال: قطعة أو جرام"
                         class="w-full"
                     /></UFormField>
                   </div>
+                  <UCheckbox v-model="row.allowsFractional" label="تقبل الكسور" />
                 </template>
                 <ul
                   v-if="rowErrors(row).length"
@@ -222,7 +222,7 @@
             </div>
           </div>
           <UAlert
-            v-else
+            v-if="!errorCount"
             color="success"
             variant="soft"
             icon="i-lucide-circle-check"
@@ -238,22 +238,8 @@
             >
               <span
                 >{{ row.name }} · {{ row.quantity ?? "—" }}
-                {{ row.unitName || row.baseUnitName }} ×
-                {{ formatePrice(row.unitCost) }} ج<template
-                  v-if="
-                    row.avgOverride !== null && row.avgOverride !== undefined
-                  "
-                >
-                  · متوسط {{ formatePrice(row.avgOverride) }}</template
-                ><template
-                  v-if="
-                    row.priceOverride !== null &&
-                    row.priceOverride !== undefined
-                  "
-                >
-                  · بيع {{ formatePrice(row.priceOverride) }}</template
-                ></span
-              >
+                {{ row.product ? row.unitName : row.baseUnitName }} ×
+                {{ formatePrice(row.unitCost) }} ج</span>
               <span
                 :class="
                   rowErrors(row).length ? 'text-red-600' : 'text-emerald-700'
@@ -480,10 +466,7 @@ interface ImportRow {
   createNew: boolean;
   newPrice: number | null;
   threshold: number | null;
-  /** Optional per-row numbers from the new export columns (unit terms):
-   *  null = not provided → computed defaults apply. */
-  avgOverride: number | null;
-  priceOverride: number | null;
+  allowsFractional: boolean;
   baseUnitName: string;
   unitId?: string;
   unitName?: string;
@@ -507,14 +490,7 @@ const {
   round2,
   round4,
   toNum,
-  proposedSellingPrice,
   purchasableUnitsForProduct,
-  purchaseLineBaseQuantity,
-  purchaseLineBaseCost,
-  purchasePreviewAverage,
-  manualPriceBaseOf,
-  siblingRowConflict,
-  convertUnitPrice,
   MAX_PURCHASE_ITEMS: maxItems,
 } = useFinance();
 const formatePrice = useHelpers().formatePrice;
@@ -590,9 +566,7 @@ const paidError = computed(() =>
       ? "اختر المورد لتسجيل الزيادة كسلفة."
       : "",
 );
-const problemRows = computed(() =>
-  rows.value.filter((row) => rowErrors(row).length > 0),
-);
+const problemRows = computed(() => rows.value.filter((row) => rowErrors(row).length > 0));
 const canSubmit = computed(
   () =>
     !!fileHash.value &&
@@ -604,7 +578,7 @@ const canSubmit = computed(
 );
 function rowDuplicateKey(row: ImportRow): string {
   return row.product?.id
-    ? `id:${row.product.id}|${row.unitId ?? ""}|${Number(row.unitFactor || 1)}`
+    ? `id:${row.product.id}|${row.unitId ?? ""}`
     : `new:${row.name.trim().toLocaleLowerCase()}`;
 }
 const matchedCount = computed(
@@ -649,14 +623,12 @@ function splitDisplayName(rawName: string): {
 
 interface ExtraColumns {
   unit: number;
-  avg: number;
-  price: number;
 }
 
 function makeRow(
   raw: unknown[],
   rowNumber: number,
-  extra: ExtraColumns = { unit: 4, avg: -1, price: -1 },
+  extra: ExtraColumns = { unit: -1 },
 ): ImportRow {
   const productId = String(raw[0] ?? "").trim();
   const { base: parsedName, parenUnit } = splitDisplayName(
@@ -667,7 +639,7 @@ function makeRow(
   const requestedUnitName =
     (extra.unit >= 0 ? String(raw[extra.unit] ?? "").trim() : "") || parenUnit;
   const choices = existing ? purchasableUnitsForProduct(existing) : [];
-  const base = choices.find((unit) => unit.is_base) ?? choices[0];
+  const base = choices[0];
   const matches = requestedUnitName
     ? choices.filter((unit) => unit.name.trim() === requestedUnitName)
     : [];
@@ -682,17 +654,17 @@ function makeRow(
     createNew: false,
     newPrice: null,
     threshold: 5,
-    avgOverride: extra.avg >= 0 ? numericCell(raw[extra.avg]) : null,
-    priceOverride: extra.price >= 0 ? numericCell(raw[extra.price]) : null,
+    allowsFractional: false,
+
     baseUnitName: !existing && requestedUnitName ? requestedUnitName : "وحدة",
-    unitId: selected?.id ?? existing?.base_unit_id ?? "legacy-base",
+    unitId: selected?.id ?? (existing ? "" : "unit"),
     unitName:
       selected?.name ??
       (requestedUnitName || existing?.base_unit_name || "وحدة"),
-    unitFactor: selected?.factor ?? 1,
+    unitFactor: 1,
     requestedUnitName,
     unitIssue:
-      existing && requestedUnitName && matches.length !== 1
+      existing && !choices.length ? "لا توجد وحدات شراء متاحة لهذا المنتج." : existing && requestedUnitName && matches.length !== 1
         ? "نوع الوحدة غير موجود أو مكرر لهذا المنتج؛ اختر وحدة شراء صحيحة."
         : "",
   };
@@ -725,7 +697,7 @@ function pickProduct(
   const selected = matches.length === 1 ? matches[0]! : base;
   row.unitId = selected.id;
   row.unitName = selected.name;
-  row.unitFactor = selected.factor;
+  row.unitFactor = 1;
   row.unitIssue =
     row.requestedUnitName && matches.length !== 1
       ? "نوع الوحدة غير موجود أو مكرر لهذا المنتج؛ اختر وحدة شراء صحيحة."
@@ -745,21 +717,9 @@ function selectedUnit(row: ImportRow): ProductUnit | undefined {
 }
 function pickUnit(row: ImportRow, unit?: ProductUnit): void {
   if (!unit) return;
-  row.unitCost =
-    row.unitCost === null
-      ? null
-      : convertUnitPrice(row.unitCost, row.unitFactor, unit.factor);
-  row.avgOverride =
-    row.avgOverride === null
-      ? null
-      : convertUnitPrice(row.avgOverride, row.unitFactor, unit.factor);
-  row.priceOverride =
-    row.priceOverride === null
-      ? null
-      : convertUnitPrice(row.priceOverride, row.unitFactor, unit.factor);
   row.unitId = unit.id;
   row.unitName = unit.name;
-  row.unitFactor = unit.factor;
+  row.unitFactor = 1;
   row.unitIssue = "";
 }
 
@@ -809,33 +769,21 @@ async function onFile(event: Event): Promise<void> {
     ) {
       throw new Error(`يجب أن تبدأ الأعمدة بـ: ${baseHeaders.join("، ")}.`);
     }
-    // Optional columns (legacy unit column + the two new computed columns)
-    // may follow in any order; the new export writes avg then price.
-    const extra: ExtraColumns = { unit: -1, avg: -1, price: -1 };
+    const extra: ExtraColumns = { unit: -1 };
     (data[0] ?? []).forEach((cell, index) => {
       if (index < 4) return;
       const title = String(cell ?? "").trim();
       if (title === "نوع الوحدة" && extra.unit < 0) extra.unit = index;
-      else if (title === "متوسط سعر التكلفة الجديد" && extra.avg < 0)
-        extra.avg = index;
-      else if (title === "سعر البيع الجديد" && extra.price < 0)
-        extra.price = index;
     });
-    if (
-      extra.unit < 0 &&
-      extra.avg < 0 &&
-      extra.price < 0 &&
-      (data[0] ?? []).length > 4
-    )
-      extra.unit = 4;
     const parsedRows = data
       .slice(1)
-      .filter(
-        (row) =>
-          row.some((cell) => String(cell ?? "").trim() !== "") &&
-          String(row[1] ?? "").trim() !== "الإجمالي",
-      )
-      .map((row, index) => makeRow(row, index + 2, extra));
+      .map((row, index) => ({ row, rowNumber: index + 2 }))
+      .filter(({ row }) => {
+        const productId = String(row[0] ?? "").trim();
+        const name = String(row[1] ?? "").trim();
+        return (productId !== "" || name !== "") && (productId !== "" || name !== "الإجمالي");
+      })
+      .map(({ row, rowNumber }) => makeRow(row, rowNumber, extra));
     if (!parsedRows.length) throw new Error("لا توجد صفوف أصناف في الملف.");
     if (parsedRows.length > maxItems)
       throw new Error(
@@ -866,19 +814,10 @@ function currentProduct(row: ImportRow): Product | undefined {
     ? (productsById.value.get(row.product.id) ?? row.product)
     : undefined;
 }
-/** Sibling-row check delegated to the pure, unit-tested siblingRowConflict. */
-function rowGroupConflict(row: ImportRow): string | null {
-  if (!row.product?.id) return null;
-  const product = currentProduct(row);
-  if (!product) return null;
-  const siblings = rows.value.filter(
-    (other) => other.product?.id === row.product!.id,
-  );
-  return siblingRowConflict(product, row, siblings);
-}
 function rowErrors(row: ImportRow): string[] {
   const errors: string[] = [];
   if (row.unitIssue) errors.push(row.unitIssue);
+  if (row.product && !selectedUnit(row)) errors.push("اختر وحدة شراء متاحة.");
   if (
     rows.value.some(
       (other) =>
@@ -894,7 +833,7 @@ function rowErrors(row: ImportRow): string[] {
     )
   )
     errors.push("أدخل كمية موجبة وصالحة.");
-  else if (!Number.isInteger(row.quantity))
+  else if (selectedUnit(row)?.allows_fractional !== true && !row.allowsFractional && !Number.isInteger(row.quantity))
     errors.push("الكمية يجب أن تكون رقمًا صحيحًا.");
   if (
     !(
@@ -904,20 +843,6 @@ function rowErrors(row: ImportRow): string[] {
     )
   )
     errors.push("أدخل تكلفة وحدة غير سالبة وصالحة.");
-  if (
-    row.avgOverride !== null &&
-    row.avgOverride !== undefined &&
-    (!Number.isFinite(row.avgOverride) || row.avgOverride < 0)
-  )
-    errors.push("متوسط التكلفة الجديد غير صالح.");
-  if (
-    row.priceOverride !== null &&
-    row.priceOverride !== undefined &&
-    (!Number.isFinite(row.priceOverride) || row.priceOverride < 0)
-  )
-    errors.push("سعر البيع الجديد غير صالح.");
-  const conflict = rowGroupConflict(row);
-  if (conflict) errors.push(conflict);
   if (!row.product && !row.createNew)
     errors.push("اختر إنشاء منتج جديد بعد مراجعة الاسم.");
   if (!row.name.trim()) errors.push("اسم المنتج مطلوب.");
@@ -937,88 +862,10 @@ function rowErrors(row: ImportRow): string[] {
     )
       errors.push("مؤشر النقص يجب ألا يكون سالبًا.");
     if (!row.baseUnitName.trim())
-      errors.push("اسم وحدة المخزون الأساسية مطلوب.");
+      errors.push("اسم الوحدة مطلوب.");
   }
   return errors;
 }
-/** One pricing decision per existing product (shared by all its rows so the
- *  transaction's uniformity rule holds): file numbers win when they genuinely
- *  differ from recorded (stale cached values are recomputed instead),
- *  otherwise the same weighted/midpoint + margin defaults as quick-buy. */
-function productPricingOf(
-  product: Product,
-  productRows: ImportRow[],
-): PriceDecision {
-  const stock = toNum(product.stock_quantity);
-  const oldBase = toNum(product.cost_price);
-  const basePrice = toNum(product.price);
-  let totalBase = 0;
-  let totalCostValue = 0;
-  let firstAvg: number | null = null;
-  let firstPrice: number | null = null;
-  for (const row of productRows) {
-    const factor = row.unitFactor || 1;
-    const baseQty = purchaseLineBaseQuantity(row.quantity ?? 0, factor);
-    const baseCost = purchaseLineBaseCost(row.unitCost ?? 0, factor);
-    totalBase = round2(totalBase + baseQty);
-    totalCostValue += baseQty * baseCost;
-    // Per-row file averages are single-row estimates, never decisions: with
-    // several rows for one product the approved average always aggregates
-    // from all rows' quantities/costs (fallback below), so disagreeing
-    // per-row values can never block the import. Single-row manual averages
-    // are still honored.
-    if (productRows.length < 2 && firstAvg === null && row.avgOverride != null) {
-      const oldUnitAvg = round4(oldBase * factor);
-      if (Math.abs(toNum(row.avgOverride) - oldUnitAvg) > 0.005)
-        firstAvg = round4(toNum(row.avgOverride) / factor);
-    }
-    if (firstPrice === null && row.priceOverride != null) {
-      // Export-fresh multi-row prices (each unit on the shared average by its
-      // own margin) carry no decision — the base row (or file order without
-      // one) decides, other units follow their margins in the transaction.
-      const manual = manualPriceBaseOf(product, row, productRows.length);
-      if (manual !== null) firstPrice = manual;
-    }
-  }
-  const combined = totalBase > 0 ? totalCostValue / totalBase : 0;
-  const differs = Math.abs(combined - oldBase) > 1e-9;
-  const avgBase =
-    firstAvg !== null
-      ? firstAvg
-      : stock > 0
-        ? round4(purchasePreviewAverage(stock, oldBase, totalBase, combined))
-        : oldBase > 0 && differs
-          ? round4((oldBase + combined) / 2)
-          : round4(combined);
-  const override = {
-    approvedAverage: avgBase,
-    averageBasis: { stock: round2(stock), cost: round4(oldBase) },
-  };
-  const proposal = proposedSellingPrice(oldBase, basePrice, avgBase);
-  if (firstPrice !== null)
-    return {
-      mode: "custom",
-      price: firstPrice,
-      approvedProposed: proposal.proposed,
-      ...override,
-    };
-  if (proposal.proposed !== null && avgBase - basePrice > 1e-9)
-    return {
-      mode: "custom",
-      price: proposal.proposed,
-      approvedProposed: proposal.proposed,
-      ...override,
-    };
-  if (avgBase - basePrice > 1e-9)
-    return {
-      mode: "custom",
-      price: avgBase,
-      approvedProposed: proposal.proposed,
-      ...override,
-    };
-  return { mode: "keep", ...override };
-}
-
 async function submit(): Promise<void> {
   submitError.value = "";
   if (!canSubmit.value) return;
@@ -1029,25 +876,8 @@ async function submit(): Promise<void> {
   stageTitle.value = "";
   stageSubtitle.value = "";
   try {
-    // One shared pricing decision per existing product (uniformity rule).
-    const pricingByProduct = new Map<string, PriceDecision>();
-    for (const row of rows.value) {
-      const product = row.product?.id ? currentProduct(row) : undefined;
-      if (!product?.id) continue;
-      if (!pricingByProduct.has(product.id)) {
-        pricingByProduct.set(
-          product.id,
-          productPricingOf(
-            product,
-            rows.value.filter((other) => other.product?.id === product.id),
-          ),
-        );
-      }
-    }
     const items = rows.value.map((row) => {
-      const pricing: PriceDecision = row.product?.id
-        ? (pricingByProduct.get(row.product.id) ?? { mode: "keep" })
-        : { mode: "keep" };
+      const pricing: PriceDecision = { mode: "keep" };
       return {
         product_id: row.product?.id ?? null,
         name: row.name,
@@ -1056,20 +886,21 @@ async function submit(): Promise<void> {
         pricing,
         price: row.product ? undefined : row.newPrice,
         threshold: row.product ? undefined : row.threshold,
-        unit_id: row.unitId,
+        unit_id: row.product ? row.unitId : "unit",
         unit_name: row.unitName,
-        unit_factor: row.unitFactor,
-        base_unit_name: row.product ? undefined : row.baseUnitName,
-        base_unit_id: row.product ? undefined : "base",
+        unit_factor: 1,
         units: row.product
           ? undefined
           : [
               {
-                id: "base",
+                id: "unit",
                 name: row.baseUnitName,
                 factor: 1,
                 selling_price: row.newPrice,
-                is_base: true,
+                purchase_price: row.unitCost,
+                can_purchase: true,
+                can_sell: true,
+                allows_fractional: row.allowsFractional,
                 low_stock_threshold: row.threshold ?? 5,
               },
             ],
@@ -1095,8 +926,11 @@ async function submit(): Promise<void> {
     stageIndex.value = stageSteps.value.length - 2;
     stageTitle.value = "جاري حفظ فاتورة المورد…";
     stageSubtitle.value = `${items.length} صنفًا · ${formatePrice(total.value)} ج`;
+    const intent = JSON.stringify({ file: fileHash.value, items, supplier: supplier.value?.id, paid: paidNow.value, reference: supplierRef.value.trim(), note: note.value.trim() });
+    const intentDigest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(intent));
+    const operationKey = [...new Uint8Array(intentDigest)].map((value) => value.toString(16).padStart(2, "0")).join("");
     const execution = await purchasing.executePurchase({
-      idempotencyKey: `import-${fileHash.value}`,
+      idempotencyKey: `import-${operationKey}`,
       supplier_id: supplier.value?.id ?? null,
       supplier_name: supplier.value?.name ?? null,
       supplier_ref: supplierRef.value.trim() || null,

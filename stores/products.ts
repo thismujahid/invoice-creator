@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { collection, doc, onSnapshot, type Unsubscribe } from "firebase/firestore";
 import type { Product } from "~/types";
-import { hasShortageAlert, isLowStock, isNegativeStock, isOutOfStock, round2, shortageUnitRowsOf, toNum } from "~/composables/finance";
+import { hasShortageAlert, isLowStock, isNegativeStock, isOutOfStock, round2, shortageUnitRowsOf, toNum, unitStockDisplay } from "~/composables/finance";
 
 export type InventorySyncState = "idle" | "loading" | "live" | "cache" | "error";
 
@@ -41,7 +41,7 @@ export const useProductsStore = defineStore("products", () => {
   const shortageUnitCount = computed(() => shortageUnitRowsOf(list.value).length);
   /** Of those rows, how many sit at zero/negative stock. */
   const shortageOutUnitCount = computed(
-    () => shortageUnitRowsOf(list.value).filter(({ product }) => toNum(product.stock_quantity) <= 0).length,
+    () => shortageUnitRowsOf(list.value).filter(({ product, unit }) => unitStockDisplay(product, unit) <= 0).length,
   );
 
   function applySnapshotItems(items: Product[]): void {

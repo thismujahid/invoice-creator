@@ -2,7 +2,7 @@ import { collection, doc, getDocs, query, where, type DocumentSnapshot } from "f
 import type { PurchaseInvoice, SupplierReturn, SupplierReturnItem } from "~/types/finance";
 import { deriveSupplierInvoiceStatus } from "~/types/finance";
 import { toDateSafe } from "~/types";
-import { applyStockGroup, round2, splitSupplierReturn, toNum } from "./finance";
+import { round2, splitSupplierReturn, toNum } from "./finance";
 import { writeSupplierSummaryDelta } from "./performanceSummaries";
 
 export interface SupplierReturnSelection {
@@ -40,7 +40,7 @@ export const useSupplierReturns = defineStore("supplierReturns", () => {
     if (!input.id || !input.invoice_id || !input.items.length || input.items.length > 50) return { ok: false, error: "حدد أصناف المرتجع." };
     const selected = new Map<number, number>();
     for (const item of input.items) {
-      if (!Number.isInteger(item.line_index) || !Number.isInteger(item.quantity) || item.quantity <= 0 || selected.has(item.line_index)) return { ok: false, error: "كميات المرتجع غير صالحة." };
+      if (!Number.isInteger(item.line_index) || !Number.isFinite(item.quantity) || item.quantity <= 0 || selected.has(item.line_index)) return { ok: false, error: "كميات المرتجع غير صالحة." };
       selected.set(item.line_index, item.quantity);
     }
     const fingerprint = JSON.stringify({ invoice_id: input.invoice_id, items: [...selected].sort(([a], [b]) => a - b), supplier_id: input.supplier_id ?? null, note: input.note ?? null });
@@ -61,15 +61,22 @@ export const useSupplierReturns = defineStore("supplierReturns", () => {
         const invoice = invoiceSnap.data() as PurchaseInvoice;
         const returned = { ...(invoice.returned_quantities ?? {}) };
         const items: SupplierReturnItem[] = [];
-        const byProduct = new Map<string, number>();
+        const byUnit = new Map<string, number>();
+        const productSnapshots = new Map<string, DocumentSnapshot>();
         for (const [index, quantity] of selected) {
           const line = invoice.items?.[index];
           if (!line?.product_id || quantity > toNum(line.quantity) - toNum(returned[String(index)])) throw new Error("VALIDATION:كمية المرتجع تتجاوز المتاح في الفاتورة.");
-          const factor = toNum(line.unit_factor) || 1;
-          const baseQuantity = round2(quantity * factor);
+          const snapshot = productSnapshots.get(line.product_id) ?? await tx.get(doc(db, "products", line.product_id));
+          productSnapshots.set(line.product_id, snapshot);
+          const unit = snapshot.data()?.units?.find((entry: { id?: string }) => entry.id === line.unit_id);
+          if (!unit) throw new Error("VALIDATION:وحدة الصنف لم تعد موجودة.");
+          if (unit.allows_fractional !== true && !Number.isInteger(quantity)) throw new Error("VALIDATION:هذه الوحدة لا تقبل كميات كسرية.");
+          const factor = 1;
+          const baseQuantity = round4(quantity);
           const amount = round2(quantity * toNum(line.unit_cost));
           items.push({ line_index: index, product_id: line.product_id, product_name: line.product_name, quantity, unit_name: line.unit_name ?? null, unit_factor: factor, base_quantity: baseQuantity, unit_cost: toNum(line.unit_cost), amount });
-          byProduct.set(line.product_id, round2((byProduct.get(line.product_id) ?? 0) + baseQuantity));
+          const unitKey = `${line.product_id}||${line.unit_id ?? ""}`;
+          byUnit.set(unitKey, round4((byUnit.get(unitKey) ?? 0) + quantity));
           returned[String(index)] = round2(toNum(returned[String(index)]) + quantity);
         }
         const total = round2(items.reduce((sum, item) => sum + item.amount, 0));
@@ -80,11 +87,15 @@ export const useSupplierReturns = defineStore("supplierReturns", () => {
         const summarySnap = supplierId ? await tx.get(doc(db, "supplier_summaries", supplierId)) : null;
         if (supplierId && !supplierSnap?.exists()) throw new Error("VALIDATION:المورد المحدد غير موجود.");
         if (invoice.supplier_id && input.supplier_id && invoice.supplier_id !== input.supplier_id) throw new Error("VALIDATION:المورد لا يطابق الفاتورة.");
-        const productSnapshots = new Map<string, DocumentSnapshot>();
-        for (const productId of byProduct.keys()) productSnapshots.set(productId, await tx.get(doc(db, "products", productId)));
-        for (const [productId, quantity] of byProduct) {
+        for (const key of byUnit.keys()) {
+          const [productId] = key.split("||");
+          if (!productSnapshots.has(productId)) productSnapshots.set(productId, await tx.get(doc(db, "products", productId)));
+        }
+        for (const [key, quantity] of byUnit) {
+          const [productId, unitId] = key.split("||");
           const snapshot = productSnapshots.get(productId);
-          if (!snapshot?.exists() || toNum(snapshot.data()?.stock_quantity) + 0.005 < quantity) throw new Error("VALIDATION:المخزون المتاح لا يكفي لإرجاع الأصناف المحددة.");
+          const unit = snapshot?.data()?.units?.find((entry: { id?: string }) => entry.id === unitId);
+          if (!snapshot?.exists() || !unit || toNum(unit.stock_quantity) + 0.005 < quantity) throw new Error("VALIDATION:المخزون المتاح لا يكفي لإرجاع الأصناف المحددة.");
         }
         const now = serverTimestamp();
         const user = auth.currentUserKey ?? null;
@@ -92,13 +103,16 @@ export const useSupplierReturns = defineStore("supplierReturns", () => {
         for (const [seq, item] of items.entries()) {
           const movement = doc(collection(db, "inventory_transactions"));
           movementIds.set(item.product_id, [...(movementIds.get(item.product_id) ?? []), movement.id]);
-          tx.set(movement, { type: "supplier_return", direction: "out", product_id: item.product_id, product_name: item.product_name, quantity: item.quantity, unit_name: item.unit_name, unit_factor: item.unit_factor, base_quantity: item.base_quantity, unit_cost: item.unit_cost, purchase_invoice_id: input.invoice_id, return_id: input.id, seq, created_by: user, created_at: now });
+          tx.set(movement, { type: "supplier_return", direction: "out", product_id: item.product_id, product_name: item.product_name, quantity: item.quantity, unit_quantity: item.quantity, unit_id: invoice.items[item.line_index]?.unit_id ?? null, unit_name: item.unit_name, unit_factor: 1, base_quantity: item.quantity, unit_cost: item.unit_cost, purchase_invoice_id: input.invoice_id, return_id: input.id, seq, created_by: user, created_at: now });
         }
-        for (const [productId, quantity] of byProduct) {
-          const snapshot = productSnapshots.get(productId)!;
-          const ids = movementIds.get(productId)!;
-          const next = applyStockGroup(toNum(snapshot.data()?.stock_quantity), toNum(snapshot.data()?.cost_price), quantity, []);
-          tx.update(snapshot.ref, { stock_quantity: next.stock, last_inventory_transaction_id: ids.at(-1), last_inventory_transaction_ids: ids });
+        for (const [productId, snapshot] of productSnapshots) {
+          const units = Array.isArray(snapshot.data()?.units) ? snapshot.data()!.units : [];
+          const nextUnits = units.map((unit: { id?: string; stock_quantity?: number }) => {
+            const quantity = byUnit.get(`${productId}||${unit.id ?? ""}`) ?? 0;
+            return quantity > 0 ? { ...unit, stock_quantity: round4(toNum(unit.stock_quantity) - quantity) } : unit;
+          });
+          const ids = movementIds.get(productId) ?? [];
+          tx.update(snapshot.ref, { units: nextUnits, last_inventory_transaction_id: ids.at(-1), last_inventory_transaction_ids: ids });
         }
         const newTotal = round2(toNum(invoice.return_total) + total);
         const soldBase = round2((invoice.items ?? []).reduce((sum, item) => sum + toNum(item.base_quantity ?? toNum(item.quantity) * (toNum(item.unit_factor) || 1)), 0));

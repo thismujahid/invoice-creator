@@ -94,18 +94,18 @@ export function grossProfitOf(
 }
 
 export function unitsForProduct(product: Product): ProductUnit[] {
-  const configured = Array.isArray(product.units) ? product.units.filter((u) => u && Number.isFinite(Number(u.factor)) && Number(u.factor) > 0) : [];
+  const configured = Array.isArray(product.units) ? product.units.filter((u) => u && String(u.id ?? "").trim() && String(u.name ?? "").trim()) : [];
   if (configured.length) return configured;
   const id = product.base_unit_id || "legacy-base";
   return [{ id, name: product.base_unit_name || "وحدة", factor: 1, selling_price: product.price, purchase_price: product.cost_price, is_base: true }];
 }
 
 export function purchasableUnitsForProduct(product: Product): ProductUnit[] {
-  return unitsForProduct(product).filter((unit) => unit.can_purchase !== false);
+  return unitsForProduct(product).filter((unit) => unit.can_purchase !== false && (unit.purchase_price === undefined ? true : toNum(unit.purchase_price) > 0));
 }
 
 export function sellableUnitsForProduct(product: Product): ProductUnit[] {
-  return unitsForProduct(product).filter((unit) => unit.can_sell !== false);
+  return unitsForProduct(product).filter((unit) => unit.can_sell !== false && (unit.selling_price === undefined || (unit.selling_price === null && unit.can_sell === undefined) ? true : toNum(unit.selling_price) > 0));
 }
 
 export function unitSellingPrice(product: Product, unit: ProductUnit): number | null {
@@ -132,6 +132,7 @@ export function unitPurchasePrice(product: Product, unit: ProductUnit): number |
  *  (base average × factor). Computed on demand — never stored, so per-unit
  *  figures can never drift out of sync with the base average. */
 export function unitAverageCost(product: Product, unit: ProductUnit): number | null {
+  if (unit.average_cost !== null && unit.average_cost !== undefined) return round4(toNum(unit.average_cost));
   if (product.cost_price === null || product.cost_price === undefined) return null;
   const factor = Number(unit.factor);
   if (!Number.isFinite(factor) || factor <= 0) return null;
@@ -141,19 +142,28 @@ export function unitAverageCost(product: Product, unit: ProductUnit): number | n
 /** Display stock in the unit's own quantity (single base-unit balance
  *  divided by factor). The ledger stays in base units. */
 export function unitStockDisplay(product: Product, unit: ProductUnit): number {
+  if (unit.stock_quantity !== null && unit.stock_quantity !== undefined) return round4(toNum(unit.stock_quantity));
   const factor = Number(unit.factor);
   const safe = Number.isFinite(factor) && factor > 0 ? factor : 1;
   return toNum(product.stock_quantity) / safe;
 }
 
-export function stockQuantityLabel(product: Product, quantity: number | null | undefined = product.stock_quantity): string {
-  if (quantity === null || quantity === undefined) return "غير مُدخل";
-  if (!Number.isFinite(quantity)) return "—";
+export function stockQuantityLabel(product: Product, quantity?: number | null | undefined): string {
+  const independent = unitsForProduct(product).some((unit) => unit.stock_quantity !== null && unit.stock_quantity !== undefined);
+  if (independent && quantity === undefined) {
+    const parts = unitsForProduct(product)
+      .filter((unit) => Math.abs(unitStockDisplay(product, unit)) > 1e-9)
+      .map((unit) => `${round4(unitStockDisplay(product, unit))} ${unit.name || "وحدة"}`);
+    return parts.length ? parts.join(" و ") : "لا يوجد مخزون";
+  }
+  const displayed = quantity === undefined ? product.stock_quantity : quantity;
+  if (displayed === null || displayed === undefined) return "غير مُدخل";
+  if (!Number.isFinite(displayed)) return "—";
   const units = unitsForProduct(product);
   const base = units.find((unit) => unit.is_base || unit.id === product.base_unit_id) ?? units[0];
   const baseName = base?.name || product.base_unit_name || "وحدة";
-  if (quantity < 0) return `${quantity} ${baseName}`;
-  let remaining = round4(quantity);
+  if (displayed < 0) return `${displayed} ${baseName}`;
+  let remaining = round4(displayed);
   const parts: string[] = [];
   const larger = units.filter((unit) => unit.id !== base?.id && Number.isFinite(Number(unit.factor)) && Number(unit.factor) > 1).sort((a, b) => b.factor - a.factor);
   for (const unit of larger) {
@@ -339,6 +349,39 @@ export function purchasePreviewAverage(currentStock: unknown, currentAvg: unknow
   return movingAverageCost(currentStock, currentAvg, addedBaseQty, addedBaseCost);
 }
 
+export function purchaseImportPreview(unit: ProductUnit, quantity: number, unitCost: number, sellingPrice: number | null): { average: number; sellingPrice: number | null; pricing: PriceDecision } {
+  const average = round4(purchasePreviewAverage(unit.stock_quantity, unit.average_cost, quantity, unitCost));
+  const oldPrice = unit.selling_price == null ? null : toNum(unit.selling_price);
+  const rate = orderMarginRate(toNum(unit.average_cost), oldPrice, toNum(unit.purchase_price));
+  const proposed = rate === null ? null : round2(average * (1 + rate));
+  const price = sellingPrice ?? (oldPrice !== null && oldPrice > 0 ? proposed ?? Math.max(oldPrice, average) : oldPrice);
+  return {
+    average,
+    sellingPrice: price,
+    pricing: price !== null && unit.can_sell !== false
+      ? { mode: "custom", price: round2(price), averageBasis: { stock: round4(toNum(unit.stock_quantity)), cost: round4(toNum(unit.average_cost)) } }
+      : { mode: "keep", averageBasis: { stock: round4(toNum(unit.stock_quantity)), cost: round4(toNum(unit.average_cost)) } },
+  };
+}
+
+export function applyUnitPurchase(unit: ProductUnit, quantity: number, unitCost: number, pricing: PriceDecision): ProductUnit {
+  if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(unitCost) || unitCost < 0) throw new Error("كمية أو تكلفة الشراء غير صالحة.");
+  if (unit.can_purchase === false) throw new Error("هذه الوحدة لا تقبل الشراء.");
+  if (unit.allows_fractional !== true && !Number.isInteger(quantity)) throw new Error("هذه الوحدة لا تقبل كميات كسرية.");
+  const next: ProductUnit = {
+    ...unit,
+    stock_quantity: round4(toNum(unit.stock_quantity) + quantity),
+    average_cost: round4(purchasePreviewAverage(unit.stock_quantity, unit.average_cost, quantity, unitCost)),
+    purchase_price: round4(unitCost),
+  };
+  if (pricing.mode !== "keep" && unit.can_sell !== false) {
+    const price = pricing.price ?? (pricing.mode === "proposed" ? pricing.approvedProposed : undefined);
+    if (price == null || !Number.isFinite(price) || price < 0) throw new Error("سعر البيع غير صالح.");
+    next.selling_price = round2(price);
+  }
+  return next;
+}
+
 /** Aggregate multi-unit purchase lines of one product into base terms so the
  *  weighted average stays correct and deterministic. */
 export function aggregatePurchaseByProduct(
@@ -394,12 +437,9 @@ export function shortageAvgFormula(args: {
   costRef: number;
   stockUnit: number;
 }): string {
-  const { ownRow, oldUnitAvg, costRef, stockUnit } = args;
-  const oldRef = oldUnitAvg > 0 ? oldUnitAvg : costRef;
-  const mid = oldRef > 0 ? `(${oldRef}+D${ownRow})/2` : `D${ownRow}`;
-  const unch = oldRef > 0 ? `${oldRef}` : `D${ownRow}`;
-  const weighted = `(${stockUnit}*${oldRef}+C${ownRow}*D${ownRow})/(${stockUnit}+C${ownRow})`;
-  return `IF(ABS(D${ownRow}-${costRef})<0.005,${unch},ROUND(IF(OR(C${ownRow}="",C${ownRow}=0),${mid},IF(${stockUnit}<=0,${mid},${weighted})),2))`;
+  const { ownRow, oldUnitAvg, stockUnit } = args;
+  const weighted = `(${stockUnit}*${oldUnitAvg}+C${ownRow}*D${ownRow})/(${stockUnit}+C${ownRow})`;
+  return `IF(OR(C${ownRow}="",C${ownRow}=0),${oldUnitAvg},ROUND(IF(${stockUnit}<=0,D${ownRow},${weighted}),4))`;
 }
 
 /** Margin rate implied by recorded prices for a purchase-order unit row:
@@ -942,21 +982,57 @@ export function loanStatusOf(paid: unknown, remaining: unknown): "open" | "parti
  *  - costValue: reliable accounting value (base qty × base average cost).
  *  - saleValue: EXPECTED sales at BASE-unit price only (forecast, not realized).
  *    Products with multiple sale units may realize different prices. */
-export function inventoryAggregates(products: Pick<Product, "stock_quantity" | "price" | "cost_price">[]): {
+export function inventoryAggregates(products: Pick<Product, "stock_quantity" | "price" | "cost_price" | "units">[]): {
   costValue: number;
   saleValue: number;
   expectedProfit: number;
 } {
   let cost = 0;
   let sale = 0;
+  let saleCost = 0;
   for (const p of products) {
+    const units = unitsForProduct(p as Product);
+    const independent = units.some((unit) => unit.stock_quantity !== null && unit.stock_quantity !== undefined);
+    if (independent) {
+      for (const unit of units) {
+        const quantity = unitStockDisplay(p as Product, unit);
+        cost += quantity * toNum(unit.average_cost);
+        if (unit.can_sell !== false && toNum(unit.selling_price) > 0) {
+          sale += quantity * toNum(unit.selling_price);
+          saleCost += quantity * toNum(unit.average_cost);
+        }
+      }
+      continue;
+    }
     const c = toNum(p.stock_quantity);
     cost += c * toNum(p.cost_price);
     sale += c * toNum(p.price);
+    if (toNum(p.price) > 0) saleCost += c * toNum(p.cost_price);
   }
   cost = round2(cost);
   sale = round2(sale);
-  return { costValue: cost, saleValue: sale, expectedProfit: round2(sale - cost) };
+  return { costValue: cost, saleValue: sale, expectedProfit: round2(sale - saleCost) };
+}
+
+export function inventoryDataIssues(products: Product[]): { valuation: number; forecast: number } {
+  let valuation = 0;
+  let forecast = 0;
+  for (const product of products) {
+    const units = Array.isArray(product.units) ? product.units : [];
+    if (!units.length) {
+      if (product.stock_quantity == null || (toNum(product.stock_quantity) !== 0 && product.cost_price == null)) valuation++;
+      if (product.is_active !== false && toNum(product.stock_quantity) > 0 && (product.price == null || product.cost_price == null)) forecast++;
+      continue;
+    }
+    for (const unit of units) {
+      const quantity = unit.stock_quantity;
+      const missingStock = quantity == null || !Number.isFinite(Number(quantity));
+      const missingCost = unit.average_cost == null || !Number.isFinite(Number(unit.average_cost));
+      if (missingStock || (toNum(quantity) !== 0 && missingCost)) valuation++;
+      if (product.is_active !== false && toNum(quantity) > 0 && unit.can_sell !== false && (unit.selling_price == null || (toNum(unit.selling_price) > 0 && missingCost))) forecast++;
+    }
+  }
+  return { valuation, forecast };
 }
 
 /** Normalize a phone to digits only (migration matching). */
@@ -1101,7 +1177,11 @@ export function shortageUnitRowsOf(products: Product[]): ShortageUnit[] {
         toNum(a.stock_quantity) - toNum(b.stock_quantity) ||
         a.name.localeCompare(b.name),
     )
-    .flatMap((p) => shortageDisplayUnitsOf(p).map((unit) => ({ product: p, unit })));
+    .flatMap((p) => shortageDisplayUnitsOf(p)
+      .filter((unit) => productHasUnitThresholds(p)
+        ? isUnitLowStock(p, unit)
+        : unitStockDisplay(p, unit) < lowStockThresholdOf(p) / (Number(unit.factor) > 0 ? Number(unit.factor) : 1) - 1e-9)
+      .map((unit) => ({ product: p, unit })));
 }
 
 /** Unified shortage rule (S3): stock < threshold. Never uses `count`.
@@ -1118,11 +1198,21 @@ export function isLowStock(p: Pick<Product, "stock_quantity" | "low_stock_thresh
 
 export function isOutOfStock(p: Pick<Product, "stock_quantity" | "is_active">): boolean {
   if ((p as { is_active?: unknown }).is_active === false) return false;
+  const product = p as Product;
+  const units = unitsForProduct(product);
+  if (units.some((unit) => unit.stock_quantity !== null && unit.stock_quantity !== undefined)) {
+    return units.every((unit) => unitStockDisplay(product, unit) <= 0);
+  }
   return toNum(p.stock_quantity) <= 0;
 }
 
 export function isNegativeStock(p: Pick<Product, "stock_quantity" | "is_active">): boolean {
   if ((p as { is_active?: unknown }).is_active === false) return false;
+  const product = p as Product;
+  const units = unitsForProduct(product);
+  if (units.some((unit) => unit.stock_quantity !== null && unit.stock_quantity !== undefined)) {
+    return units.some((unit) => unitStockDisplay(product, unit) < -1e-9);
+  }
   return toNum(p.stock_quantity) < -1e-9;
 }
 
@@ -1171,6 +1261,7 @@ export const useFinance = () => ({
   MAX_PURCHASE_ITEMS,
   estimatePurchaseOps,
   inventoryAggregates,
+  inventoryDataIssues,
   normalizePhone,
   normalizeName,
   lowStockThresholdOf,
@@ -1222,6 +1313,8 @@ export const useFinance = () => ({
   purchaseLineBaseQuantity,
   purchaseLineBaseCost,
   purchasePreviewAverage,
+  purchaseImportPreview,
+  applyUnitPurchase,
   aggregatePurchaseByProduct,
   purchaseUnitProposals,
   requiresCashForSale,

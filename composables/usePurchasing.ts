@@ -11,15 +11,9 @@ import { toDateSafe } from "~/types";
 import {
   MAX_PURCHASE_ITEMS,
   allocateSupplierCash,
-  aggregatePurchaseByProduct,
-  applyStockGroup,
+  applyUnitPurchase,
   estimatePurchaseOps,
   prependPurchasePriceHistory,
-  proposedSellingPrice,
-  purchaseLineBaseCost,
-  purchaseLineBaseQuantity,
-  purchasePreviewAverage,
-  purchaseUnitProposals,
   round2,
   round4,
   toNum,
@@ -105,6 +99,109 @@ export const usePurchasing = defineStore("purchasing", () => {
 
   const by = () => (authStore.currentUserKey as string) || null;
 
+  async function executeUnitPurchase(input: ExecutePurchaseInput): Promise<ExecutePurchaseResult> {
+    const items = input.items ?? [];
+    const total = round2(items.reduce((sum, item) => sum + round2(toNum(item.quantity) * toNum(item.unit_cost)), 0));
+    const paid = round2(toNum(input.paidNow));
+    const { applied: invoicePaid, advance } = allocateSupplierCash(total, paid);
+    const fingerprint = JSON.stringify(input);
+    let cached: Product[] = [];
+    let cashBalanceAfterPurchase: number | null = null;
+    let result: ExecutePurchaseResult = { ok: false, error: "تعذر حفظ فاتورة المورد." };
+    try {
+      await runTx(async (tx) => {
+        const invoiceRef = doc(db, "purchase_invoices", input.idempotencyKey);
+        const duplicate = await tx.get(invoiceRef);
+        if (duplicate.exists()) {
+          const data = duplicate.data();
+          if (data.request_fingerprint !== fingerprint) throw new Error("VALIDATION:مفتاح العملية مستخدم لبيانات مختلفة. أعد فتح الاستيراد.");
+          result = { ok: true, duplicate: true, id: invoiceRef.id, total: round2(toNum(data.total_amount)), paid: round2(toNum(data.paid_amount)), remaining: round2(toNum(data.remaining_amount)), fullyPaid: toNum(data.remaining_amount) <= 0, advance: round2(toNum(data.advance_amount)) };
+          return;
+        }
+        const cashRef = doc(db, "cashbox", "current");
+        const cash = await tx.get(cashRef);
+        const balance = cash.exists() ? round2(toNum(cash.data()?.balance)) : 0;
+        if (paid > 0 && !cash.exists()) throw new Error("VALIDATION:لا يمكن الدفع قبل تهيئة الخزنة.");
+        if (paid - balance > 1e-9) throw new Error("VALIDATION:المدفوع الآن يتجاوز رصيد الخزنة المتاح.");
+        const productIds = [...new Set(items.map((item) => item.product_id).filter((id): id is string => !!id))];
+        const products = new Map<string, { ref: ReturnType<typeof doc>; data: Product }>();
+        for (const productId of productIds) {
+          const snap = await tx.get(doc(db, "products", productId));
+          if (!snap.exists()) throw new Error("VALIDATION:منتج غير موجود.");
+          products.set(productId, { ref: snap.ref, data: { id: snap.id, ...(snap.data() as object) } as Product });
+        }
+        const now = serverTimestamp();
+        const nowMs = Date.now();
+        const movements: Record<string, unknown>[] = [];
+        const invoiceItems: PurchaseInvoiceItem[] = [];
+        const writes = new Map<string, Product>();
+        let seq = 0;
+        for (const item of items) {
+          const quantity = round4(toNum(item.quantity));
+          const cost = round4(toNum(item.unit_cost));
+          if (!(quantity > 0) || !(cost >= 0)) throw new Error("VALIDATION:كمية أو تكلفة الشراء غير صالحة.");
+          let product: Product;
+          let productId: string;
+          if (item.product_id) {
+            product = writes.get(item.product_id) ?? products.get(item.product_id)!.data;
+            productId = item.product_id;
+          } else {
+            productId = doc(collection(db, "products")).id;
+            const unitId = item.unit_id || "unit";
+            const provided = item.units?.length ? item.units : [{ id: unitId, name: item.unit_name || "وحدة", factor: 1, selling_price: item.price ?? null, purchase_price: cost, low_stock_threshold: item.threshold ?? null, can_purchase: true, can_sell: toNum(item.price) > 0, allows_fractional: false }];
+            product = { id: productId, name: String(item.name ?? "").trim(), price: null, cost_price: null, units: provided.map((unit) => ({ ...unit, factor: 1, stock_quantity: round4(toNum(unit.stock_quantity)), average_cost: unit.average_cost ?? null })) };
+          }
+          const unitId = item.unit_id ?? product.units?.[0]?.id;
+          const index = product.units?.findIndex((unit) => unit.id === unitId) ?? -1;
+          if (index < 0) throw new Error("VALIDATION:وحدة الشراء غير موجودة.");
+          const unit = product.units![index]!;
+          const basis = item.pricing.averageBasis;
+          if (input.source === "excel_import" && basis && (Math.abs(toNum(unit.stock_quantity) - basis.stock) > 0.00005 || Math.abs(toNum(unit.average_cost) - basis.cost) > 0.00005)) {
+            throw Object.assign(new Error("STALE_PRICING"), { stale: { product_id: productId, product_name: product.name, newAvg: toNum(unit.average_cost), proposed: null, oldPrice: toNum(unit.selling_price), oldCost: toNum(unit.average_cost), rate: null } });
+          }
+          if (unit.can_purchase === false) throw new Error("VALIDATION:هذه الوحدة مرجعية ولا يمكن الشراء بها.");
+          if (unit.allows_fractional !== true && Math.abs(quantity - Math.round(quantity)) > 1e-9) throw new Error("VALIDATION:هذه الوحدة لا تقبل كميات كسرية.");
+          const movementId = doc(collection(db, "inventory_transactions")).id;
+          let nextUnit: ProductUnit;
+          try { nextUnit = applyUnitPurchase(unit, quantity, cost, item.pricing); }
+          catch (error) { throw new Error(`VALIDATION:${error instanceof Error ? error.message : "بيانات الشراء غير صالحة."}`); }
+          nextUnit.purchase_price_history = prependPurchasePriceHistory(unit.purchase_price_history, cost, nowMs);
+          product = { ...product, units: product.units!.map((entry, entryIndex) => entryIndex === index ? nextUnit : entry) };
+          writes.set(productId, product);
+          invoiceItems.push({ product_id: productId, product_name: product.name, quantity, unit_cost: cost, unit_id: unit.id, unit_name: unit.name, line_total: round2(quantity * cost) });
+          movements.push({ id: movementId, type: "purchase", direction: "in", product_id: productId, product_name: product.name, quantity, unit_quantity: quantity, unit_id: unit.id, unit_name: unit.name, unit_cost: cost, purchase_invoice_id: invoiceRef.id, note: input.note ?? null, seq: seq++, created_by: by(), created_at: now });
+        }
+        const remaining = round2(total - invoicePaid);
+        tx.set(invoiceRef, { request_fingerprint: fingerprint, supplier_name: input.supplier_name?.trim() || null, supplier_id: input.supplier_id ?? null, supplier_ref: input.supplier_ref?.trim() || null, invoice_number: input.invoice_number?.trim() || null, source: input.source ?? "manual", pinned: false, items: invoiceItems, product_ids: [...writes.keys()], total_amount: total, paid_amount: invoicePaid, advance_amount: advance, remaining_amount: remaining, status: deriveSupplierInvoiceStatus(invoicePaid, remaining), payment_ids: [], note: input.note ?? null, created_by: by(), created_at: now });
+        for (const [productId, product] of writes) {
+          const ids = movements.filter((movement) => movement.product_id === productId).map((movement) => String(movement.id));
+          tx.set(doc(db, "products", productId), { name: product.name, units: product.units, is_active: product.is_active !== false, last_inventory_transaction_id: ids.at(-1) ?? null, last_inventory_transaction_ids: ids, last_purchase_invoice_id: invoiceRef.id }, { merge: true });
+        }
+        for (const movement of movements) {
+          const { id, ...data } = movement;
+          tx.set(doc(db, "inventory_transactions", String(id)), data);
+        }
+        if (advance > 0) tx.set(doc(db, "supplier_advances", invoiceRef.id), { supplier_id: input.supplier_id, supplier_name: input.supplier_name ?? null, purchase_invoice_id: invoiceRef.id, amount: advance, remaining_amount: advance, created_by: by(), created_at: now });
+        if (paid > 0) {
+          cashBalanceAfterPurchase = round2(balance - paid);
+          tx.set(cashRef, { balance: cashBalanceAfterPurchase, updated_at: now }, { merge: true });
+        }
+        if (paid > 0) tx.set(doc(collection(db, "cash_transactions")), { type: "inventory_purchase", direction: "out", amount: paid, purchase_invoice_id: invoiceRef.id, reference_type: "supplier_invoice", reference_id: invoiceRef.id, reference_label: `فاتورة توريد من ${input.supplier_name?.trim() || "مورد غير مسمى"}`, note: input.note ?? null, created_by: by(), created_at: now });
+        writeSupplierSummaryDelta(tx, db, { supplier_id: input.supplier_id, supplier_name: input.supplier_name }, { invoice_count: 1, total_purchases: total, outstanding_payable: remaining, advance_receivable: advance });
+        cached = [...writes.values()];
+        result = { ok: true, id: invoiceRef.id, total, paid: invoicePaid, remaining, fullyPaid: remaining <= 0, advance };
+      });
+      for (const product of cached) useProductsStore().upsertCached(product);
+      if (cashBalanceAfterPurchase !== null) useCashbox().balance = cashBalanceAfterPurchase;
+      return result;
+    } catch (error) {
+      if (error instanceof Error && error.message === "STALE_PRICING") return { ok: false, error: "تغيّر رصيد الوحدة أو متوسط تكلفتها. راجع المعاينة ثم أكد مجددًا.", stale: (error as Error & { stale?: ExecutePurchaseResult["stale"] }).stale };
+      if (error instanceof Error && error.message.startsWith("VALIDATION:")) return { ok: false, error: error.message.slice(11) };
+      console.error(error);
+      return { ok: false, error: "تعذر تسجيل شراء المخزون." };
+    }
+  }
+
   async function executePurchase(input: ExecutePurchaseInput): Promise<ExecutePurchaseResult> {
     if (!input.idempotencyKey) return { ok: false, error: "مفتاح عدم التكرار مفقود." };
     const items = input.items ?? [];
@@ -121,9 +218,8 @@ export const usePurchasing = defineStore("purchasing", () => {
     // (same product + same unit) are still rejected.
     const seenItems = new Set<string>();
     for (const [index, item] of items.entries()) {
-      const factorKey = Number(item.unit_factor ?? 1) > 0 ? Number(item.unit_factor) : 1;
       const key = item.product_id
-        ? `id:${item.product_id}|unit:${String(item.unit_id ?? "")}|f:${factorKey}`
+        ? `id:${item.product_id}|unit:${String(item.unit_id ?? "")}`
         : `name:${String(item.name ?? "").trim().toLocaleLowerCase()}`;
       if (seenItems.has(key)) return { ok: false, error: `الصنف رقم ${index + 1} مكرر في الفاتورة.` };
       seenItems.add(key);
@@ -132,496 +228,21 @@ export const usePurchasing = defineStore("purchasing", () => {
     for (const [idx, it] of items.entries()) {
       const n = idx + 1;
       if (it.product_id && typeof it.product_id !== "string") return { ok: false, error: `صنف ${n}: معرّف غير صالح.` };
-      if (!(toNum(it.quantity) > 0)) return { ok: false, error: `صنف ${n}: الكمية يجب أن تكون أكبر من صفر.` };
-      if (!Number.isInteger(toNum(it.quantity))) return { ok: false, error: `صنف ${n}: الكمية يجب أن تكون رقمًا صحيحًا.` };
-      if (!(toNum(it.unit_cost) >= 0) || !Number.isFinite(toNum(it.unit_cost))) return { ok: false, error: `صنف ${n}: تكلفة الوحدة غير صالحة.` };
+      if (!Number.isFinite(it.quantity) || !(it.quantity > 0)) return { ok: false, error: `صنف ${n}: الكمية يجب أن تكون أكبر من صفر.` };
+      if (!Number.isFinite(it.unit_cost) || it.unit_cost < 0) return { ok: false, error: `صنف ${n}: تكلفة الوحدة غير صالحة.` };
       if (!it.product_id) {
         if (!String(it.name ?? "").trim()) return { ok: false, error: `صنف ${n}: اسم المنتج الجديد مطلوب.` };
         if (!(toNum(it.price) > 0)) return { ok: false, error: `صنف ${n}: سعر بيع المنتج الجديد مطلوب.` };
       }
-      if (it.pricing.mode === "custom" && !(toNum(it.pricing.price) >= 0)) {
+      if (it.pricing.mode === "custom" && (!Number.isFinite(it.pricing.price) || it.pricing.price < 0)) {
         return { ok: false, error: `صنف ${n}: سعر البيع المخصص غير صالح.` };
-      }
-      const approvedAvg = it.pricing.approvedAverage;
-      if (approvedAvg !== undefined && approvedAvg !== null && (!Number.isFinite(Number(approvedAvg)) || Number(approvedAvg) < 0)) {
-        return { ok: false, error: `صنف ${n}: متوسط التكلفة المعتمد غير صالح.` };
       }
     }
     const total = round2(items.reduce((s, it) => s + round2(toNum(it.quantity) * round4(toNum(it.unit_cost))), 0));
     const paid = round2(toNum(input.paidNow));
-    if (!(paid >= 0)) return { ok: false, error: "المدفوع الآن يجب ألا يكون سالبًا." };
+    if (!Number.isFinite(input.paidNow) || input.paidNow < 0) return { ok: false, error: "المدفوع الآن يجب ألا يكون سالبًا." };
     if (paid > total && !input.supplier_id) return { ok: false, error: "اختر المورد لتسجيل المبلغ الزائد كسلفة مستحقة لنا." };
-    const { applied: invoicePaid, advance } = allocateSupplierCash(total, paid);
-    try {
-      let out: ExecutePurchaseResult = { ok: false, error: "خطأ غير متوقع." };
-      let cachedProductWrites: Product[] = [];
-      let cashBalanceAfterPurchase: number | null = null;
-      await runTx(async (tx) => {
-        // 0. Idempotency: same key twice = same intent → return existing.
-        const invRef = doc(db, "purchase_invoices", input.idempotencyKey);
-        const invSnap = await tx.get(invRef);
-        if (invSnap.exists()) {
-          const d = invSnap.data() as Record<string, unknown>;
-          out = {
-            ok: true,
-            duplicate: true,
-            id: invRef.id,
-            total: round2(toNum(d.total_amount)),
-            paid: round2(toNum(d.paid_amount)),
-            remaining: round2(toNum(d.remaining_amount)),
-            fullyPaid: round2(toNum(d.remaining_amount)) <= 0,
-            advance: round2(toNum(d.advance_amount)),
-          };
-          return;
-        }
-        // 1. Fresh reads: existing products + cashbox.
-        const existingIds = [...new Set(items.filter((i) => i.product_id).map((i) => i.product_id as string))];
-        const prods = new Map<string, { stock: number; cost: number; price: number; name: string; units: ProductUnit[]; baseUnitId: string | null; baseUnitName: string | null }>();
-        for (const pid of existingIds) {
-          const snap = await tx.get(doc(db, "products", pid));
-          if (!snap.exists()) throw new Error(`VALIDATION:منتج غير موجود.`);
-          const d = snap.data();
-          prods.set(pid, {
-            stock: toNum(d.stock_quantity),
-            cost: toNum(d.cost_price),
-            price: toNum(d.price),
-            name: String(d.name || ""),
-            units: Array.isArray(d.units) ? d.units as ProductUnit[] : [],
-            baseUnitId: typeof d.base_unit_id === "string" ? d.base_unit_id : null,
-            baseUnitName: typeof d.base_unit_name === "string" ? d.base_unit_name : null,
-          });
-        }
-        const cRef = doc(db, "cashbox", "current");
-        const cSnap = await tx.get(cRef);
-        const cashReady = cSnap.exists();
-        const bal = cashReady ? round2(Number(cSnap.data()?.balance || 0)) : 0;
-        if (paid > 0 && !cashReady) throw new Error("VALIDATION:لا يمكن الدفع قبل تهيئة الخزنة. هيّئ الخزنة أولاً.");
-        if (paid - bal > 1e-9) throw new Error("VALIDATION:المدفوع الآن يتجاوز رصيد الخزنة المتاح.");
-        if (paid > 0) cashBalanceAfterPurchase = round2(bal - paid);
-        // 2. Per-item math (average + pricing decisions, re-derived fresh).
-        // Canonical purchase math lives in composables/finance (same helpers
-        // the preview uses): baseQty = qty × factor, baseCost = unitCost ÷
-        // factor, weighted average on BASE terms only. Multi-unit lines of one
-        // product are aggregated before averaging (deterministic, order-free).
-        const now = serverTimestamp();
-        const nowMs = Date.now();
-        const byWho = by();
-        const builtItems: PurchaseInvoiceItem[] = [];
-        const productWrites: { id: string; isNew: boolean; name: string; stock: number; cost: number; price: number; movementId: string; movementIds: string[]; units?: ProductUnit[]; base_unit_id?: string; base_unit_name?: string }[] = [];
-        const invLogs: Record<string, unknown>[] = [];
-        let seq = 0;
-        // Normalize every row first (shared with preview).
-        const normalized = items.map((it) => {
-          const qty = round2(toNum(it.quantity));
-          const unitCost = round4(toNum(it.unit_cost));
-          const factor = Number(it.unit_factor ?? 1);
-          if (!(Number.isFinite(factor) && factor > 0)) throw new Error("VALIDATION:معامل تحويل الوحدة غير صالح.");
-          const baseQty = purchaseLineBaseQuantity(qty, factor);
-          const baseCost = purchaseLineBaseCost(unitCost, factor);
-          return { it, qty, unitCost, factor, baseQty, baseCost, lineTotal: round2(qty * unitCost) };
-        });
-        // Aggregate existing-product lines per product for the average.
-        const aggregate = aggregatePurchaseByProduct(
-          normalized.filter((n) => n.it.product_id).map((n) => ({ product_id: n.it.product_id as string, baseQty: n.baseQty, lineTotal: n.baseQty * n.baseCost })),
-        );
-        const newAvgByProduct = new Map<string, { newAvg: number; stock: number }>();
-        for (const [pid, agg] of aggregate) {
-          const cur = prods.get(pid)!;
-          const applied = applyStockGroup(cur.stock, cur.cost, 0, agg.baseQty > 0 ? [{ qty: agg.baseQty, cost: agg.baseCost }] : []);
-          let newAvg = applied.avg ?? agg.baseCost;
-          // Client-approved average (editable in the quick-buy dialog): only
-          // valid against the snapshot it was computed from — otherwise the
-          // blended value may rest on stale stock/cost.
-          const rep = normalized.find((n) => n.it.product_id === pid)!.it;
-          const override = rep.pricing.approvedAverage;
-          if (override !== null && override !== undefined) {
-            const basis = rep.pricing.averageBasis;
-            if (!basis || Math.abs(cur.stock - toNum(basis.stock)) > 1e-9 || Math.abs(cur.cost - toNum(basis.cost)) > 1e-9) {
-              const fresh = proposedSellingPrice(cur.cost, cur.price, newAvg);
-              throw Object.assign(new Error("STALE_PRICING"), {
-                stale: { product_id: pid, product_name: cur.name, newAvg: round4(newAvg), proposed: fresh.proposed, oldPrice: cur.price, oldCost: cur.cost, rate: fresh.rate },
-              });
-            }
-            if (!Number.isFinite(Number(override)) || Number(override) < 0) throw new Error("VALIDATION:متوسط التكلفة المعتمد غير صالح.");
-            newAvg = round4(Number(override));
-          }
-          newAvgByProduct.set(pid, { newAvg, stock: applied.stock });
-        }
-        // Pricing decisions must be consistent across lines of one product.
-        const pricingByProduct = new Map<string, string>();
-        for (const n of normalized) {
-          if (!n.it.product_id) continue;
-          const key = JSON.stringify(n.it.pricing);
-          const prev = pricingByProduct.get(n.it.product_id);
-          if (prev !== undefined && prev !== key) {
-            throw new Error("VALIDATION:قرار سعر البيع يجب أن يكون موحدًا لكل سطور نفس المنتج.");
-          }
-          pricingByProduct.set(n.it.product_id, key);
-        }
-        const finalizedByProduct = new Map<string, { finalPrice: number | null; proposed: number | null; rate: number | null; newAvg: number; singleUid: string | null }>();
-        for (const [pid, { newAvg }] of newAvgByProduct) {
-          const cur = prods.get(pid)!;
-          const rep = normalized.find((n) => n.it.product_id === pid)!.it;
-          const singleUid = rep.pricing.singleUnit === true
-            ? (rep.unit_id ?? cur.baseUnitId ?? cur.units.find((u) => u.is_base)?.id ?? null)
-            : null;
-          if (singleUid) {
-            // Quick-buy path: only the purchased unit's selling price moves
-            // (in its own denomination); all other units keep their prices.
-            const target = cur.units.find((u) => u.id === singleUid);
-            const tFactor = target && Number(target.factor) > 0 ? Number(target.factor) : 1;
-            const newAvgUnit = round4(newAvg * tFactor);
-            const oldUnitAvg = round4(cur.cost * tFactor);
-            let oldUnitPrice: number | null = null;
-            if (target) {
-              if (target.selling_price !== null && target.selling_price !== undefined) oldUnitPrice = toNum(target.selling_price);
-              else if (target.is_base || target.id === cur.baseUnitId) oldUnitPrice = toNum(cur.price);
-              else if (target.can_sell === undefined) oldUnitPrice = toNum(cur.price);
-            }
-            const unitProposal = oldUnitAvg > 0 && oldUnitPrice !== null
-              ? proposedSellingPrice(oldUnitAvg, oldUnitPrice, newAvgUnit)
-              : { rate: null, proposed: null };
-            const hasApprovedProposal = rep.pricing.mode === "proposed" ||
-              (rep.pricing.mode === "custom" && rep.pricing.approvedProposed !== undefined);
-            const approvedProposal = rep.pricing.mode === "keep" ? undefined : rep.pricing.approvedProposed;
-            const proposalChanged = hasApprovedProposal && (
-              unitProposal.proposed === null
-                ? approvedProposal !== null
-                : approvedProposal === null || approvedProposal === undefined || Math.abs(unitProposal.proposed - approvedProposal) > 0.005
-            );
-            if (proposalChanged) {
-              throw Object.assign(new Error("STALE_PRICING"), {
-                stale: { product_id: pid, product_name: cur.name, newAvg, proposed: unitProposal.proposed, oldPrice: oldUnitPrice ?? cur.price, oldCost: cur.cost, rate: unitProposal.rate },
-              });
-            }
-            const sellable = !!target && target.can_sell !== false;
-            const needsPrice = sellable && (oldUnitPrice === null || newAvgUnit - oldUnitPrice > 1e-9);
-            let finalPrice: number | null = null;
-            if (rep.pricing.mode === "keep") {
-              if (sellable && oldUnitPrice === null) throw new Error("VALIDATION:حدد سعر بيع الوحدة قبل الحفظ.");
-              if (needsPrice) {
-                throw Object.assign(new Error("STALE_PRICING"), {
-                  stale: { product_id: pid, product_name: cur.name, newAvg, proposed: unitProposal.proposed, oldPrice: oldUnitPrice ?? cur.price, oldCost: cur.cost, rate: unitProposal.rate },
-                });
-              }
-            } else if (rep.pricing.mode === "proposed") {
-              if (unitProposal.proposed === null || unitProposal.rate === null) {
-                throw new Error("VALIDATION:لا توجد نسبة ربح قابلة للاشتقاق — أدخل سعر بيع يدويًا.");
-              }
-              finalPrice = round2(rep.pricing.price ?? unitProposal.proposed);
-            } else {
-              finalPrice = round2(toNum(rep.pricing.price));
-            }
-            finalizedByProduct.set(pid, { finalPrice, proposed: unitProposal.proposed, rate: unitProposal.rate, newAvg, singleUid });
-            continue;
-          }
-          const { rate, proposed } = proposedSellingPrice(cur.cost, cur.price, newAvg);
-          const hasApprovedProposal = rep.pricing.mode === "proposed" ||
-            (rep.pricing.mode === "custom" && rep.pricing.approvedProposed !== undefined);
-          const approvedProposal = rep.pricing.mode === "keep" ? undefined : rep.pricing.approvedProposed;
-          const proposalChanged = hasApprovedProposal && (
-            proposed === null
-              ? approvedProposal !== null
-              : approvedProposal === null || approvedProposal === undefined || Math.abs(proposed - approvedProposal) > 0.005
-          );
-          if (proposalChanged) {
-            throw Object.assign(new Error("STALE_PRICING"), {
-              stale: { product_id: pid, product_name: cur.name, newAvg, proposed, oldPrice: cur.price, oldCost: cur.cost, rate },
-            });
-          }
-          let finalPrice: number | null = null;
-          if (newAvg - cur.price > 1e-9) {
-            if (rep.pricing.mode === "keep") {
-              throw Object.assign(new Error("STALE_PRICING"), {
-                stale: { product_id: pid, product_name: cur.name, newAvg, proposed, oldPrice: cur.price, oldCost: cur.cost, rate },
-              });
-            }
-            if (rep.pricing.mode === "proposed") {
-              if (proposed === null || rate === null) {
-                throw new Error("VALIDATION:لا توجد نسبة ربح قابلة للاشتقاق — أدخل سعر بيع يدويًا.");
-              }
-              finalPrice = round2(rep.pricing.price ?? proposed);
-            } else {
-              finalPrice = round2(toNum(rep.pricing.price));
-            }
-          }
-          finalizedByProduct.set(pid, { finalPrice, proposed, rate, newAvg, singleUid: null });
-        }
-        for (const n of normalized) {
-          const { it, qty, unitCost, factor, baseQty, baseCost } = n;
-          if (it.product_id) {
-            const cur = prods.get(it.product_id)!;
-            const configuredUnit = cur.units.find((unit) => unit.id === it.unit_id);
-            if (cur.units.length && (!configuredUnit || configuredUnit.can_purchase === false || Math.abs(Number(configuredUnit.factor) - factor) > 1e-9)) {
-              throw new Error("VALIDATION:تغيرت وحدة المنتج — أعد مراجعة الفاتورة.");
-            }
-            if (!cur.units.length && Math.abs(factor - 1) > 1e-9) throw new Error("VALIDATION:المنتج القديم يدعم وحدة مخزون واحدة حتى يتم إعداد وحداته.");
-            const movementId = doc(collection(db, "inventory_transactions")).id;
-            const { newAvg } = newAvgByProduct.get(it.product_id)!;
-            const { finalPrice } = finalizedByProduct.get(it.product_id)!;
-            builtItems.push({
-              product_id: it.product_id,
-              product_name: cur.name,
-              quantity: qty,
-              unit_cost: unitCost,
-              unit_id: it.unit_id ?? null,
-              unit_name: it.unit_name ?? configuredUnit?.name ?? cur.baseUnitName ?? "وحدة",
-              unit_factor: factor,
-              base_quantity: baseQty,
-              base_unit_cost: round4(baseCost),
-              line_total: round2(qty * unitCost),
-            });
-            invLogs.push({
-              type: "purchase",
-              product_id: it.product_id,
-              product_name: cur.name,
-              quantity: qty,
-              unit_id: it.unit_id ?? null,
-              unit_name: it.unit_name ?? cur.baseUnitName ?? "وحدة",
-              unit_factor: factor,
-              base_quantity: baseQty,
-              direction: "in",
-              unit_cost: baseCost,
-              purchase_invoice_id: invRef.id,
-              note: input.note ?? null,
-              seq: seq++,
-              id: movementId,
-              created_by: byWho,
-              created_at: now,
-            });
-          } else {
-            // Brand-new product: stock starts 0 → average = batch cost.
-            // The shortage threshold lands on the BASE unit (base-unit terms);
-            // the legacy product-level field is no longer written.
-            const price = round2(toNum(it.price));
-            const baseUnitKey = it.base_unit_id || "base";
-            const providedBase = (it.units ?? []).find((u) => u.id === baseUnitKey || u.is_base);
-            const thrRaw: unknown = providedBase?.low_stock_threshold ?? it.threshold;
-            const threshold = thrRaw === null || thrRaw === undefined || thrRaw === "" ? 5 : toNum(thrRaw);
-            if (!(threshold >= 0)) throw new Error("VALIDATION:مؤشر النقص غير صالح.");
-            const productId = doc(collection(db, "products")).id;
-            const movementId = doc(collection(db, "inventory_transactions")).id;
-            builtItems.push({
-              product_id: productId,
-              product_name: String(it.name ?? "").trim(),
-              quantity: qty,
-              unit_cost: unitCost,
-              unit_id: it.unit_id ?? null,
-              unit_name: it.unit_name ?? it.base_unit_name ?? "وحدة",
-              unit_factor: factor,
-              base_quantity: baseQty,
-              base_unit_cost: round4(baseCost),
-              line_total: round2(qty * unitCost),
-            });
-            productWrites.push({
-              id: productId,
-              isNew: true,
-              name: String(it.name ?? "").trim(),
-              stock: baseQty,
-              cost: round4(baseCost),
-              price,
-              movementId,
-              movementIds: [movementId],
-              units: it.units?.length
-                ? it.units.map((entry) => {
-                  const isBaseEntry = entry.id === baseUnitKey || entry.is_base;
-                  const isPurchasedEntry = entry.id === (it.unit_id ?? it.base_unit_id);
-                  const entryCost = entry.purchase_price ?? (isPurchasedEntry ? round4(unitCost) : null);
-                  return {
-                    ...entry,
-                    low_stock_threshold: entry.low_stock_threshold ?? (isBaseEntry ? threshold : null),
-                    purchase_price: entryCost,
-                    purchase_price_history: isPurchasedEntry && entryCost !== null
-                      ? prependPurchasePriceHistory(entry.purchase_price_history, entryCost, nowMs)
-                      : (entry.purchase_price_history ?? null),
-                  };
-                })
-                : [{ id: it.base_unit_id || "base", name: it.base_unit_name || "وحدة", factor: 1, selling_price: price, purchase_price: round4(baseCost), purchase_price_history: prependPurchasePriceHistory(null, round4(baseCost), nowMs), low_stock_threshold: threshold, is_base: true }],
-              base_unit_id: it.base_unit_id || "base",
-              base_unit_name: it.base_unit_name?.trim() || "وحدة",
-            });
-            invLogs.push({
-              type: "purchase",
-              product_id: productId,
-              product_name: String(it.name ?? "").trim(),
-              quantity: qty,
-              unit_id: it.unit_id ?? null,
-              unit_name: it.unit_name ?? it.base_unit_name ?? "وحدة",
-              unit_factor: factor,
-              base_quantity: baseQty,
-              direction: "in",
-              unit_cost: baseCost,
-              purchase_invoice_id: invRef.id,
-              note: input.note ?? null,
-              seq: seq++,
-              id: movementId,
-              created_by: byWho,
-              created_at: now,
-            });
-          }
-        }
-        // Aggregate existing-product writes: one stock/cost update per product,
-        // proposals for EVERY sellable unit (each preserves its own margin).
-        for (const [pid, { newAvg, stock }] of newAvgByProduct) {
-          const cur = prods.get(pid)!;
-          const fin = finalizedByProduct.get(pid)!;
-          const { finalPrice } = fin;
-          const proposals = fin.singleUid ? [] : purchaseUnitProposals(
-            { cost_price: cur.cost, price: cur.price, units: cur.units, base_unit_id: cur.baseUnitId } as unknown as import("~/types").Product,
-            newAvg,
-          );
-          const proposalByUnit = new Map(proposals.map((p) => [p.unitId, p.proposed]));
-          const purchasedCosts = new Map<string, number>();
-          for (const n of normalized) {
-            if (n.it.product_id !== pid) continue;
-            const uid = n.it.unit_id ?? cur.units.find((u) => u.id === n.it.unit_id)?.id ?? null;
-            if (uid) purchasedCosts.set(uid, n.unitCost);
-          }
-          const baseId = cur.baseUnitId || cur.units.find((entry) => entry.is_base)?.id;
-          const updatedUnits = cur.units.map((unit) => {
-            let next = unit;
-            if (purchasedCosts.has(unit.id)) {
-              const cost = purchasedCosts.get(unit.id)!;
-              next = { ...unit, purchase_price: cost, purchase_price_history: prependPurchasePriceHistory(unit.purchase_price_history, cost, nowMs) };
-            }
-            if (fin.singleUid) {
-              // Quick-buy: only the purchased unit's selling price moves.
-              if (finalPrice !== null && unit.id === fin.singleUid && unit.can_sell !== false) next = { ...next, selling_price: finalPrice };
-            } else if (finalPrice !== null && unit.can_sell !== false) {
-              if (unit.id === baseId) {
-                next = { ...next, selling_price: finalPrice };
-              } else {
-                const prop = proposalByUnit.get(unit.id);
-                if (prop !== null && prop !== undefined) next = { ...next, selling_price: prop };
-              }
-            }
-            return next;
-          });
-          const movementIds = invLogs.filter((l) => (l as { product_id?: string }).product_id === pid).map((l) => String((l as { id?: string }).id));
-          productWrites.push({
-            id: pid,
-            isNew: false,
-            name: cur.name,
-            stock,
-            cost: round4(newAvg),
-            price: fin.singleUid && fin.singleUid !== baseId ? cur.price : (finalPrice ?? cur.price),
-            movementId: movementIds[0] ?? doc(collection(db, "inventory_transactions")).id,
-            movementIds,
-            units: updatedUnits,
-          });
-        }
-        const remaining = round2(total - invoicePaid);
-        const status = deriveSupplierInvoiceStatus(invoicePaid, remaining);
-        // 3. Writes.
-        tx.set(invRef, {
-          supplier_name: input.supplier_name?.trim() || null,
-          supplier_id: input.supplier_id ?? null,
-          supplier_ref: input.supplier_ref?.trim() || null,
-          invoice_number: input.invoice_number?.trim() || null,
-          source: input.source ?? "manual",
-          pinned: false,
-          items: builtItems,
-          product_ids: productWrites.map((product) => product.id),
-          total_amount: total,
-          paid_amount: invoicePaid,
-          advance_amount: advance,
-          remaining_amount: remaining,
-          status,
-          payment_ids: [],
-          note: input.note ?? null,
-          created_by: byWho,
-          created_at: now,
-        });
-        writeSupplierSummaryDelta(tx, db, { supplier_id: input.supplier_id, supplier_name: input.supplier_name }, {
-          invoice_count: 1,
-          total_purchases: total,
-          outstanding_payable: remaining,
-          advance_receivable: advance,
-        });
-        if (advance > 0 && input.supplier_id) {
-          tx.set(doc(db, "supplier_advances", invRef.id), {
-            supplier_id: input.supplier_id,
-            supplier_name: input.supplier_name?.trim() || "مورد غير مسمى",
-            purchase_invoice_id: invRef.id,
-            amount: advance,
-            remaining_amount: advance,
-            created_by: byWho,
-            created_at: now,
-          });
-        }
-        for (const w of productWrites) {
-          if (w.isNew) {
-            const ref = doc(db, "products", w.id);
-            tx.set(ref, {
-              name: w.name,
-              price: w.price,
-              cost_price: w.cost,
-              stock_quantity: w.stock,
-              base_unit_id: items.find((i) => !i.product_id && String(i.name ?? "").trim() === w.name)?.base_unit_id || "base",
-              base_unit_name: items.find((i) => !i.product_id && String(i.name ?? "").trim() === w.name)?.base_unit_name?.trim() || "وحدة",
-              units: w.units,
-              last_inventory_transaction_id: w.movementId,
-              last_inventory_transaction_ids: w.movementIds?.length ? w.movementIds : [w.movementId],
-              last_purchase_invoice_id: invRef.id,
-            });
-          } else {
-            tx.update(doc(db, "products", w.id), {
-              stock_quantity: w.stock,
-              cost_price: w.cost,
-              price: w.price,
-              ...("units" in w ? { units: w.units } : {}),
-              last_inventory_transaction_id: w.movementId,
-              last_inventory_transaction_ids: w.movementIds?.length ? w.movementIds : [w.movementId],
-              last_purchase_invoice_id: invRef.id,
-            });
-          }
-        }
-        cachedProductWrites = productWrites.map((w) => ({
-          id: w.id,
-          name: w.name,
-          price: w.price,
-          cost_price: w.cost,
-          stock_quantity: w.stock,
-          ...(w.units ? { units: w.units } : {}),
-          ...(w.base_unit_id ? { base_unit_id: w.base_unit_id } : {}),
-          ...(w.base_unit_name ? { base_unit_name: w.base_unit_name } : {}),
-        }));
-        for (const movement of invLogs) {
-          const { id, ...data } = movement;
-          tx.set(doc(db, "inventory_transactions", String(id)), data);
-        }
-        if (paid > 0) {
-          tx.set(cRef, { balance: round2(bal - paid), updated_at: now }, { merge: true });
-          tx.set(doc(collection(db, "cash_transactions")), {
-            type: "inventory_purchase",
-            direction: "out",
-            amount: paid,
-            purchase_invoice_id: invRef.id,
-            reference_type: "supplier_invoice",
-            reference_id: invRef.id,
-            reference_label: `فاتورة توريد من ${input.supplier_name?.trim() || "مورد غير مسمى"}`,
-            note: input.note ?? null,
-            created_by: byWho,
-            created_at: now,
-          });
-        }
-        out = { ok: true, id: invRef.id, total, paid: invoicePaid, remaining, fullyPaid: remaining <= 0, advance };
-      });
-      const productsStore = useProductsStore();
-      for (const product of cachedProductWrites) productsStore.upsertCached(product);
-      if (cashBalanceAfterPurchase !== null) useCashbox().balance = cashBalanceAfterPurchase;
-      return out;
-    } catch (e) {
-      if (e instanceof Error && e.message === "STALE_PRICING") {
-        const stale = (e as Error & { stale?: ExecutePurchaseResult["stale"] }).stale;
-        return { ok: false, error: "تغيّرت بيانات منتج أثناء الحفظ — راجع الأسعار المقترحة.", stale };
-      }
-      if (e instanceof Error && e.message.startsWith("VALIDATION:")) {
-        return { ok: false, error: e.message.slice("VALIDATION:".length) };
-      }
-      console.error(e);
-      return { ok: false, error: "تعذر حفظ فاتورة الشراء." };
-    }
+    return executeUnitPurchase(input);
   }
 
   async function paySupplierInvoice(

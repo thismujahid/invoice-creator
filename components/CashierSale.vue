@@ -6,6 +6,13 @@
       <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <UFormField label="اسم العميل" required class="min-w-0">
           <USelectMenu v-model="customer" :items="customers.list" label-key="name" by="id" v-model:search-term="customerSearch" :search-input="{ placeholder: 'بحث عن عميل...', icon: 'i-lucide-search' }" :loading="loading" placeholder="اسم العميل" size="lg" class="w-full" />
+          <div v-if="customer?.id && !editId" class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500">
+            <span>رصيد العميل المتاح: <strong class="text-emerald-700">{{ creditLoading ? 'جار التحميل...' : `${formatePrice(creditBalance)} ج` }}</strong></span>
+            <template v-if="creditBalance">
+              <label for="cashier-customer-credit">استخدام الرصيد:</label>
+              <UInputNumber id="cashier-customer-credit" v-model="creditUsed" :min="0" :max="Math.min(creditBalance, total)" :step="0.01" size="xs" class="w-28" />
+            </template>
+          </div>
         </UFormField>
         <div class="flex items-end"><FormsCustomer v-model="customerOpen" :refresher="refreshCustomers" @done="onCustomerCreated"><UButton icon="i-lucide-user-plus" color="success" variant="soft" size="lg">إضافة عميل</UButton></FormsCustomer></div>
       </div>
@@ -31,7 +38,6 @@
             <div class="mb-2 flex items-center justify-between"><span class="text-xs font-bold text-gray-400">{{ line.productId ? formatInvoiceLineName(productOf(line)?.name || '', unitOf(line)?.name, line.option) : 'منتج #' + (index + 1) }}</span><div class="flex gap-1.5"><UButton v-if="line.productId" size="sm" color="success" variant="soft" icon="i-lucide-chevron-up" @click="line.expanded = false">إغلاق</UButton><UButton v-if="lines.length > 1" size="xs" color="error" variant="soft" icon="i-lucide-trash-2" aria-label="حذف السطر" @click="removeLine(index)" /></div></div>
             <div class="grid grid-cols-2 gap-2">
               <UFormField label="المنتج" class="col-span-2"><USelectMenu :model-value="productOf(line)" :items="products.activeProducts" label-key="name" by="id" :search-input="{ placeholder: 'بحث عن منتج...', icon: 'i-lucide-search' }" placeholder="المنتج" class="w-full" @update:model-value="(value) => selectProduct(line, value)" /></UFormField>
-              <UFormField label="خيار معين"><UInput v-model="line.option" placeholder="خيار معين" class="w-full" /></UFormField>
               <UFormField v-if="unitsOf(line).length > 1" label="الوحدة"><USelectMenu :model-value="unitOf(line)" :items="unitsOf(line)" label-key="name" by="id" :search-input="false" class="w-full" @update:model-value="(value) => selectUnit(line, value)" /></UFormField>
               <UFormField :label="line.productId ? 'الكمية (المتبقي بعد الفاتورة: ' + stockLabelOf(line) + ')' : 'الكمية'" :error="stockErrorOf(line) || undefined"><UInputNumber v-model="line.quantity" :min="0.01" :step="0.01" class="w-full" /></UFormField>
               <UFormField label="سعر المنتج"><UInput :model-value="priceOf(line) === null ? 'غير محدد' : formatePrice(priceOf(line))" readonly class="w-full" /></UFormField>
@@ -51,11 +57,6 @@
         <UFormField label="الخصم متعلق بـ"><UInput v-model="discountFor" placeholder="اختياري" class="w-full" /></UFormField>
       </div>
       <div v-if="invoiceExtras" class="mt-2 text-sm text-gray-600">مبالغ أخرى محفوظة بالفاتورة: {{ formatePrice(invoiceExtras) }} ج</div>
-      <div v-if="customer?.id && !editId" class="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm">
-        <div class="flex justify-between gap-2"><span>رصيد العميل المتاح</span><strong>{{ creditLoading ? 'جار التحميل...' : `${formatePrice(creditBalance)} ج` }}</strong></div>
-        <UFormField v-if="creditBalance" label="استخدام من رصيد العميل" class="mt-2"><UInputNumber v-model="creditUsed" :min="0" :max="Math.min(creditBalance, total)" :step="0.01" class="w-full" /></UFormField>
-        <p class="mt-1 text-xs text-emerald-800">يُستخدم كسداد، ولا يُخصم من قيمة المبيعات.</p>
-      </div>
       <div class="mt-4 border-t border-gray-100 pt-3">
         <UFormField label="النقد المدفوع">
           <UInput :model-value="String(paid ?? '')" type="number" inputmode="decimal" :min="0" step="0.01" class="w-full" @update:model-value="setPaid">
@@ -130,29 +131,36 @@ function unitsOf(line: SaleLine): ProductUnit[] { const product = productOf(line
 function unitOf(line: SaleLine): ProductUnit | undefined { return unitsOf(line).find((unit) => unit.id === line.unitId); }
 function priceOf(line: SaleLine): number | null { return line.lockedPrice ?? unitOf(line)?.selling_price ?? null; }
 function lineTotal(line: SaleLine): number { return round2((priceOf(line) ?? 0) * line.quantity); }
+function stockKey(productId: string, unitId: string): string { return `${productId}||${unitId}`; }
 function stockLabelOf(line: SaleLine): string {
   const product = productOf(line);
-  if (!product) return "—";
-  const selected = lines.value.reduce((sum, item) => item.productId === line.productId ? sum + item.quantity * Number(unitOf(item)?.factor || 1) : sum, 0);
-  return stockQuantityLabel(product, Math.max(0, round2(availableStock(line.productId) - selected)));
+  const unit = unitOf(line);
+  if (!product || !unit) return "—";
+  const selected = lines.value.reduce((sum, item) => item.productId === line.productId && item.unitId === line.unitId ? sum + item.quantity : sum, 0);
+  return `${Math.max(0, round2(availableStock(line.productId, line.unitId) - selected))} ${unit.name}`;
 }
-function availableStock(productId: string): number {
-  return round2(Number(products.productsById.get(productId)?.stock_quantity || 0) + (originalReserved.get(productId) || 0));
+function availableStock(productId: string, unitId: string): number {
+  const product = products.productsById.get(productId);
+  const unit = product?.units?.find((item) => item.id === unitId);
+  return round2(Number(unit?.stock_quantity ?? product?.stock_quantity ?? 0) + (originalReserved.get(stockKey(productId, unitId)) || 0));
 }
 const stockErrors = computed(() => {
   const selected = new Map<string, number>();
   for (const line of lines.value) {
     if (!line.productId || !unitOf(line)) continue;
-    selected.set(line.productId, round2((selected.get(line.productId) || 0) + line.quantity * Number(unitOf(line)!.factor || 1)));
+    const key = stockKey(line.productId, line.unitId);
+    selected.set(key, round2((selected.get(key) || 0) + line.quantity));
   }
   const errors = new Map<string, string>();
-  for (const [productId, quantity] of selected) {
-    const available = availableStock(productId);
-    if (quantity - available > 1e-9) errors.set(productId, `إجمالي المطلوب ${stockQuantityLabel(products.productsById.get(productId)!, quantity)} يتجاوز المتاح ${stockQuantityLabel(products.productsById.get(productId)!, available)}.`);
+  for (const [key, quantity] of selected) {
+    const [productId, unitId] = key.split("||");
+    const unit = products.productsById.get(productId)?.units?.find((item) => item.id === unitId);
+    const available = availableStock(productId, unitId);
+    if (quantity - available > 1e-9) errors.set(key, `إجمالي المطلوب ${quantity} ${unit?.name ?? "وحدة"} يتجاوز المتاح ${available} ${unit?.name ?? "وحدة"}.`);
   }
   return errors;
 });
-function stockErrorOf(line: SaleLine): string { return stockErrors.value.get(line.productId) || ""; }
+function stockErrorOf(line: SaleLine): string { return stockErrors.value.get(stockKey(line.productId, line.unitId)) || ""; }
 const subtotal = computed(() => round2(lines.value.reduce((sum, line) => sum + lineTotal(line), 0)));
 const invoiceExtras = computed(() => round2(Object.values(originalExtras.value).reduce((sum, value) => sum + value, 0)));
 const gross = computed(() => round2(subtotal.value + invoiceExtras.value));
@@ -225,6 +233,7 @@ async function save(print: boolean): Promise<void> {
   if (saving.value) return;
   error.value = "";
   if (!customer.value?.id || !lines.value.length || lines.value.some((line) => !productOf(line) || !unitOf(line) || !Number.isFinite(line.quantity) || line.quantity <= 0)) { error.value = "اختر العميل والمنتجات والوحدات وأدخل كميات صحيحة."; return; }
+  if (lines.value.some((line) => unitOf(line)?.allows_fractional !== true && !Number.isInteger(line.quantity))) { error.value = "هذه الوحدة لا تقبل كميات كسرية."; return; }
   if (stockErrors.value.size) { error.value = "كمية المنتجات المطلوبة تتجاوز المتاح بالمخزون. خفّض الكمية قبل الحفظ."; return; }
   if (discountError.value) { error.value = discountError.value; return; }
   if (!Number.isFinite(paid.value) || paid.value < 0 || !Number.isFinite(creditUsed.value) || creditUsed.value < 0 || creditUsed.value > creditBalance.value || paid.value + creditUsed.value > total.value + 0.005) { error.value = "راجع النقد ورصيد العميل؛ مجموع السداد لا يجوز أن يتجاوز الفاتورة."; return; }
@@ -272,7 +281,10 @@ onMounted(async () => {
   invoices.invoiceToEdit = undefined;
   if (draft.id && draft.inventory_applied === true) {
     for (const item of draft.products || []) {
-      if (item.product_id) originalReserved.set(item.product_id, round2((originalReserved.get(item.product_id) || 0) + Number(item.base_quantity ?? Number(item.product_quantity) * Number(item.unit_factor || 1))));
+      if (item.product_id && item.unit_id) {
+        const key = stockKey(item.product_id, item.unit_id);
+        originalReserved.set(key, round2((originalReserved.get(key) || 0) + Number(item.product_quantity || 0)));
+      }
     }
   }
   editId.value = draft.id || null;

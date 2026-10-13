@@ -83,6 +83,7 @@ export interface InventoryTransaction {
   unit_id?: string | null;
   unit_name?: string | null;
   unit_factor?: number | null;
+  unit_quantity?: number | null;
   base_quantity?: number | null;
   direction: "in" | "out";
   unit_cost?: number | null;
