@@ -390,16 +390,6 @@ exports.createStaffLoan = onCall(async (request) => {
   });
 });
 
-function addStats(tx, day, month, values) {
-  const changes = { updated_at: FieldValue.serverTimestamp() };
-  for (const [key, value] of Object.entries(values)) {
-    if (value) changes[key] = FieldValue.increment(value);
-  }
-  tx.set(db.doc("store_stats/current"), changes, { merge: true });
-  tx.set(db.doc(`invoice_stats_daily/${day}`), changes, { merge: true });
-  tx.set(db.doc(`invoice_stats_monthly/${month}`), changes, { merge: true });
-}
-
 function cairoDateParts() {
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en", { timeZone: "Africa/Cairo", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date()).map((part) => [part.type, part.value]));
   return { day: `${parts.year}-${parts.month}-${parts.day}`, month: `${parts.year}-${parts.month}` };
@@ -414,6 +404,34 @@ function sellableUnit(product, id) {
   const price = unit.selling_price ?? ((unit.is_base || unit.id === product.base_unit_id) ? product.price : null);
   if (!(Number(price) > 0)) fail("The selected selling unit is unavailable.");
   return { ...unit, price };
+}
+
+async function customerSettlementItems(tx, customerId, customer) {
+  const name = String(customer.name || "").trim();
+  const phone = String(customer.phone ?? "").replace(/\D/g, "");
+  const [linkedInvoices, namedInvoices, linkedLoans, namedLoans] = await Promise.all([
+    tx.get(db.collection("invoice_debt_summaries").where("customer_id", "==", customerId)),
+    tx.get(db.collection("invoice_debt_summaries").where("customer_name", "==", name)),
+    tx.get(db.collection("customer_loans").where("customer_id", "==", customerId)),
+    tx.get(db.collection("customer_loans").where("customer_name", "==", name)),
+  ]);
+  const belongs = (data) => data.customer_id === customerId || (!data.customer_id && phone && String(data.customer_name || "").trim() === name && String(data.customer_phone ?? "").replace(/\D/g, "") === phone);
+  const summaries = new Map([...linkedInvoices.docs, ...namedInvoices.docs].filter((doc) => belongs(doc.data()) && money(doc.data().remaining) > 0).map((doc) => [doc.id, doc]));
+  const loans = new Map([...linkedLoans.docs, ...namedLoans.docs].filter((doc) => belongs(doc.data()) && money(doc.data().remaining) > 0).map((doc) => [doc.id, doc]));
+  if (summaries.size + loans.size > 50) throw new HttpsError("failed-precondition", "Too many open debts for automatic settlement.");
+  const invoiceSnaps = await Promise.all([...summaries.keys()].map((id) => tx.get(db.doc(`invoices/${id}`))));
+  const items = [];
+  for (const invoice of invoiceSnaps) {
+    const summary = summaries.get(invoice.id);
+    if (!invoice.exists || !belongs(invoice.data())) throw new HttpsError("failed-precondition", "A debt record changed. Refresh the customer.");
+    const remaining = money(invoice.data().remaining ?? summary.data().remaining);
+    if (Math.abs(remaining - money(summary.data().remaining)) > 0.005) throw new HttpsError("failed-precondition", "Debt summary is out of date.");
+    if (remaining > 0) items.push({ type: "invoice", snapshot: invoice, summary, remaining, date: invoice.data().date });
+  }
+  for (const loan of loans.values()) items.push({ type: "loan", snapshot: loan, remaining: money(loan.data().remaining), date: loan.data().created_at });
+  const timestamp = (value) => value?.toMillis?.() ?? (Number(value?.seconds) * 1000 || 0);
+  items.sort((a, b) => timestamp(a.date) - timestamp(b.date) || a.snapshot.id.localeCompare(b.snapshot.id));
+  return items;
 }
 
 exports.createStaffSale = onCall(async (request) => {
@@ -440,7 +458,19 @@ exports.createStaffSale = onCall(async (request) => {
     ]);
     if (!customer.exists) throw new HttpsError("not-found", "Customer not found.");
     if (!cash.exists && paid > 0) throw new HttpsError("failed-precondition", "Initialize the cashbox first.");
-    if (money(creditUsed) - money(credit.data()?.balance || 0) > 0.005) throw new HttpsError("failed-precondition", "Customer credit is insufficient. Refresh it.");
+    const creditBalance = money(credit.data()?.balance || 0);
+    const debts = creditBalance > 0 ? await customerSettlementItems(tx, customerId, customer.data()) : [];
+    let creditForDebt = creditBalance;
+    const settlements = [];
+    for (const debt of debts) {
+      if (creditForDebt <= 0) break;
+      const amount = money(Math.min(creditForDebt, debt.remaining));
+      if (amount <= 0) continue;
+      settlements.push({ ...debt, amount });
+      creditForDebt = money(creditForDebt - amount);
+    }
+    const settledDebt = money(creditBalance - creditForDebt);
+    if (money(creditUsed) - creditForDebt > 0.005) throw new HttpsError("failed-precondition", "Customer credit changed after debt settlement. Refresh it.");
     const products = new Map(productSnaps.map((snapshot) => [snapshot.id, snapshot]));
     const needs = new Map();
     const lines = rawLines.map((raw, index) => {
@@ -510,7 +540,15 @@ exports.createStaffSale = onCall(async (request) => {
       date, total, sales, paid: settled, remaining, profit, updated_at: now,
     });
     const keys = cairoDateParts();
-    addStats(tx, keys.day, keys.month, {
+    const statDeltas = new Map();
+    const accrue = (day, month, values) => {
+      for (const path of ["store_stats/current", `invoice_stats_daily/${day}`, `invoice_stats_monthly/${month}`]) {
+        const current = statDeltas.get(path) || {};
+        for (const [key, value] of Object.entries(values)) current[key] = money((current[key] || 0) + value);
+        statDeltas.set(path, current);
+      }
+    };
+    accrue(keys.day, keys.month, {
       total_sales: sales, gross_sales: currentGross, total_discount: gross > 0 ? money(discountValue * currentGross / gross) : discountValue,
       total_paid: money(paid), outstanding_customer_debt: remaining, total_cost: cost,
       total_profit: profit, invoice_count: 1,
@@ -521,10 +559,55 @@ exports.createStaffSale = onCall(async (request) => {
     tx.set(db.doc(`customer_summaries/${customerId}`), {
       customer_id: customerId, customer_name: name, customer_phone: phone,
       invoice_count: FieldValue.increment(1), total_sales: FieldValue.increment(sales),
-      outstanding_debt: FieldValue.increment(remaining), updated_at: now,
+      outstanding_debt: FieldValue.increment(money(remaining - settlements.filter((item) => item.type === "invoice").reduce((sum, item) => sum + item.amount, 0))), updated_at: now,
     }, { merge: true });
+    if (settledDebt > 0) {
+      const paymentRef = db.collection("debt_payments").doc();
+      tx.create(paymentRef, {
+        customer_id: customerId, amount: settledDebt, cash_amount: 0, source: "credit",
+        allocations: settlements.map((item) => ({ type: item.type, reference_id: item.snapshot.id, amount: item.amount })),
+        note: "تسوية تلقائية عند إنشاء فاتورة", invoice_id: saleRef.id,
+        created_by: request.auth.uid, created_at: now,
+      });
+      tx.create(db.collection("customer_credit_transactions").doc(), {
+        customer_id: customerId, debt_payment_id: paymentRef.id, invoice_id: saleRef.id,
+        type: "debt_settlement", amount: settledDebt, created_by: request.auth.uid, created_at: now,
+      });
+      for (const item of settlements) {
+        const data = item.snapshot.data();
+        const oldPaid = money(data.paid_amount ?? item.summary?.data()?.paid ?? 0);
+        const paidAfter = money(oldPaid + item.amount);
+        const remainingAfter = money(item.remaining - item.amount);
+        if (item.type === "invoice") {
+          tx.update(item.snapshot.ref, {
+            paid_amount: paidAfter, remaining: remainingAfter,
+            credit_used: money(Number(data.credit_used || 0) + item.amount),
+            debt_payment_count: FieldValue.increment(1),
+          });
+          tx.set(item.summary.ref, { paid: paidAfter, remaining: remainingAfter, updated_at: now }, { merge: true });
+          const period = asDateKey(data.date?.toDate?.() || date.toDate());
+          const oldStatus = statusOf(oldPaid, item.remaining);
+          const newStatus = statusOf(paidAfter, remainingAfter);
+          accrue(period.day, period.month, {
+            outstanding_customer_debt: -item.amount,
+            paid_invoice_count: (newStatus === "paid") - (oldStatus === "paid"),
+            partial_invoice_count: (newStatus === "partial") - (oldStatus === "partial"),
+            unpaid_invoice_count: (newStatus === "unpaid") - (oldStatus === "unpaid"),
+          });
+        } else {
+          tx.update(item.snapshot.ref, { paid_amount: paidAfter, remaining: remainingAfter, status: remainingAfter <= 0 ? "paid" : "partial" });
+        }
+      }
+    }
+    for (const [path, values] of statDeltas) {
+      const changes = { updated_at: now };
+      for (const [key, value] of Object.entries(values)) if (value) changes[key] = FieldValue.increment(value);
+      tx.set(db.doc(path), changes, { merge: true });
+    }
+    if (settledDebt > 0 || creditUsed > 0) {
+      tx.set(creditRef, { balance: money(creditBalance - settledDebt - creditUsed), updated_at: now }, { merge: true });
+    }
     if (creditUsed > 0) {
-      tx.set(creditRef, { balance: money(Number(credit.data()?.balance || 0) - creditUsed), updated_at: now }, { merge: true });
       tx.create(db.collection("customer_credit_transactions").doc(), { customer_id: customerId, invoice_id: saleRef.id, type: "redeemed", amount: money(creditUsed), created_by: request.auth.uid, created_at: now });
     }
     const movementsByProduct = new Map();
@@ -555,7 +638,7 @@ exports.createStaffSale = onCall(async (request) => {
         reference_label: `فاتورة بيع لـ ${name}`, note: null, created_by: request.auth.uid, created_at: now,
       });
     }
-    const result = { id: saleRef.id, receipt: { ...(role === "cashier" ? safeInvoice(invoice) : invoice), id: saleRef.id, edit_revision: invoiceRevision(invoice) } };
+    const result = { id: saleRef.id, settledDebt, receipt: { ...(role === "cashier" ? safeInvoice(invoice) : invoice), id: saleRef.id, edit_revision: invoiceRevision(invoice) } };
     tx.create(opRef, { result, created_at: now });
     return result;
   });

@@ -115,19 +115,23 @@
                     </div>
                   </div>
                 </div>
+                <div v-if="creditBalance > 0 && customerDebt > 0" class="mt-2 text-xs font-medium text-slate-600">
+                  تسوية تلقائية عند الحفظ: {{ formatePrice(Math.min(creditBalance, customerDebt)) }} ج من الرصيد مقابل الدين.
+                </div>
                 <div
-                  v-if="invoiceData.customer_id && creditBalance"
+                  v-if="invoiceData.customer_id && creditAvailableAfterSettlement > 0"
                   class="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-600"
                 >
                   <label for="invoice-customer-credit">استخدام الرصيد:</label>
                   <UInputNumber
                     id="invoice-customer-credit"
-                    v-model="invoiceData.credit_used"
+                    :model-value="invoiceData.credit_used"
                     :min="0"
-                    :max="Math.min(creditBalance, totalOfInvoice)"
+                    :max="Math.min(creditAvailableAfterSettlement, totalOfInvoice)"
                     :step="0.01"
                     size="xs"
                     class="w-28"
+                    @update:model-value="setCreditUsed"
                   />
                 </div>
               </div>
@@ -784,6 +788,8 @@ const blockUpdatePaidAmount = ref(false);
 const creditBalance = ref(0);
 const creditLoading = ref(false);
 const customerDebt = ref(0);
+const creditTouched = ref(false);
+const creditAvailableAfterSettlement = computed(() => Math.max(0, round2(creditBalance.value - customerDebt.value)));
 const balanceError = ref(false);
 const balanceCustomerId = ref<string | null>(null);
 const printOpeningBalance = computed(() =>
@@ -792,7 +798,7 @@ const printOpeningBalance = computed(() =>
   !loadingDebt.value &&
   invoiceData.value.customer_id === balanceCustomerId.value &&
   balanceCustomerId.value
-    ? { credit: creditBalance.value, debt: customerDebt.value }
+    ? { credit: creditAvailableAfterSettlement.value, debt: Math.max(0, round2(customerDebt.value - creditBalance.value)) }
     : null,
 );
 let creditRequest = 0;
@@ -804,6 +810,7 @@ watch(
     customerDebt.value = 0;
     balanceCustomerId.value = null;
     balanceError.value = false;
+    creditTouched.value = false;
     creditLoading.value = false;
     loadingDebt.value = false;
     if (!id || invoiceData.value.id) return;
@@ -840,7 +847,7 @@ watch(
     if (
       !Number.isFinite(next) ||
       next < 0 ||
-      next > Math.min(creditBalance.value, totalOfInvoice.value)
+      next > Math.min(creditAvailableAfterSettlement.value, totalOfInvoice.value)
     ) {
       invoiceData.value.credit_used = previous || 0;
       return;
@@ -856,6 +863,10 @@ watch(
       );
   },
 );
+function setCreditUsed(value: number | undefined): void {
+  creditTouched.value = true;
+  invoiceData.value.credit_used = value ?? 0;
+}
 const discountAmount = computed(() => {
   if (invoiceData.value.discount && invoiceData.value.discount_percentage) {
     return (
@@ -870,6 +881,10 @@ const totalOfInvoice = computed(
 watch(totalOfInvoice, (total) => {
   if (Number(invoiceData.value.credit_used || 0) > total)
     invoiceData.value.credit_used = Math.max(0, round2(total));
+});
+watch([creditAvailableAfterSettlement, totalOfInvoice, creditLoading, loadingDebt], ([available, total]) => {
+  if (creditTouched.value || invoiceData.value.id || !invoiceData.value.customer_id || balanceError.value || creditLoading.value || loadingDebt.value) return;
+  invoiceData.value.credit_used = Math.min(available, Math.max(0, round2(total)));
 });
 watch(
   () => [
@@ -1059,7 +1074,7 @@ async function saveCashier(
     paid > total + 0.005 ||
     !Number.isFinite(credit) ||
     credit < 0 ||
-    (!data.id && credit > creditBalance.value + 0.005) ||
+    (!data.id && credit > creditAvailableAfterSettlement.value + 0.005) ||
     paid + 0.005 < credit ||
     !Number.isFinite(discount) ||
     discount < 0 ||
@@ -1169,7 +1184,7 @@ async function fetchCustomerDebt(
   for (const entry of book) {
     const byId = !!entry.customer_id && entry.customer_id === id;
     const byNamePhone =
-      !byId &&
+      !entry.customer_id &&
       name === String(entry.name ?? "").trim() &&
       !!phone &&
       phone === normalizePhone(entry.phone);

@@ -72,6 +72,17 @@
               </td>
               <td class="p-2">
                 <div class="flex gap-2">
+                  <UTooltip text="سجل عمليات العميل">
+                    <UButton
+                      icon="i-lucide-history"
+                      color="neutral"
+                      variant="soft"
+                      size="xs"
+                      aria-label="سجل عمليات العميل"
+                      @click="openHistory(c)"
+                      class="flex items-center justify-center"
+                    />
+                  </UTooltip>
                   <UButton
                     icon="i-lucide-pencil"
                     color="success"
@@ -135,6 +146,15 @@
               </div>
             </div>
             <div class="flex shrink-0 gap-2">
+              <UButton
+                icon="i-lucide-history"
+                color="neutral"
+                variant="soft"
+                size="xs"
+                aria-label="سجل عمليات العميل"
+                @click="openHistory(c)"
+                class="flex items-center justify-center"
+              />
               <UButton
                 icon="i-lucide-pencil"
                 color="success"
@@ -202,11 +222,33 @@
         </div>
       </template>
     </UiAppDialog>
+    <UiAppDialog
+      v-model:open="historyOpen"
+      :title="`سجل عمليات ${historyCustomer?.name || ''}`"
+    >
+      <USkeleton v-if="historyLoading" class="h-32 w-full" />
+      <UAlert v-else-if="historyError" color="error" variant="soft" :title="historyError" />
+      <div v-else-if="historyCustomer" class="max-h-[75vh] overflow-y-auto">
+        <CustomerDebtTimeline
+          :customer-id="historyCustomer.id || null"
+          :total-debt="historyDebt"
+          :credit-balance="historyCredit"
+          @view-invoice="openHistoryInvoice"
+        />
+      </div>
+    </UiAppDialog>
+    <UiAppDialog v-model:open="invoiceOpen" title="عرض الفاتورة" :z-index="700">
+      <USkeleton v-if="invoiceLoading" class="h-48 w-full" />
+      <UAlert v-else-if="invoiceError" color="error" variant="soft" :title="invoiceError" />
+      <div v-else-if="historyInvoice" class="invoice-creator-view max-h-[80vh] overflow-auto">
+        <Invoice class="mx-auto" :view-mode="true" :invoice-data="historyInvoice" @close="historyInvoice = null" />
+      </div>
+    </UiAppDialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import type { Customer } from "~/types";
+import type { Customer, Invoice } from "~/types";
 import { collection, getDocs } from "firebase/firestore";
 import { normalizeName, normalizePhone } from "~/composables/finance";
 
@@ -224,6 +266,34 @@ const summaries = ref<
   Record<string, { invoiceCount: number; debt: number; initialized: boolean }>
 >({});
 const { formatePrice } = useHelpers();
+const debts = useDebts();
+const historyCustomer = ref<Customer | null>(null);
+const historyLoading = ref(false);
+const historyError = ref("");
+const historyDebt = ref(0);
+const historyCredit = ref(0);
+let historyRequest = 0;
+const historyOpen = computed({
+  get: () => historyCustomer.value !== null,
+  set: (open: boolean) => {
+    if (!open) {
+      historyRequest++;
+      historyCustomer.value = null;
+    }
+  },
+});
+const historyInvoice = ref<Invoice | null>(null);
+const invoiceLoading = ref(false);
+const invoiceError = ref("");
+const invoiceOpen = computed({
+  get: () => historyInvoice.value !== null || invoiceLoading.value || !!invoiceError.value,
+  set: (open: boolean) => {
+    if (!open) {
+      historyInvoice.value = null;
+      invoiceError.value = "";
+    }
+  },
+});
 
 // FLAG [B4-FIXED]: watcher instead of side-effect in computed.
 watch(searchText, () => {
@@ -347,6 +417,35 @@ function goDebt(customer: Customer): void {
       customer_phone: String(customer.phone ?? ""),
     },
   });
+}
+async function openHistory(customer: Customer): Promise<void> {
+  const request = ++historyRequest;
+  historyCustomer.value = customer;
+  historyLoading.value = true;
+  historyError.value = "";
+  try {
+    const book = await debts.fetchDebtsBook();
+    if (request !== historyRequest) return;
+    const entry = book.find((row) => row.customer_id === customer.id);
+    historyDebt.value = entry?.totalDebt ?? 0;
+    historyCredit.value = entry?.creditBalance ?? 0;
+  } catch {
+    if (request === historyRequest) historyError.value = "تعذر تحميل أرصدة العميل. حاول مرة أخرى.";
+  } finally {
+    if (request === historyRequest) historyLoading.value = false;
+  }
+}
+async function openHistoryInvoice(id: string): Promise<void> {
+  historyInvoice.value = null;
+  invoiceError.value = "";
+  invoiceLoading.value = true;
+  try {
+    historyInvoice.value = await callStaff<{ id: string }, Invoice>("getCashierInvoice", { id });
+  } catch {
+    invoiceError.value = "تعذر تحميل الفاتورة.";
+  } finally {
+    invoiceLoading.value = false;
+  }
 }
 function editCustomer(customer: Customer): void {
   customerForm.value = { ...customer };

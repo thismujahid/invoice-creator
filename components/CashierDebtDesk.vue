@@ -371,19 +371,40 @@
     <UiAppDialog
       v-model:open="payOpen"
       :title="`تسديد دفعة — ${payTarget?.name || ''}`"
+      :z-index="30"
       ><div v-if="payTarget" class="space-y-3">
         <div class="rounded-lg bg-gray-50 p-2 text-sm">
           إجمالي الدين: <b>{{ formatePrice(payTarget.totalDebt) }} ج</b>
         </div>
-        <UFormField label="المبلغ المدفوع" required
+        <div v-if="mustSettleFirst" class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
+          <div class="mb-2">للعميل رصيد {{ formatePrice(payTarget.creditBalance) }} ج. سوِّ الدين من الرصيد أولًا، ثم سجّل أي دفعة نقدية متبقية.</div>
+          <CustomerCreditSettlement
+            :customer-id="payTarget.customer_id"
+            :customer-name="payTarget.name"
+            :credit-balance="payTarget.creditBalance"
+            :total-debt="payTarget.totalDebt"
+            :obligations="payObligations"
+            size="sm"
+            label
+            @settled="onPaySettled"
+          />
+        </div>
+        <CustomerCreditPayout
+          v-if="payTarget.creditBalance > 0 && payTarget.totalDebt <= 0"
+          :customer-id="payTarget.customer_id"
+          :customer-name="payTarget.name"
+          @paid="onPaySettled"
+        />
+        <UFormField v-if="payTarget.totalDebt > 0" label="المبلغ المدفوع" required
           ><UInputNumber
             v-model="payAmount"
+            :disabled="mustSettleFirst"
             :min="0.01"
             :max="payTarget.totalDebt"
             :step="0.01"
             class="w-full"
         /></UFormField>
-        <div class="max-h-48 space-y-1 overflow-y-auto">
+        <div v-if="payTarget.totalDebt > 0" class="max-h-48 space-y-1 overflow-y-auto">
           <div
             v-for="item in payObligations"
             :key="`${item.type}-${item.id}`"
@@ -398,7 +419,7 @@
             >
           </div>
         </div>
-        <UFormField label="ملاحظة"
+        <UFormField v-if="payTarget.totalDebt > 0" label="ملاحظة"
           ><UInput v-model="payNote" class="w-full"
         /></UFormField>
         <UAlert
@@ -409,7 +430,7 @@
         />
       </div>
       <template #footer
-        ><UButton color="success" block :loading="paymentBusy" @click="pay"
+        ><UButton v-if="payTarget?.totalDebt" color="success" block :loading="paymentBusy" :disabled="mustSettleFirst" @click="pay"
           >تأكيد السداد</UButton
         ></template
       ></UiAppDialog
@@ -501,6 +522,7 @@ const payAmount = ref<number>();
 const payNote = ref("");
 const paymentError = ref("");
 const paymentBusy = ref(false);
+const mustSettleFirst = computed(() => !!payTarget.value && payTarget.value.creditBalance > 0 && payTarget.value.totalDebt > 0);
 const paymentRequestId = ref(crypto.randomUUID());
 const allocations = ref<Record<string, number>>({});
 const invoiceOpen = ref(false);
@@ -646,8 +668,17 @@ function openPay(row: DebtRow): void {
   paymentRequestId.value = crypto.randomUUID();
   payOpen.value = true;
 }
+async function onPaySettled(): Promise<void> {
+  const customerId = payTarget.value?.customer_id;
+  await reload();
+  payTarget.value = book.value.find((row) => row.customer_id === customerId) ?? null;
+  payAmount.value = undefined;
+  allocations.value = {};
+  paymentError.value = "";
+  if (!payTarget.value) payOpen.value = false;
+}
 async function pay(): Promise<void> {
-  if (paymentBusy.value || !payTarget.value?.customer_id) return;
+  if (paymentBusy.value || mustSettleFirst.value || !payTarget.value?.customer_id) return;
   const amount = round2(payAmount.value ?? 0);
   const selectedAllocations = payObligations.value
     .map((item) => ({

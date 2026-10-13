@@ -433,13 +433,34 @@
             >
           </div>
         </div>
+        <div v-if="payTarget.creditBalance > 0 && payTarget.totalDebt > 0" class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
+          <div class="mb-2">للعميل رصيد {{ formatePrice(payTarget.creditBalance) }} ج. سوِّ الدين من الرصيد أولًا، ثم سجّل أي دفعة نقدية متبقية.</div>
+          <CustomerCreditSettlement
+            :customer-id="resolvePayCustomerId()"
+            :customer-name="payTarget.name"
+            :credit-balance="payTarget.creditBalance"
+            :total-debt="payTarget.totalDebt"
+            :obligations="payObligations"
+            size="sm"
+            label
+            @settled="onPaySettled"
+          />
+        </div>
+        <CustomerCreditPayout
+          v-if="payTarget.creditBalance > 0 && payTarget.totalDebt <= 0"
+          :customer-id="resolvePayCustomerId()"
+          :customer-name="payTarget.name"
+          @paid="onPaySettled"
+        />
         <UFormField
           label="المبلغ المدفوع"
           required
+          v-if="payTarget.totalDebt > 0"
           :error="payAmountError || undefined"
         >
           <UInputNumber
             v-model="payAmount"
+            :disabled="mustSettleFirst"
             :min="0"
             :max="payTarget.totalDebt"
             :step="0.01"
@@ -448,7 +469,7 @@
             class="w-full"
           />
         </UFormField>
-        <div class="flex items-center justify-between">
+        <div v-if="payTarget.totalDebt > 0" class="flex items-center justify-between">
           <p class="text-xs font-bold text-gray-400">
             التوزيع على الالتزامات (الأقدم أولاً)
           </p>
@@ -457,6 +478,7 @@
             color="neutral"
             variant="soft"
             icon="i-lucide-history"
+            :disabled="mustSettleFirst"
             @click="autoDistribute"
             >توزيع تلقائي على الأقدم</UButton
           >
@@ -488,6 +510,7 @@
           </UTooltip>
           <UInputNumber
             :model-value="payAllocs[o.kind + o.id] ?? 0"
+            :disabled="mustSettleFirst"
             :min="0"
             :max="o.remaining"
             :step="0.01"
@@ -496,7 +519,7 @@
             @update:model-value="(v) => onAllocInput(o, v)"
           />
         </div>
-        <UFormField label="ملاحظة">
+        <UFormField v-if="payTarget.totalDebt > 0" label="ملاحظة">
           <UInput
             v-model="payNote"
             placeholder="اختياري"
@@ -504,7 +527,7 @@
             class="w-full"
           />
         </UFormField>
-        <div class="space-y-1 rounded-lg bg-gray-50 p-2.5 text-sm font-bold">
+        <div v-if="payTarget.totalDebt > 0" class="space-y-1 rounded-lg bg-gray-50 p-2.5 text-sm font-bold">
           <div class="flex items-center justify-between gap-2">
             <span class="font-normal text-gray-500">إجمالي الدين</span>
             <span>{{ formatePrice(payTarget.totalDebt) }}</span>
@@ -533,9 +556,11 @@
       <template #footer>
         <div class="flex w-full gap-2">
           <UButton
+            v-if="payTarget?.totalDebt"
             color="success"
             class="min-h-11 flex-1"
             :loading="payBusy"
+            :disabled="mustSettleFirst"
             icon="i-lucide-check"
             @click="submitPay"
             >تأكيد السداد</UButton
@@ -782,6 +807,7 @@ const payAllocs = ref<Record<string, number>>({});
 const payNote = ref("");
 const payError = ref("");
 const payBusy = ref(false);
+const mustSettleFirst = computed(() => !!payTarget.value && payTarget.value.creditBalance > 0 && payTarget.value.totalDebt > 0);
 const payObligations = computed<Obligation[]>(() => {
   if (!payTarget.value) return [];
   return [...payTarget.value.invoices, ...payTarget.value.loans].sort(
@@ -857,6 +883,17 @@ function openPay(c: CustomerDebt): void {
   payError.value = "";
   payOpen.value = true;
 }
+async function onPaySettled(): Promise<void> {
+  const customerId = resolvePayCustomerId();
+  const key = payTarget.value?.key;
+  await reload();
+  payTarget.value = book.value.find((customer) => customer.customer_id === customerId || customer.key === key) ?? null;
+  payAmount.value = undefined;
+  payAllocs.value = {};
+  payAttempted.value = false;
+  payError.value = "";
+  if (!payTarget.value) payOpen.value = false;
+}
 function resolvePayCustomerId(): string | null {
   const t = payTarget.value;
   if (!t) return null;
@@ -872,6 +909,10 @@ async function submitPay(): Promise<void> {
   payError.value = "";
   payAttempted.value = true;
   if (!payTarget.value) return;
+  if (mustSettleFirst.value) {
+    payError.value = "سوِّ رصيد العميل مع الدين أولًا.";
+    return;
+  }
   const v = payAmount.value;
   if (v === undefined || v === null || !(v > 0)) {
     payError.value = "أدخل المبلغ المدفوع (أكبر من صفر).";
