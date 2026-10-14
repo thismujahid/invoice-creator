@@ -1,7 +1,4 @@
 <template>
-  <span @click="openDialog" class="inline-flex">
-    <slot></slot>
-  </span>
   <UiAppDialog
     v-model:open="open"
     :title="customerForm?.id ? 'تعديل العميل' : 'إضافة عميل جديد'"

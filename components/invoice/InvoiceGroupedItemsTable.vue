@@ -64,7 +64,7 @@ const groups = computed<GroupView[]>(() => {
       return {
         key: lineKey(line),
         serial,
-        label: subLabel(line),
+        label: invoiceVariantLabel(line),
         qtyText: `${qty} ${String(line.unit_name || "").trim()}`.trim(),
         price: Number(line.product_price || 0),
         total: Number(line.product_price || 0) * Number(line.product_quantity || 0),
@@ -79,11 +79,6 @@ function titleOf(group: InvoiceLineGroup): string {
 
 function lineKey(line: InvoiceProductLine): string {
   return String(line.line_id || `${line.product_id}-${line.unit_id}-${line.product_quantity}-${line.product_price}`);
-}
-
-/** Sub-line label from the line snapshot — never the live catalog. */
-function subLabel(line: InvoiceProductLine): string {
-  return invoiceVariantLabel(line);
 }
 
 function qtyGlyph(line: InvoiceProductLine): string | number {

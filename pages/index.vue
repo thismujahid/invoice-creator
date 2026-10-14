@@ -23,22 +23,13 @@
         <InvoiceDesktopLayout>
           <template #main>
             <section aria-label="المنتجات">
-              <UButton
-                v-if="shortageCount > 0"
-                color="warning"
-                variant="soft"
-                icon="i-lucide-triangle-alert"
-                class="mb-2 w-full justify-start lg:hidden"
-                @click="shortagesOpen = true"
-                >الوحدات قليلة الكمية ({{ shortageCount }})</UButton
-              >
               <div
                 class="mb-2 flex md:flex-row flex-col items-center justify-between gap-2"
               >
                 <USelectMenu
                   ref="headerFamilyRef"
                   v-model="headerFamily"
-                  :items="productFamilyOptions"
+                  :items="headerFamilyOptions"
                   label-key="name"
                   :search-input="{
                     placeholder: 'بحث باسم المنتج...',
@@ -46,21 +37,21 @@
                   }"
                   placeholder="اختر المنتج "
                   :disabled="loadingProds"
-                  class="flex-1 w-full"
                   @update:model-value="onPickHeaderFamily"
                   clear
+                  class="w-full flex-1"
                 />
                 <UButton
                   v-if="shortageCount > 0"
                   color="warning"
                   variant="soft"
                   icon="i-lucide-triangle-alert"
-                  class="hidden w-45 justify-start lg:flex"
+                  class="lg:w-45 w-full h-9 justify-start"
                   @click="shortagesOpen = true"
                   >الوحدات قليلة الكمية ({{ shortageCount }})</UButton
                 >
               </div>
-              <div v-if="!loadingProds">
+              <div v-if="!loadingProds" class="max-h-[60vh] overflow-auto">
                 <p
                   v-if="!hasProductContent"
                   class="rounded-lg border border-dashed border-slate-200 bg-white px-3 py-4 text-center text-sm text-slate-500"
@@ -80,9 +71,7 @@
                     :sub-line-count="group.lines.length"
                     :show-move-up="groupIndex > 0"
                     :show-move-down="groupIndex < productGroups.length - 1"
-                    :default-collapsed="
-                      group.key === reviewExpandKey ? false : groupIndex > 0
-                    "
+                    :default-collapsed="groupIndex > 0"
                     :family-options="productFamilyOptions"
                     :selected-family="
                       group.lines[0]
@@ -92,6 +81,7 @@
                     @pick-family="
                       (family) => onPickGroupFamily(group.key, family)
                     "
+                    :wake="groupWake[group.key] ?? 0"
                     @add-subline="addSubLine(group.key)"
                     @delete="removeGroup(group.key)"
                     @move-up="moveGroupBy(group.key, -1)"
@@ -155,8 +145,6 @@
                         "
                         :cost-error="isCostGreaterThanPrice(sub.line)"
                         :can-remove="invoiceData.products.length > 1"
-                        :show-move-up="false"
-                        :show-move-down="false"
                         :show-done="isLineComplete(sub.line)"
                         @pick-variant="
                           (variant) => onPickVariant(sub.line, variant)
@@ -182,8 +170,6 @@
                         @apply-price="applyCurrentPrice(sub.line)"
                         @done="doneEditingVariant(sub.line)"
                         @remove="removeLine(sub.line)"
-                        @move-up="moveSubLineBy(group.key, subIndex, -1)"
-                        @move-down="moveSubLineBy(group.key, subIndex, 1)"
                       />
                       <InvoiceVariantSummary
                         v-else
@@ -229,17 +215,35 @@
             </section>
           </template>
           <template #sidebar>
-            <div class="space-y-3">
-              <InvoiceCustomerSelector
-                :customers="customers.list"
-                :loading="loadingCustomers || loadingDebtsBook"
-                :book="debtsBook"
-                :selected-id="invoiceData.customer_id ?? null"
-                :live-credit="creditBalance"
-                :live-debt="customerDebt"
-                @select="onPickCustomer"
-                @create="showCustomerModal = true"
-              />
+            <div>
+              <div class="rounded-xl mb-2 border border-slate-200 bg-white p-3">
+                <div
+                  class="flex items-center gap-2 text-sm font-bold text-slate-700"
+                >
+                  <UIcon name="i-lucide-user-round-search" class="size-4" />
+                  العميل
+                </div>
+                <USelectMenu
+                  :model-value="
+                    (selectedCustomer() ?? null) as Customer | undefined
+                  "
+                  :items="customerMenuItems"
+                  label-key="name"
+                  by="id"
+                  size="lg"
+                  v-model:search-term="customerSearch"
+                  :search-input="{
+                    placeholder: 'بحث عن عميل...',
+                    icon: 'i-lucide-search',
+                  }"
+                  :ignore-filter="true"
+                  placeholder="اختر العميل"
+                  aria-label="اختيار العميل"
+                  :loading="loadingCustomers"
+                  class="w-full"
+                  @update:model-value="onPickCustomer"
+                />
+              </div>
               <FormsCustomer
                 v-model="showCustomerModal"
                 :refresher="loadCustomers"
@@ -250,14 +254,8 @@
                 aria-live="polite"
               >
                 <div
-                  v-if="loadingDebt || creditLoading"
-                  class="rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-500"
-                >
-                  جارِ تحميل أرصدة العميل...
-                </div>
-                <div
-                  v-else-if="balanceError"
-                  class="flex items-center justify-between gap-2 rounded-xl border border-red-200 bg-white p-3 text-sm text-red-600"
+                  v-if="balanceError"
+                  class="flex mb-2 items-center justify-between gap-2 rounded-xl border border-red-200 bg-white p-3 text-sm text-red-600"
                 >
                   <span>تعذر تحميل الأرصدة.</span>
                   <UButton
@@ -271,33 +269,60 @@
                   >
                 </div>
                 <div
-                  v-else-if="
-                    invoiceData.customer_id &&
-                    creditAvailableAfterSettlement > 0
-                  "
-                  class="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600"
+                  v-else-if="creditBalance || customerDebt"
+                  class="space-y-2 mb-2"
                 >
-                  <span v-if="creditBalance > 0 && customerDebt > 0">
-                    تسوية تلقائية عند الحفظ:
-                    {{ formatePrice(Math.min(creditBalance, customerDebt)) }} ج
-                    من الرصيد مقابل الدين.
-                  </span>
-                  <label for="invoice-customer-credit">استخدام الرصيد:</label>
-                  <UInputNumber
-                    id="invoice-customer-credit"
-                    :model-value="invoiceData.credit_used"
-                    :min="0"
-                    :max="
-                      Math.min(creditAvailableAfterSettlement, totalOfInvoice)
+                  <div class="grid grid-cols-2 gap-2">
+                    <div
+                      class="rounded-lg border border-emerald-100 bg-white p-2.5"
+                    >
+                      <div class="text-xs text-slate-500">العميل له</div>
+                      <div
+                        class="mt-1 text-base font-bold tabular-nums text-emerald-700"
+                      >
+                        {{ formatePrice(creditBalance) }} ج
+                      </div>
+                    </div>
+                    <div
+                      class="rounded-lg border border-rose-100 bg-white p-2.5"
+                    >
+                      <div class="text-xs text-slate-500">العميل عليه</div>
+                      <div
+                        class="mt-1 text-base font-bold tabular-nums text-rose-700"
+                      >
+                        {{ formatePrice(customerDebt) }} ج
+                      </div>
+                    </div>
+                  </div>
+                  <div
+                    v-if="
+                      invoiceData.customer_id &&
+                      creditAvailableAfterSettlement > 0
                     "
-                    :step="0.01"
-                    size="xs"
-                    class="w-28"
-                    @update:model-value="setCreditUsed"
-                  />
+                    class="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600"
+                  >
+                    <span v-if="creditBalance > 0 && customerDebt > 0">
+                      تسوية تلقائية عند الحفظ:
+                      {{ formatePrice(Math.min(creditBalance, customerDebt)) }}
+                      ج من الرصيد مقابل الدين.
+                    </span>
+                    <label for="invoice-customer-credit">استخدام الرصيد:</label>
+                    <UInputNumber
+                      id="invoice-customer-credit"
+                      :model-value="invoiceData.credit_used"
+                      :min="0"
+                      :max="
+                        Math.min(creditAvailableAfterSettlement, totalOfInvoice)
+                      "
+                      :step="0.01"
+                      size="xs"
+                      class="w-28"
+                      @update:model-value="setCreditUsed"
+                    />
+                  </div>
                 </div>
               </div>
-              <InvoiceSummarySidebar
+              <!-- <InvoiceSummarySidebar
                 :gross-text="sidebarGrossText"
                 :show-discount="sidebarShowDiscount"
                 :discount-label="sidebarDiscountLabel"
@@ -308,7 +333,7 @@
                 :remaining-text="sidebarRemainingText"
                 :show-credit-used="sidebarShowCreditUsed"
                 :credit-used-text="sidebarCreditUsedText"
-              />
+              /> -->
               <section
                 v-if="!loadingProds"
                 aria-label="الخصم والدفع"
@@ -489,16 +514,7 @@
           @click="previewOpen = true"
           ><span class="hidden sm:inline">معاينة</span></UButton
         >
-        <UButton
-          icon="i-lucide-keyboard"
-          color="neutral"
-          variant="soft"
-          size="lg"
-          class="min-h-11 min-w-11 justify-center"
-          aria-label="اختصارات لوحة المفاتيح"
-          @click="shortcutsOpen = true"
-          ><span class="hidden sm:inline">اختصارات</span></UButton
-        >
+
         <UButton
           icon="i-lucide-rotate-ccw"
           color="error"
@@ -512,10 +528,8 @@
       </div>
       <div class="h-[env(safe-area-inset-bottom)] sm:hidden" />
     </div>
-    <!-- Spacer so the fixed bar never covers page content -->
     <div aria-hidden="true" class="h-24" />
 
-    <!-- Read-only preview with its own print button -->
     <UiAppDialog v-model:open="previewOpen" title="معاينة الفاتورة">
       <Invoice
         :invoice-data="invoiceData"
@@ -548,50 +562,6 @@
           >
         </div>
       </template>
-    </UiAppDialog>
-    <UiAppDialog v-model:open="shortcutsOpen" title="اختصارات لوحة المفاتيح">
-      <ul class="space-y-2 text-sm">
-        <li class="flex items-center justify-between gap-3">
-          <span>حفظ وفاتورة جديدة</span
-          ><kbd
-            class="rounded border bg-gray-50 px-2 py-0.5 font-mono text-xs"
-            dir="ltr"
-            >Ctrl + S</kbd
-          >
-        </li>
-        <li class="flex items-center justify-between gap-3">
-          <span>حفظ وطباعة</span
-          ><kbd
-            class="rounded border bg-gray-50 px-2 py-0.5 font-mono text-xs"
-            dir="ltr"
-            >Ctrl + Enter</kbd
-          >
-        </li>
-        <li class="flex items-center justify-between gap-3">
-          <span>مجموعة منتجات جديدة</span
-          ><kbd
-            class="rounded border bg-gray-50 px-2 py-0.5 font-mono text-xs"
-            dir="ltr"
-            >Alt + N</kbd
-          >
-        </li>
-        <li class="flex items-center justify-between gap-3">
-          <span>داخل البند: من الكمية للسعر ثم البند التالي</span
-          ><kbd
-            class="rounded border bg-gray-50 px-2 py-0.5 font-mono text-xs"
-            dir="ltr"
-            >Enter</kbd
-          >
-        </li>
-        <li class="flex items-center justify-between gap-3">
-          <span>إغلاق الحوارات</span
-          ><kbd
-            class="rounded border bg-gray-50 px-2 py-0.5 font-mono text-xs"
-            dir="ltr"
-            >Esc</kbd
-          >
-        </li>
-      </ul>
     </UiAppDialog>
     <UiAppDialog
       v-model:open="cashierCostConfirmOpen"
@@ -633,11 +603,10 @@
 import type { Customer, Invoice, InvoiceProductLine, Product } from "~/types";
 import { toDateSafe } from "~/types";
 import type { ProductUnit } from "~/types";
-import type { CustomerDebt } from "~/composables/useDebts";
 import { invoiceVariantLabel } from "~/utils/invoiceGrouping";
 
 definePageMeta({ title: "إنشاء فاتورة" });
-const { formatePrice, calcTotal, formatInvoiceLineName } = useHelpers();
+const { formatePrice, calcTotal } = useHelpers();
 import {
   groupInvoiceLines,
   moveGroup as moveGroupOrder,
@@ -796,30 +765,6 @@ function retryBalances(): void {
   if (invoiceData.value.customer_id)
     void loadBalances(invoiceData.value.customer_id);
 }
-// Debts book for the inline customer list (same source as the selected
-// customer's debt — no new data, no new API, just cached once).
-const debtsBook = ref<CustomerDebt[]>([]);
-const loadingDebtsBook = ref(false);
-async function loadDebtsBook(): Promise<CustomerDebt[]> {
-  if (debtsBook.value.length || loadingDebtsBook.value) return debtsBook.value;
-  loadingDebtsBook.value = true;
-  try {
-    if (authStore.role === "cashier") {
-      const result = await callStaff<
-        Record<string, never>,
-        { items: CustomerDebt[] }
-      >("getCashierDebtBook", {});
-      debtsBook.value = result.items ?? [];
-    } else {
-      debtsBook.value = await debtsApi.fetchDebtsBook();
-    }
-  } catch {
-    debtsBook.value = [];
-  } finally {
-    loadingDebtsBook.value = false;
-  }
-  return debtsBook.value;
-}
 watch(
   () => invoiceData.value.customer_id,
   async (id) => {
@@ -959,8 +904,6 @@ function resetInvoice(): void {
   expandedLines.clear();
   prodSearch.clear();
   qtyDrafts.clear();
-  productsReview.value = false;
-  reviewExpandKey.value = null;
   headerFamily.value = null;
   cashierRequestId.value = crypto.randomUUID();
 }
@@ -1203,7 +1146,7 @@ async function fetchCustomerDebt(
             }
           >("getCashierDebtBook", {})
         ).items
-      : await loadDebtsBook();
+      : await debtsApi.fetchDebtsBook();
   let sum = 0;
   for (const entry of book) {
     const byId = !!entry.customer_id && entry.customer_id === id;
@@ -1216,19 +1159,49 @@ async function fetchCustomerDebt(
   }
   return sum;
 }
-function handleShortcuts(e: KeyboardEvent): void {
-  if (!e) return;
-  // Native UModal/USlideover already closes the topmost dialog on Escape —
-  // no custom chain (it would double-close). Other shortcuts never fire
-  // while any dialog is open, and Alt+N never fires while typing.
-  const dialogOpen =
+function anyDialogOpen(): boolean {
+  return (
     shortcutsOpen.value ||
     previewOpen.value ||
     cashierReceiptOpen.value ||
     cashierCostConfirmOpen.value ||
     resetConfirmOpen.value ||
-    showCustomerModal.value;
-  if (dialogOpen) return;
+    showCustomerModal.value
+  );
+}
+/** Alt pressed and released alone (no combo): clicks the open line's حفظ
+ *  button, else collapses every expanded row and returns to product pick. */
+let altAlone = false;
+function handleAltKeyup(e: KeyboardEvent): void {
+  if (e.key !== "Alt") return;
+  if (!altAlone) return;
+  altAlone = false;
+  if (anyDialogOpen()) return;
+  triggerAltAction();
+}
+function triggerAltAction(): void {
+  const openComplete = invoiceData.value.products.find(
+    (line) =>
+      line.product_id && isLineComplete(line) && expandedLines.has(line),
+  );
+  if (openComplete) {
+    doneEditingVariant(openComplete);
+    return;
+  }
+  for (const line of [...expandedLines]) expandedLines.delete(line);
+  focusHeaderFamilySelect();
+}
+function handleShortcuts(e: KeyboardEvent): void {
+  if (!e) return;
+  // Native UModal/USlideover already closes the topmost dialog on Escape —
+  // no custom chain (it would double-close). Other shortcuts never fire
+  // while any dialog is open, and Alt+N never fires while typing.
+  if (e.key === "Alt" && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.repeat) {
+    if (!anyDialogOpen()) altAlone = true;
+    return;
+  }
+  altAlone = false;
+  if (anyDialogOpen()) return;
   const target = e.target as HTMLElement | null;
   const inField = !!target?.closest?.(
     "input, textarea, select, [contenteditable]",
@@ -1316,13 +1289,46 @@ const calcTotalOfForm = (
   return 0;
 };
 
-// Customer selection comes from the inline selector (single owner of the
-// search state) or the create-customer modal — never a floating dropdown.
+// Customer picker (USelect + search; balances load on demand after pick).
+const CREATE_CUSTOMER_ID = "__create__";
+const customerSearch = ref("");
 const showCustomerModal = ref(false);
+const customerMenuItems = computed<Customer[]>(() => {
+  const q = customerSearch.value.trim();
+  const base = q
+    ? customers.list.filter(
+        (c) => c.name?.includes(q) || String(c.phone ?? "").includes(q),
+      )
+    : [...customers.list];
+  return [
+    {
+      id: CREATE_CUSTOMER_ID,
+      name: "+ إضافة عميل جديد",
+      phone: null,
+    } as Customer,
+    ...base.slice(0, 30),
+  ];
+});
+function selectedCustomer(): Customer | undefined {
+  // Prefer the exact unique id link; fall back to phone for legacy drafts.
+  if (invoiceData.value.customer_id) {
+    return customers.list.find((c) => c.id === invoiceData.value.customer_id);
+  }
+  if (!invoiceData.value.customer_phone) return undefined;
+  return customers.list.find(
+    (c) =>
+      String(c.phone ?? "") === String(invoiceData.value.customer_phone ?? ""),
+  );
+}
 function onPickCustomer(cus: Customer | null | undefined): void {
   if (!cus) return;
+  // First dropdown item opens the create modal instead of selecting.
+  if (cus.id === CREATE_CUSTOMER_ID) {
+    showCustomerModal.value = true;
+    return;
+  }
   // Re-resolve against the store so display/model always use the canonical
-  // object (never a stale picker copy).
+  // object (never a stale dropdown copy).
   const real = customers.list.find((c) => c.id === cus.id) ?? cus;
   // Phones must stay strings: Firestore `==` is type-strict and numeric
   // storage loses leading zeros, breaking customer invoice filters.
@@ -1331,6 +1337,7 @@ function onPickCustomer(cus: Customer | null | undefined): void {
   invoiceData.value.customer_name = real?.name ?? null;
   // F16: reliable link for debt aggregation (snapshots preserved).
   invoiceData.value.customer_id = real?.id ?? null;
+  customerSearch.value = "";
 }
 function selectedProd(form: InvoiceProductLine): Product | undefined {
   if (!form.product_id) return undefined;
@@ -1438,7 +1445,7 @@ function variantOptions(form: InvoiceProductLine): VariantOption[] {
       continue;
     const key = product.variant_key || "default";
     if (!options.has(key))
-      options.set(key, { key, name: product.variant_name || "أساسي" });
+      options.set(key, { key, name: product.variant_name || "" });
   }
   return [...options.values()].sort(
     (left, right) =>
@@ -1595,6 +1602,40 @@ function onPickProduct(
     );
     return;
   }
+  // Same product + same unit picked twice: merge the quantities into the
+  // existing line instead of repeating it.
+  const duplicate = invoiceData.value.products.find(
+    (line) =>
+      line !== form &&
+      line.product_id === real.id &&
+      line.unit_id === selected.id,
+  );
+  if (duplicate) {
+    duplicate.product_quantity = round4(
+      Number(duplicate.product_quantity || 0) + wanted,
+    );
+    const mergedFactor = Number(duplicate.unit_factor);
+    if (Number.isFinite(mergedFactor) && mergedFactor > 0)
+      duplicate.base_quantity = round4(
+        duplicate.product_quantity * mergedFactor,
+      );
+    cleanupLineState(form);
+    const at = invoiceData.value.products.indexOf(form);
+    if (at !== -1) invoiceData.value.products.splice(at, 1);
+    const owner = productGroups.value.find((entry) =>
+      entry.lines.some(({ line }) => line === duplicate),
+    );
+    if (owner) editVariantExclusive(owner.key, duplicate);
+    else {
+      expandedLines.add(duplicate);
+      focusLineField(duplicate.line_id);
+    }
+    notify(
+      "هذا النوع مضاف بالفعل — تم دمج الكمية مع السطر الموجود.",
+      "success",
+    );
+    return;
+  }
   form.product_price = unitSellingPrice(real, selected) ?? 0;
   form.product_id = real?.id ?? "";
   form.product_cost_price = Number(real?.cost_price ?? 0);
@@ -1648,12 +1689,6 @@ const expandedLines = reactive(new Set<InvoiceProductLine>());
 // Reserved base quantities for editing persisted invoices (product → base qty).
 const originalReserved = reactive(new Map<string, number>());
 const originalReservedBase = originalReserved;
-function stockKey(
-  productId: string,
-  _unitId: string | null | undefined,
-): string {
-  return productId;
-}
 function familyModeOf(
   form: InvoiceProductLine,
 ): "convertible" | "independent" | null {
@@ -1836,8 +1871,6 @@ const needBaseByProduct = computed(() => {
   }
   return need;
 });
-// Legacy alias kept for template compat where referenced.
-const needByProduct = needBaseByProduct;
 function availableBaseOf(productId: string): number {
   const product = products.list.find((p) => p.id === productId);
   return round4(
@@ -2048,8 +2081,6 @@ const productGroups = computed(() =>
 );
 // Review mode: the whole product section collapses into compact rows and the
 // section-title picker takes focus for the next product. No data is touched.
-const productsReview = ref(false);
-const reviewExpandKey = ref<string | null>(null);
 type HeaderFamilyOption = {
   id: string;
   name: string;
@@ -2062,7 +2093,7 @@ const headerFamilyRef = ref<unknown>(null);
 const hasProductContent = computed(() =>
   invoiceData.value.products.some((l) => !!l.family_id || !!l.product_id),
 );
-/** Focus the section-title product picker (review flow returns here). */
+/** Focus the section-title product picker (the single entry for products). */
 function focusHeaderFamilySelect(): void {
   nextTick(() => {
     const root = (
@@ -2073,22 +2104,69 @@ function focusHeaderFamilySelect(): void {
     target?.focus?.();
   });
 }
+/** Families already on the invoice (header «مضاف بالفعل» tag). */
+function isFamilyAdded(familyId: string): boolean {
+  return invoiceData.value.products.some((l) => l.family_id === familyId);
+}
+/** Header dropdown items: already-added families carry a warning tag. */
+const headerFamilyOptions = computed(() =>
+  productFamilyOptions.value.map((family) => ({
+    ...family,
+    name: isFamilyAdded(family.id)
+      ? `${family.name} — مضاف بالفعل`
+      : family.name,
+  })),
+);
+/** Wake signal per group: parent forces an existing group open on revisit. */
+const groupWake = reactive<Record<string, number>>({});
+/** Scroll to an existing group, open it and its first line for editing. */
+function scrollToGroupAndExpand(groupKey: string): void {
+  groupWake[groupKey] = (groupWake[groupKey] ?? 0) + 1;
+  const group = productGroups.value.find((entry) => entry.key === groupKey);
+  const first =
+    group?.lines.find(({ line }) => line.product_id)?.line ??
+    group?.lines[0]?.line;
+  if (first) {
+    expandedLines.add(first);
+    focusLineField(first.line_id);
+  }
+}
 /** Section-title pick: assign to the fresh draft or prepend a new group. */
 function onPickHeaderFamily(
   family: { id: string; name: string } | null | undefined,
 ): void {
   if (!family) return;
   headerFamily.value = null;
+  const canonical =
+    productFamilyOptions.value.find((f) => f.id === family.id) ?? family;
+  // Draft already started for this family: continue it.
+  const sameDraft = invoiceData.value.products.find(
+    (l) => !l.product_id && l.family_id === canonical.id,
+  );
+  if (sameDraft) {
+    expandedLines.add(sameDraft);
+    focusLineField(sameDraft.line_id);
+    return;
+  }
+  // Family already added: scroll to it and expand instead of duplicating.
+  const existing = productGroups.value.find(
+    (g) =>
+      g.familyId === canonical.id &&
+      g.lines.some(({ line }) => line.product_id),
+  );
+  if (existing) {
+    notify("هذا المنتج مضاف بالفعل — تم الانتقال إليه.", "info");
+    scrollToGroupAndExpand(existing.key);
+    return;
+  }
   const blank = invoiceData.value.products.find(
     (l) => !l.product_id && !l.family_id,
   );
   if (blank) {
-    productsReview.value = false;
-    reviewExpandKey.value = null;
     for (const line of invoiceData.value.products) {
       if (isLineComplete(line)) expandedLines.delete(line);
     }
-    onPickFamily(blank, family);
+    onPickFamily(blank, canonical);
     expandedLines.add(blank);
     focusLineField(blank.line_id);
     return;
@@ -2110,9 +2188,7 @@ function onPickHeaderFamily(
   const line = emptyLine();
   invoiceData.value.products.unshift(line);
   expandedLines.add(line);
-  productsReview.value = false;
-  reviewExpandKey.value = null;
-  onPickFamily(line, family);
+  onPickFamily(line, canonical);
   focusLineField(line.line_id);
 }
 
@@ -2231,11 +2307,10 @@ async function loadProds(updatePrices?: boolean, force = false): Promise<void> {
   }
 }
 function addNewForm(): void {
-  // Review flow: refuse while any draft is still empty, else collapse every
-  // product form into a simple review and focus the title product picker.
+  // New products enter through the section-title picker: refuse while any
+  // draft is still empty, else focus the picker for the next product.
   // Fresh invoice (nothing chosen yet): just focus the picker, no scolding.
   if (!hasProductContent.value) {
-    productsReview.value = false;
     focusHeaderFamilySelect();
     return;
   }
@@ -2245,13 +2320,10 @@ function addNewForm(): void {
       "عذرًا، يجب أن تُضيف منتجًا في السطر الفارغ أولًا حتى تتمكّن من إضافة منتج جديد للفاتورة.",
       "error",
     );
-    productsReview.value = false;
     expandedLines.add(incomplete);
     focusLineField(incomplete.line_id);
     return;
   }
-  productsReview.value = true;
-  reviewExpandKey.value = null;
   focusHeaderFamilySelect();
 }
 function updateProdsPrices(preserveHistoricalCosts = false): void {
@@ -2376,10 +2448,21 @@ onMounted(async () => {
       }
     }, 100);
   }
-  await Promise.all([loadCustomers(), loadProds(), loadDebtsBook()]);
+  /** A mouse press or window blur cancels a pending lone-Alt press. */
+
+  await Promise.all([loadCustomers(), loadProds()]);
   window.addEventListener("keydown", handleShortcuts);
+  window.addEventListener("keyup", handleAltKeyup);
+  window.addEventListener("pointerdown", cancelAltAlone);
+  window.addEventListener("blur", cancelAltAlone);
 });
+function cancelAltAlone(): void {
+  altAlone = false;
+}
 onUnmounted(() => {
   window.removeEventListener("keydown", handleShortcuts);
+  window.removeEventListener("keyup", handleAltKeyup);
+  window.removeEventListener("pointerdown", cancelAltAlone);
+  window.removeEventListener("blur", cancelAltAlone);
 });
 </script>

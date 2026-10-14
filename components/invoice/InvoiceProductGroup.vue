@@ -1,7 +1,5 @@
 <template>
-  <section
-    class="rounded-xl border border-slate-200 bg-slate-50/60 p-2.5 sm:p-3"
-  >
+  <section class="rounded-xl border border-slate-200 bg-white p-2.5 sm:p-3">
     <InvoiceProductGroupHeader
       :title="title"
       :status-text="statusText"
@@ -40,6 +38,8 @@ const props = defineProps<{
   showMoveUp: boolean;
   showMoveDown: boolean;
   defaultCollapsed?: boolean;
+  /** Parent wake signal: when it changes, force the group open (revisit). */
+  wake?: number;
   familyOptions: { id: string; name: string }[];
   selectedFamily?: { id: string; name: string } | null;
 }>();
@@ -57,6 +57,12 @@ watch(
   () => props.isEmpty,
   (empty) => {
     if (empty) collapsed.value = false;
+  },
+);
+watch(
+  () => props.wake,
+  () => {
+    if ((props.wake ?? 0) > 0) collapsed.value = false;
   },
 );
 </script>

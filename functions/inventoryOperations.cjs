@@ -243,9 +243,11 @@ function makeOperations({ db, authorize, operationRef }) {
       const result = { ok: true, cost: replay.average };
       const adjustmentRef = db.collection("inventory_cost_adjustments").doc();
       tx.update(productRef, { cost_price: replay.average, last_cost_adjustment_id: adjustmentRef.id, updated_at: FieldValue.serverTimestamp() });
-      tx.create(adjustmentRef, { product_id: productId, unit_id: null, old_cost: product.cost_price ?? null,
+      tx.create(adjustmentRef, {
+        product_id: productId, unit_id: null, old_cost: product.cost_price ?? null,
         new_cost: replay.average, reason: text(request.data?.reason, 500) || "مراجعة التكلفة", created_by: request.auth.uid,
-        created_at: FieldValue.serverTimestamp() });
+        created_at: FieldValue.serverTimestamp()
+      });
       tx.create(operation, { result, created_at: FieldValue.serverTimestamp() });
       return result;
     });
@@ -325,7 +327,7 @@ function makeOperations({ db, authorize, operationRef }) {
         const hasStockOrHistory = familyProducts.docs.some((doc) => {
           const product = doc.data();
           let stock = Number(product.stock_quantity || 0);
-          try { stock = core.inventoryTotal(product.inventory, product.units || []); } catch {}
+          try { stock = core.inventoryTotal(product.inventory, product.units || []); } catch { }
           return Math.abs(stock) > 1e-9 || product.last_inventory_transaction_id || product.last_purchase_invoice_id
             || (product.units || []).some((unit) => typeof unit.purchase_price_history === "string" && unit.purchase_price_history.trim());
         });
@@ -356,26 +358,30 @@ function makeOperations({ db, authorize, operationRef }) {
         }
         const ref = productId ? db.doc(`products/${productId}`) : db.collection("products").doc();
         const { price, stock_quantity, average_cost, low_stock_threshold, target_stock_level, preferred_purchase_unit_id, purchase_multiple, ...preserved } = old || {};
-        return { ref, data: {
-          ...preserved,
-          family_id: familyRef.id, family_name: familyName, uses_variants: usesVariants, inventory_mode: resolvedInventoryMode,
-          variant_order: completeFamily ? variantOrder : old?.variant_order ?? 0,
-          variant_key: resolvedInventoryMode === "independent" ? variantKey || old?.variant_key || "default" : null,
-          pack_size_name: resolvedInventoryMode === "independent" ? packSizeName || old?.pack_size_name : null,
-          pack_size_order: resolvedInventoryMode === "independent" ? packSizeOrder ?? old?.pack_size_order ?? 0 : null,
-          variant_name: usesVariants ? variantName : "أساسي",
-          name: resolvedInventoryMode === "independent" ? packSizeName || old?.pack_size_name : usesVariants ? variantName : familyName,
-          base_unit_id: old?.base_unit_id || baseUnitId,
-          base_unit_name: units.find((unit) => unit.id === baseUnitId).name,
-          units: [...requested.values()],
-          inventory_alerts: { loose: inventoryAlerts.loose, packages: { ...(old?.inventory_alerts?.packages || {}), ...inventoryAlerts.packages } },
-          inventory: old ? core.normalizeInventory(old.inventory) : core.emptyInventory(),
-          cost_price: old?.cost_price ?? null, is_active: old?.is_active !== false,
-          date: old?.date || FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(),
-        } };
+        return {
+          ref, data: {
+            ...preserved,
+            family_id: familyRef.id, family_name: familyName, uses_variants: usesVariants, inventory_mode: resolvedInventoryMode,
+            variant_order: completeFamily ? variantOrder : old?.variant_order ?? 0,
+            variant_key: resolvedInventoryMode === "independent" ? variantKey || old?.variant_key || "default" : null,
+            pack_size_name: resolvedInventoryMode === "independent" ? packSizeName || old?.pack_size_name : null,
+            pack_size_order: resolvedInventoryMode === "independent" ? packSizeOrder ?? old?.pack_size_order ?? 0 : null,
+            variant_name: usesVariants ? variantName : "أساسي",
+            name: resolvedInventoryMode === "independent" ? packSizeName || old?.pack_size_name : usesVariants ? variantName : familyName,
+            base_unit_id: old?.base_unit_id || baseUnitId,
+            base_unit_name: units.find((unit) => unit.id === baseUnitId).name,
+            units: [...requested.values()],
+            inventory_alerts: { loose: inventoryAlerts.loose, packages: { ...(old?.inventory_alerts?.packages || {}), ...inventoryAlerts.packages } },
+            inventory: old ? core.normalizeInventory(old.inventory) : core.emptyInventory(),
+            cost_price: old?.cost_price ?? null, is_active: old?.is_active !== false,
+            date: old?.date || FieldValue.serverTimestamp(), updated_at: FieldValue.serverTimestamp(),
+          }
+        };
       });
-      tx.set(familyRef, { name: familyName, normalized_name: normalizedFamilyName, uses_variants: usesVariants, inventory_mode: resolvedInventoryMode, is_active: true,
-        ...(family.exists ? {} : { created_at: FieldValue.serverTimestamp() }), updated_at: FieldValue.serverTimestamp() }, { merge: true });
+      tx.set(familyRef, {
+        name: familyName, normalized_name: normalizedFamilyName, uses_variants: usesVariants, inventory_mode: resolvedInventoryMode, is_active: true,
+        ...(family.exists ? {} : { created_at: FieldValue.serverTimestamp() }), updated_at: FieldValue.serverTimestamp()
+      }, { merge: true });
       for (const item of planned) tx.set(item.ref, item.data);
       const result = { id: planned[0].ref.id, ids: planned.map((item) => item.ref.id), family_id: familyRef.id, family_name: familyName };
       tx.create(operation, { fingerprint, result, created_at: FieldValue.serverTimestamp() });
@@ -560,17 +566,21 @@ function makeOperations({ db, authorize, operationRef }) {
         current.units[unitIndex] = unit;
         updatedProducts.set(id, current);
         const label = productLabel(entry.product);
-        invoiceItems.push({ product_id: id, product_name: label,
+        invoiceItems.push({
+          product_id: id, product_name: label,
           family_id: entry.product.family_id || null, family_name: entry.product.family_name || null,
           variant_name: entry.product.variant_name || null, variant_key: entry.product.variant_key || null,
           pack_size_name: entry.product.pack_size_name || null, inventory_mode: entry.product.inventory_mode === "independent" ? "independent" : "convertible",
-          quantity: entry.quantity, unit_cost: entry.unitCost, unit_id: unit.id, unit_name: unit.name, unit_factor: entry.factor, stock_kind: unit.stock_kind, allows_fractional: unit.allows_fractional === true, base_quantity: entry.baseQuantity, base_unit_cost: entry.baseCost, line_total: entry.lineTotal });
-        movementDocs.push({ ref: db.collection("inventory_transactions").doc(), data: {
-          type: "purchase", direction: "in", product_id: id, product_name: label, quantity: entry.baseQuantity,
-          unit_quantity: entry.quantity, unit_id: unit.id, unit_name: unit.name, unit_factor: entry.factor, base_quantity: entry.baseQuantity,
-          unit_cost: entry.baseCost, purchase_invoice_id: key, operation_id: key, note: text(input.note, 500) || null,
-          component_deltas: physical.changes, opened_packages: [], seq: seq++,
-        } });
+          quantity: entry.quantity, unit_cost: entry.unitCost, unit_id: unit.id, unit_name: unit.name, unit_factor: entry.factor, stock_kind: unit.stock_kind, allows_fractional: unit.allows_fractional === true, base_quantity: entry.baseQuantity, base_unit_cost: entry.baseCost, line_total: entry.lineTotal
+        });
+        movementDocs.push({
+          ref: db.collection("inventory_transactions").doc(), data: {
+            type: "purchase", direction: "in", product_id: id, product_name: label, quantity: entry.baseQuantity,
+            unit_quantity: entry.quantity, unit_id: unit.id, unit_name: unit.name, unit_factor: entry.factor, base_quantity: entry.baseQuantity,
+            unit_cost: entry.baseCost, purchase_invoice_id: key, operation_id: key, note: text(input.note, 500) || null,
+            component_deltas: physical.changes, opened_packages: [], seq: seq++,
+          }
+        });
       }
       for (const id of ids) {
         const entries = prepared.filter((entry) => entry.productId === id);

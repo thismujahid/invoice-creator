@@ -37,7 +37,7 @@
         title="نقل المنتج لأعلى"
         aria-label="نقل المنتج لأعلى"
         class="flex min-h-6 min-w-6 items-center justify-center"
-        @click="emit('move-up')"
+        @click.stop="emit('move-up')"
       />
       <UButton
         v-if="showMoveDown"
@@ -48,7 +48,7 @@
         title="نقل المنتج لأسفل"
         aria-label="نقل المنتج لأسفل"
         class="flex min-h-6 min-w-6 items-center justify-center"
-        @click="emit('move-down')"
+        @click.stop="emit('move-down')"
       />
       <UButton
         v-if="!confirming"
@@ -62,7 +62,7 @@
         @click.stop="arm"
       />
       <span v-else class="flex items-center gap-1">
-        <UButton size="sm" color="error" class="min-h-6" @click="confirm"
+        <UButton size="sm" color="error" class="min-h-6" @click.stop="confirm"
           >تأكيد حذف {{ subLineCount }} بنود؟</UButton
         >
         <UButton

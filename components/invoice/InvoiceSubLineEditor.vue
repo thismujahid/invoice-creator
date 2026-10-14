@@ -15,29 +15,31 @@
         @click="emit('done')"
         ><span>حفظ</span></UButton
       >
-      <UButton
-        v-if="!confirmingDelete"
-        icon="i-lucide-trash-2"
-        color="error"
-        variant="soft"
-        size="sm"
-        class="flex min-h-6 min-w-6 items-center justify-center"
-        aria-label="حذف البند"
-        @click="armDelete"
-      />
-      <span v-else class="flex items-center gap-1">
-        <UButton size="sm" color="error" class="min-h-6" @click="confirmDelete"
-          >تأكيد؟</UButton
-        >
+      <template v-if="canRemove">
         <UButton
-          size="sm"
-          color="neutral"
+          v-if="!confirmingDelete"
+          icon="i-lucide-trash-2"
+          color="error"
           variant="soft"
-          class="min-h-6"
-          @click="confirmingDelete = false"
-          >تراجع</UButton
-        >
-      </span>
+          size="sm"
+          class="flex min-h-6 min-w-6 items-center justify-center"
+          aria-label="حذف البند"
+          @click="armDelete"
+        />
+        <span v-else class="flex items-center gap-1">
+          <UButton size="sm" color="error" class="min-h-6" @click="confirmDelete"
+            >تأكيد؟</UButton
+          >
+          <UButton
+            size="sm"
+            color="neutral"
+            variant="soft"
+            class="min-h-6"
+            @click="confirmingDelete = false"
+            >تراجع</UButton
+          >
+        </span>
+      </template>
     </div>
     <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
       <UFormField
@@ -255,8 +257,6 @@ defineProps<{
   lineTotalText: string;
   costError: boolean;
   canRemove: boolean;
-  showMoveUp: boolean;
-  showMoveDown: boolean;
   showDone: boolean;
 }>();
 
@@ -275,8 +275,6 @@ const emit = defineEmits<{
   "apply-price": [];
   done: [];
   remove: [];
-  "move-up": [];
-  "move-down": [];
 }>();
 
 const confirmingDelete = ref(false);
