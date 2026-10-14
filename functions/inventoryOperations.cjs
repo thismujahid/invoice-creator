@@ -397,6 +397,20 @@ function makeOperations({ db, authorize, operationRef }) {
     });
   };
 
+  const unarchiveInventoryProduct = async (request) => {
+    const ids = Array.isArray(request.data?.ids) ? request.data.ids : [request.data?.id];
+    if (!ids.length || ids.length > 40 || ids.some((id) => typeof id !== "string" || !id || id.includes("/"))) invalid("اختر المنتج المطلوب إلغاء أرشفته.");
+    return db.runTransaction(async (tx) => {
+      const role = await authorize(request, tx);
+      if (role !== "admin") throw new HttpsError("permission-denied", "Admin access is required.");
+      const refs = [...new Set(ids)].map((id) => db.doc(`products/${id}`));
+      const snapshots = await Promise.all(refs.map((ref) => tx.get(ref)));
+      if (snapshots.some((snapshot) => !snapshot.exists)) throw new HttpsError("not-found", "Product not found.");
+      for (const ref of refs) tx.update(ref, { is_active: true, updated_at: FieldValue.serverTimestamp() });
+      return { unarchived: true };
+    });
+  };
+
   const adjustInventoryBucket = async (request) => {
     const core = await inventoryCorePromise;
     const id = text(request.data?.product_id, 128);
@@ -639,6 +653,7 @@ function makeOperations({ db, authorize, operationRef }) {
     applyInventoryCostRepair: onCall(applyInventoryCostRepair),
     saveInventoryProduct: onCall(saveInventoryProduct),
     archiveInventoryProduct: onCall(archiveInventoryProduct),
+    unarchiveInventoryProduct: onCall(unarchiveInventoryProduct),
     adjustInventoryBucket: onCall(adjustInventoryBucket),
     executeInventoryPurchase: onCall(executeInventoryPurchase),
   };

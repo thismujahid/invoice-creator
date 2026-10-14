@@ -290,5 +290,19 @@ export const useProductsStore = defineStore("products", () => {
     }
   }
 
-  return { list, families, loaded, lastFetchedAt, inventoryReady, inventorySyncState, syncPendingWrites, syncError, productsById, activeProducts, lowStockProducts, outOfStockProducts, negativeStockProducts, lowStockCount, shortageUnitCount, shortageOutUnitCount, ensureInventorySubscription, stopInventorySubscription, clearInventory, fetchProducts, updateProduct, saveProductFamily, patchCached, upsertCached, invalidateCache, archiveProduct };
+  async function unarchiveProduct(id: string, ids: string[] = [id]): Promise<{ ok: true } | { ok: false; error: string }> {
+    try {
+      await callStaff("unarchiveInventoryProduct", { ids });
+      list.value = list.value.map((p) => (p.id && ids.includes(p.id) ? { ...p, is_active: true } : p));
+      return { ok: true };
+    } catch (e) {
+      if (e instanceof Error && e.message.startsWith("VALIDATION:")) {
+        return { ok: false, error: e.message.slice("VALIDATION:".length) };
+      }
+      console.error(e);
+      return { ok: false, error: "تعذر إلغاء أرشفة المنتج." };
+    }
+  }
+
+  return { list, families, loaded, lastFetchedAt, inventoryReady, inventorySyncState, syncPendingWrites, syncError, productsById, activeProducts, lowStockProducts, outOfStockProducts, negativeStockProducts, lowStockCount, shortageUnitCount, shortageOutUnitCount, ensureInventorySubscription, stopInventorySubscription, clearInventory, fetchProducts, updateProduct, saveProductFamily, patchCached, upsertCached, invalidateCache, archiveProduct, unarchiveProduct };
 });

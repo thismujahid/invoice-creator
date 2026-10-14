@@ -64,6 +64,14 @@
         size="lg"
         class="w-full sm:max-w-xs"
       />
+      <UButton
+        v-if="isAdmin"
+        :color="showArchived ? 'warning' : 'neutral'"
+        :variant="showArchived ? 'soft' : 'outline'"
+        :icon="showArchived ? 'i-lucide-archive-restore' : 'i-lucide-archive'"
+        @click="showArchived = !showArchived"
+        >{{ showArchived ? 'عرض المنتجات النشطة' : `المؤرشفة (${archivedCount})` }}</UButton
+      >
       <div v-if="isAdmin" class="flex flex-wrap items-center gap-2">
         <UButton
           v-if="
@@ -77,21 +85,32 @@
           >تحديد الكل ({{ prodsList.length }})</UButton
         >
         <template v-if="selectProducts.length > 0">
-          <UButton
-            icon="i-lucide-file-plus"
-            color="success"
-            @click="createInvoiceFromSelectedProducts"
-            >إنشاء فاتورة بالمنتجات المحددة ({{
-              selectProducts.length
-            }})</UButton
-          >
-          <UButton
-            icon="i-lucide-archive"
-            color="warning"
-            variant="soft"
-            @click="bulkDeleteOpen = true"
-            >أرشفة المحدد ({{ selectProducts.length }})</UButton
-          >
+          <template v-if="!showArchived">
+            <UButton
+              icon="i-lucide-file-plus"
+              color="success"
+              @click="createInvoiceFromSelectedProducts"
+              >إنشاء فاتورة بالمنتجات المحددة ({{
+                selectProducts.length
+              }})</UButton
+            >
+            <UButton
+              icon="i-lucide-archive"
+              color="warning"
+              variant="soft"
+              @click="bulkDeleteOpen = true"
+              >أرشفة المحدد ({{ selectProducts.length }})</UButton
+            >
+          </template>
+          <template v-else>
+            <UButton
+              icon="i-lucide-archive-restore"
+              color="success"
+              variant="soft"
+              @click="bulkRestoreOpen = true"
+              >إلغاء أرشفة المحدد ({{ selectProducts.length }})</UButton
+            >
+          </template>
           <UButton
             icon="i-lucide-x"
             color="error"
@@ -146,10 +165,15 @@
               <td class="p-3"><span v-if="!p.complex">{{ stockQuantityLabel(p.variants[0]!) }}</span><UButton v-else variant="soft" color="neutral" icon="i-lucide-boxes" @click="showDetails(p.id, 'quantities')">عرض الكميات</UButton></td>
               <td class="p-3"><span v-if="!p.complex">{{ simplePrice(p.variants[0]!) }}</span><UButton v-else variant="soft" color="neutral" icon="i-lucide-tags" @click="showDetails(p.id, 'prices')">عرض الأسعار</UButton></td>
               <td v-if="isAdmin" class="p-3"><div class="flex flex-wrap gap-2">
-                <UButton size="sm" variant="soft" @click="editProduct({ id: p.variants[0]?.id })">تعديل</UButton>
-                <UButton size="sm" variant="soft" color="info" @click="chooseVariant(p.id, 'purchase')">شراء</UButton>
-                <UButton size="sm" variant="soft" color="neutral" @click="chooseVariant(p.id, 'adjust')">جرد</UButton>
-                <UButton size="sm" variant="soft" color="warning" @click="confirmDelete = { id: p.variants[0]?.id, name: p.name, ids: p.variants.flatMap(v => v.id ? [v.id] : []) }">أرشفة</UButton>
+                <template v-if="showArchived">
+                  <UButton size="sm" variant="soft" color="success" icon="i-lucide-archive-restore" :loading="unarchivingId === p.id" @click="confirmUnarchive(p)">إلغاء الأرشفة</UButton>
+                </template>
+                <template v-else>
+                  <UButton size="sm" variant="soft" @click="editProduct({ id: p.variants[0]?.id })">تعديل</UButton>
+                  <UButton size="sm" variant="soft" color="info" @click="chooseVariant(p.id, 'purchase')">شراء</UButton>
+                  <UButton size="sm" variant="soft" color="neutral" @click="chooseVariant(p.id, 'adjust')">جرد</UButton>
+                  <UButton size="sm" variant="soft" color="warning" @click="confirmDelete = { id: p.variants[0]?.id, name: p.name, ids: p.variants.flatMap(v => v.id ? [v.id] : []) }">أرشفة</UButton>
+                </template>
               </div></td>
             </tr>
           </tbody>
@@ -162,7 +186,10 @@
             <span v-if="!p.complex" class="text-sm">{{ stockQuantityLabel(p.variants[0]!) }} · سعر البيع {{ simplePrice(p.variants[0]!) }}</span>
             <UButton v-if="p.complex" color="neutral" variant="soft" @click="showDetails(p.id, 'quantities')">عرض الكميات</UButton>
             <UButton v-if="p.complex" color="neutral" variant="soft" @click="showDetails(p.id, 'prices')">عرض الأسعار</UButton>
-            <template v-if="isAdmin">
+            <template v-if="isAdmin && showArchived">
+              <UButton variant="soft" color="success" icon="i-lucide-archive-restore" :loading="unarchivingId === p.id" @click="confirmUnarchive(p)">إلغاء الأرشفة</UButton>
+            </template>
+            <template v-else-if="isAdmin">
               <UButton variant="soft" @click="editProduct({ id: p.variants[0]?.id })">تعديل</UButton>
               <UButton color="info" variant="soft" @click="chooseVariant(p.id, 'purchase')">شراء</UButton>
               <UButton color="neutral" variant="soft" @click="chooseVariant(p.id, 'adjust')">جرد</UButton>
@@ -171,7 +198,7 @@
           </div>
         </UCard>
       </div>
-      <UEmpty v-if="!paginateArray.length" title="لا توجد منتجات" />
+      <UEmpty v-if="!paginateArray.length" :title="showArchived ? 'لا توجد منتجات مؤرشفة' : 'لا توجد منتجات'" />
     </template>
     <UiAppDialog v-model:open="detailsOpen" :title="`${detailMode === 'prices' ? 'عرض الأسعار' : 'عرض الكميات'} · ${detailGroup?.name || ''}`" width="sm:max-w-[740px]">
       <div class="space-y-4">
@@ -266,6 +293,65 @@
             block
             :disabled="bulkBusy"
             @click="bulkDeleteOpen = false"
+            >إلغاء</UButton
+          >
+        </div>
+      </template>
+    </UiAppDialog>
+    <UiAppDialog v-model:open="restoreOpen" title="إلغاء أرشفة المنتج">
+      <p class="mb-4 text-gray-600">
+        هل تريد إلغاء أرشفة "{{ confirmRestore?.name }}" وإعادته إلى قائمة المنتجات النشطة؟
+      </p>
+      <template #footer>
+        <div class="flex w-full flex-col gap-2">
+          <UButton
+            color="success"
+            block
+            :loading="unarchiving"
+            @click="restoreConfirmed"
+            >تأكيد إلغاء الأرشفة</UButton
+          >
+          <UButton
+            color="neutral"
+            variant="ghost"
+            block
+            :disabled="unarchiving"
+            @click="confirmRestore = null"
+            >إلغاء</UButton
+          >
+        </div>
+      </template>
+    </UiAppDialog>
+    <UiAppDialog v-model:open="bulkRestoreOpen" title="إلغاء أرشفة المنتجات المحددة">
+      <p class="mb-2 text-gray-600">
+        سيتم إلغاء أرشفة {{ selectProducts.length }} منتج محدد وإعادتها إلى قائمة المنتجات النشطة.
+      </p>
+      <div
+        class="mb-4 max-h-40 space-y-1 overflow-y-auto rounded-lg border border-gray-200 p-2 text-sm"
+      >
+        <div
+          v-for="p in bulkSelectedProducts"
+          :key="p.id"
+          class="truncate text-gray-700"
+        >
+          • {{ p.name }}
+        </div>
+      </div>
+      <template #footer>
+        <div class="flex w-full flex-col gap-2">
+          <UButton
+            color="success"
+            block
+            :loading="bulkBusy"
+            @click="bulkRestoreConfirmed"
+            >تأكيد إلغاء أرشفة المحدد</UButton
+          >
+          <UButton
+            color="neutral"
+            variant="ghost"
+            block
+            :disabled="bulkBusy"
+            @click="bulkRestoreOpen = false"
             >إلغاء</UButton
           >
         </div>
@@ -559,6 +645,8 @@ import { useSuppliersStore } from "~/stores/suppliers";
 import { toDateSafe } from "~/types";
 definePageMeta({ title: "المنتجات" });
 const searchText = ref<string>("");
+const showArchived = ref(false);
+const archivedCount = computed(() => productsStore.list.filter((p) => p.is_active === false).length);
 const { formatePrice } = useHelpers();
 const {
   round2,
@@ -685,17 +773,25 @@ async function refreshAfterPurchase(): Promise<void> {
 watch(searchText, () => {
   currentPage.value = 1;
 });
+watch(showArchived, () => {
+  currentPage.value = 1;
+  selectProducts.value = [];
+});
 
 const prodsList = computed<Product[]>(() => {
   const q = searchText.value?.trim().toLowerCase();
-  if (!q) return [...productsStore.list];
-  return productsStore.list.filter((prod) =>
+  const source = showArchived.value
+    ? productsStore.list.filter((prod) => prod.is_active === false)
+    : productsStore.list.filter((prod) => prod.is_active !== false);
+  if (!q) return [...source];
+  return source.filter((prod) =>
     prod.name?.toLowerCase().includes(q),
   );
 });
 const familyRows = computed(() => {
   const query = searchText.value?.trim().toLocaleLowerCase();
-  return groupProductVariants([...productsStore.list].sort((a, b) => (toDateSafe(b.date)?.getTime() ?? 0) - (toDateSafe(a.date)?.getTime() ?? 0)))
+  const activeList = showArchived.value ? productsStore.list.filter((p) => p.is_active === false) : productsStore.list.filter((p) => p.is_active !== false);
+  return groupProductVariants([...activeList].sort((a, b) => (toDateSafe(b.date)?.getTime() ?? 0) - (toDateSafe(a.date)?.getTime() ?? 0)))
     .filter((group) => !query || group.name.toLocaleLowerCase().includes(query) || group.variants.some((variant) => variant.variant_name?.toLocaleLowerCase().includes(query) || variant.pack_size_name?.toLocaleLowerCase().includes(query)))
     .map((group) => ({ ...group, complex: group.variants.length > 1 || group.variants.some((variant) => unitsForProduct(variant).filter((unit) => !unit.archived).length > 1) }));
 });
@@ -1162,6 +1258,65 @@ async function archiveConfirmed(): Promise<void> {
   } finally {
     deleting.value = false;
     confirmDelete.value = null;
+  }
+}
+const unarchiving = ref(false);
+const unarchivingId = ref<string | null>(null);
+const confirmRestore = ref<ProductRow | null>(null);
+const restoreOpen = computed({
+  get: () => confirmRestore.value !== null,
+  set: (v: boolean) => {
+    if (!v) confirmRestore.value = null;
+  },
+});
+const bulkRestoreOpen = ref(false);
+function confirmUnarchive(p: { id?: string; name: string; variants: Product[] }): void {
+  confirmRestore.value = {
+    id: p.variants[0]?.id,
+    name: p.name,
+    ids: p.variants.flatMap((v) => v.id ? [v.id] : []),
+  };
+}
+async function restoreConfirmed(): Promise<void> {
+  const id = confirmRestore.value?.id;
+  if (!id) return;
+  unarchiving.value = true;
+  unarchivingId.value = id;
+  try {
+    const res = await productsStore.unarchiveProduct(id, confirmRestore.value?.ids || [id]);
+    if (!res.ok) {
+      notifyToast(res.error, "error");
+      return;
+    }
+    notifyToast("تمت استعادة المنتج بنجاح وإعادته لقائمة المنتجات النشطة.", "success");
+    await loadProds();
+  } finally {
+    unarchiving.value = false;
+    unarchivingId.value = null;
+    confirmRestore.value = null;
+  }
+}
+async function bulkRestoreConfirmed(): Promise<void> {
+  const ids = [...selectProducts.value];
+  if (!ids.length || bulkBusy.value) return;
+  bulkBusy.value = true;
+  try {
+    let ok = 0;
+    let failed = 0;
+    for (const id of ids) {
+      const res = await productsStore.unarchiveProduct(id);
+      if (res.ok) ok++;
+      else failed++;
+    }
+    selectProducts.value = [];
+    bulkRestoreOpen.value = false;
+    await loadProds();
+    if (failed > 0)
+      notifyToast(`تمت استعادة ${ok} منتج، وفشل ${failed}.`, "error");
+    else
+      notifyToast(`تمت استعادة ${ok} منتج بنجاح وإعادتها لقائمة المنتجات النشطة.`, "success");
+  } finally {
+    bulkBusy.value = false;
   }
 }
 function createInvoiceFromSelectedProducts(): void {
