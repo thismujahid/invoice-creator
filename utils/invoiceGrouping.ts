@@ -36,6 +36,13 @@ export function invoiceGroupTitle(group: InvoiceLineGroup): string {
   return first?.product_name || "منتج جديد";
 }
 
+/** Display label of one invoice line from its snapshot (variant — pack),
+ *  never the live catalog. Single source for editor summaries and tables. */
+export function invoiceVariantLabel(line: Pick<InvoiceProductLine, "variant_name" | "pack_size_name" | "product_name">): string {
+  const parts = [line.variant_name, line.pack_size_name].map((part) => String(part ?? "").trim()).filter(Boolean);
+  if (parts.length) return parts.join(" — ");
+  return String(line.product_name || "صنف");
+}
 /** Display order = first occurrence in the flat array (single source of truth). */
 export function groupInvoiceLines(lines: InvoiceProductLine[]): InvoiceLineGroup[] {
   const order = new Map<string, InvoiceLineGroup>();

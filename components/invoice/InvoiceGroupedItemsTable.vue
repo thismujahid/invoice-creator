@@ -1,69 +1,77 @@
 <template>
-  <table class="inv-table w-full">
+  <table class="inv-table w-full" aria-label="أصناف الفاتورة">
     <thead>
       <tr>
-        <th class="w-10">عدد</th>
-        <th>البيان</th>
-        <th class="w-12">تصحيح</th>
-        <th class="w-20">سعر الوحدة</th>
-        <th class="w-20">الإجمالي</th>
+        <th scope="col" class="w-10">م</th>
+        <th scope="col">الصنف</th>
+        <th scope="col" class="w-24">الكمية</th>
+        <th scope="col" class="w-20">سعر الوحدة</th>
+        <th scope="col" class="w-24">الإجمالي</th>
       </tr>
     </thead>
     <tbody>
-      <tr v-for="group in groups" :key="group.key" class="inv-group-row">
-        <td>{{ group.lines.length }}</td>
-        <td class="text-start inv-group-cell">
-          <div class="inv-group-title">{{ titleOf(group) }}</div>
-          <div
-            v-for="{ line } in group.lines"
-            :key="lineKey(line)"
-            class="inv-sub-line"
-          >
-            <span class="inv-sub-label">{{ subLabel(line) }}</span>
-            <span class="inv-sub-math">
-              {{ qtyGlyph(line) }} {{ line.unit_name || "" }} ×
-              {{ formatePrice(line.product_price || 0) }} =
-              {{ formatePrice(lineTotal(line)) }}
-            </span>
-          </div>
-        </td>
-        <td />
-        <td class="inv-group-cell">
-          <div
-            v-for="{ line } in group.lines"
-            :key="`p-${lineKey(line)}`"
-            class="inv-sub-line"
-          >
-            {{ formatePrice(line.product_price || 0) }}
-          </div>
-        </td>
-        <td class="inv-group-cell font-semibold">
-          <div
-            v-for="{ line } in group.lines"
-            :key="`t-${lineKey(line)}`"
-            class="inv-sub-line"
-          >
-            {{ formatePrice(lineTotal(line)) }}
-          </div>
-          <div class="inv-group-sum">
-            المجموعة: {{ formatePrice(group.total) }}
-          </div>
-        </td>
-      </tr>
+      <template v-for="group in groups" :key="group.key">
+        <tr class="inv-group-head">
+          <td :colspan="5" class="text-start">
+            <span class="inv-group-name">{{ titleOf(group) }}</span>
+            <span class="inv-group-count">{{ group.lines.length }} {{ group.lines.length === 1 ? "بند" : "بنود" }}</span>
+          </td>
+        </tr>
+        <tr v-for="row in group.rows" :key="row.key" class="inv-sub-row">
+          <td class="tabular-nums">{{ row.serial }}</td>
+          <td class="text-start inv-cell-wrap">{{ row.label }}</td>
+          <td class="inv-cell-wrap">{{ row.qtyText }}</td>
+          <td class="tabular-nums">{{ formatePrice(row.price) }}</td>
+          <td class="tabular-nums font-semibold">{{ formatePrice(row.total) }}</td>
+        </tr>
+        <tr v-if="group.lines.length > 1" class="inv-group-sum-row">
+          <td :colspan="4" class="text-start">إجمالي {{ titleOf(group) }}</td>
+          <td class="tabular-nums font-extrabold">{{ formatePrice(group.total) }}</td>
+        </tr>
+      </template>
     </tbody>
   </table>
 </template>
 
 <script setup lang="ts">
 import type { InvoiceProductLine } from "~/types";
-import { groupInvoiceLines, invoiceGroupTitle, type InvoiceLineGroup } from "~/utils/invoiceGrouping";
+import { groupInvoiceLines, invoiceGroupTitle, invoiceVariantLabel, type InvoiceLineGroup } from "~/utils/invoiceGrouping";
 
 const props = defineProps<{ lines: InvoiceProductLine[] }>();
 const { formatePrice } = useHelpers();
 
-const groups = computed<InvoiceLineGroup[]>(() =>
-  groupInvoiceLines((props.lines ?? []).filter((line) => line.product_id)),
-);
+interface GroupRow {
+  key: string;
+  serial: number;
+  label: string;
+  qtyText: string;
+  price: number;
+  total: number;
+}
+
+interface GroupView extends InvoiceLineGroup {
+  rows: GroupRow[];
+}
+
+const groups = computed<GroupView[]>(() => {
+  const filled = (props.lines ?? []).filter((line) => line.product_id);
+  let serial = 0;
+  return groupInvoiceLines(filled).map((group) => ({
+    ...group,
+    rows: group.lines.map(({ line }) => {
+      serial += 1;
+      const qty = qtyGlyph(line);
+      return {
+        key: lineKey(line),
+        serial,
+        label: subLabel(line),
+        qtyText: `${qty} ${String(line.unit_name || "").trim()}`.trim(),
+        price: Number(line.product_price || 0),
+        total: Number(line.product_price || 0) * Number(line.product_quantity || 0),
+      };
+    }),
+  }));
+});
 
 function titleOf(group: InvoiceLineGroup): string {
   return invoiceGroupTitle(group);
@@ -75,9 +83,7 @@ function lineKey(line: InvoiceProductLine): string {
 
 /** Sub-line label from the line snapshot — never the live catalog. */
 function subLabel(line: InvoiceProductLine): string {
-  const parts = [line.variant_name, line.pack_size_name].map((part) => String(part ?? "").trim()).filter(Boolean);
-  if (parts.length) return parts.join(" — ");
-  return String(line.product_name || "صنف");
+  return invoiceVariantLabel(line);
 }
 
 function qtyGlyph(line: InvoiceProductLine): string | number {
@@ -86,38 +92,38 @@ function qtyGlyph(line: InvoiceProductLine): string | number {
   if (line.product_quantity === 0.75) return "3/4";
   return line.product_quantity || "";
 }
-
-function lineTotal(line: InvoiceProductLine): number {
-  return Number(line.product_price || 0) * Number(line.product_quantity || 0);
-}
 </script>
 
 <style scoped>
-.inv-group-cell {
-  white-space: normal;
-  word-break: break-word;
-  vertical-align: top;
-}
-.inv-group-title {
+.inv-group-head td {
+  background: rgba(148, 163, 184, 0.14);
   font-weight: 800;
-  margin-bottom: 2px;
+  padding-block: 4px;
 }
-.inv-sub-line {
+.inv-group-name {
+  font-size: 1.02em;
+}
+.inv-group-count {
+  margin-inline-start: 8px;
+  font-size: 0.82em;
+  font-weight: 600;
+  color: #475569;
+}
+.inv-sub-row td {
+  vertical-align: top;
   line-height: 1.7;
 }
-.inv-sub-label {
-  font-weight: 600;
+.inv-cell-wrap {
+  white-space: normal;
+  word-break: break-word;
 }
-.inv-sub-math {
-  display: block;
-}
-.inv-group-sum {
-  margin-top: 2px;
-  border-top: 1px dashed rgba(128, 128, 128, 0.4);
-  padding-top: 2px;
+.inv-group-sum-row td {
+  border-top: 2px solid #000;
+  background: rgba(148, 163, 184, 0.08);
+  padding-block: 3px;
 }
 @media print {
-  .inv-sub-line {
+  .inv-sub-row {
     break-inside: avoid;
   }
 }

@@ -47,10 +47,10 @@
           <div class="rounded-lg border border-gray-200 p-3">
             <h3 class="mb-2 font-bold">ملخص الفاتورة</h3>
             <div v-if="invoiceData.discount" class="flex justify-between gap-3 py-1 text-gray-600"><span>الإجمالي قبل الخصم</span><span>{{ formatePrice(calcTotal(invoiceData)) }} ج</span></div>
-            <div v-if="invoiceData.discount" class="flex justify-between gap-3 py-1 text-gray-600"><span>الخصم {{ invoiceData.discount_for ? `(${invoiceData.discount_for})` : "" }}</span><span>{{ invoiceData.discount_percentage ? `${invoiceData.discount}%` : `${formatePrice(invoiceData.discount)} ج` }}</span></div>
+            <div v-if="invoiceData.discount" class="flex justify-between gap-3 py-1 text-gray-600"><span>الخصم {{ invoiceData.discount_for ? `(${invoiceData.discount_for})` : "" }} ({{ discountLabel }})</span><span class="tabular-nums">{{ formatePrice(discountAmount) }} ج</span></div>
             <div class="flex justify-between gap-3 py-1"><span>الفاتورة قبل المرتجع</span><strong>{{ formatePrice(originalTotal) }} ج</strong></div>
             <div class="flex justify-between gap-3 py-1 text-red-700"><span>خصم المرتجع</span><strong dir="ltr">-{{ formatePrice(returnTotal) }} ج</strong></div>
-            <div class="mt-2 flex justify-between gap-3 border-t border-gray-200 pt-2 text-base font-bold"><span>الصافي بعد المرتجع</span><span>{{ formatePrice(netAfterReturns) }} ج</span></div>
+            <div class="mt-2 flex justify-between gap-3 border-t border-gray-200 pt-2 text-lg font-extrabold"><span>الصافي بعد المرتجع</span><span class="tabular-nums">{{ formatePrice(netAfterReturns) }} ج</span></div>
           </div>
           <div class="rounded-lg border border-gray-200 p-3">
             <h3 class="mb-2 font-bold">توزيع قيمة المرتجع</h3>
@@ -67,22 +67,22 @@
           <div v-if="invoiceData.amount_of_animal_feeds"><strong>العلف/</strong> <span>{{ formatePrice(invoiceData.amount_of_animal_feeds) }}</span></div>
           <div v-if="invoiceData.delivery_price"><strong>التوصيل/</strong> <span>{{ formatePrice(invoiceData.delivery_price) }}</span></div>
           <div v-if="invoiceData.discount">
-            <strong>الإجمالي/</strong> <span>{{ formatePrice(calcTotal(invoiceData)) }}</span>
+            <strong>الإجمالي قبل الخصم/</strong> <span class="tabular-nums">{{ formatePrice(calcTotal(invoiceData)) }}</span>
           </div>
           <div v-if="invoiceData.discount">
-            <strong>الخصم {{ invoiceData.discount_for ? `(${invoiceData.discount_for})` : "" }}/</strong>
-            <span>{{ invoiceData.discount_percentage ? `${invoiceData.discount}%` : formatePrice(invoiceData.discount) }}</span>
+            <strong>الخصم {{ invoiceData.discount_for ? `(${invoiceData.discount_for})` : "" }} ({{ discountLabel }})/</strong>
+            <span class="tabular-nums">{{ formatePrice(discountAmount) }}</span>
           </div>
-          <div class="text-sm font-bold"><strong>الإجمالي {{ invoiceData.discount ? "النهائي" : "" }}/</strong><span>{{ formatePrice(originalTotal) }}</span></div>
+          <div class="inv-grand"><strong>الإجمالي {{ invoiceData.discount ? "بعد الخصم" : "" }}/</strong><span class="tabular-nums">{{ formatePrice(originalTotal) }}</span></div>
           <!-- paid / remaining rows: 0 is a valid financial value, never hide it. -->
           <div v-if="invoiceData.paid_amount !== null && invoiceData.paid_amount !== undefined">
             <strong>المدفوع/</strong>
             <span>{{ formatePrice(invoiceData.paid_amount) }}</span>
           </div>
           <div v-if="invoiceData.credit_used" class="no-print"><strong>من رصيد العميل/</strong><span>{{ formatePrice(invoiceData.credit_used) }}</span></div>
-          <div v-if="invoiceData.paid_amount !== null && invoiceData.paid_amount !== undefined">
+          <div v-if="invoiceData.paid_amount !== null && invoiceData.paid_amount !== undefined" class="inv-remaining">
             <strong>المتبقي/</strong>
-            <span>{{ formatePrice((calcTotal(invoiceData) - discountAmount) - Number(invoiceData.paid_amount ?? 0)) }}</span>
+            <span class="tabular-nums">{{ formatePrice((calcTotal(invoiceData) - discountAmount) - Number(invoiceData.paid_amount ?? 0)) }}</span>
           </div>
         </div>
       </div>
@@ -126,8 +126,8 @@
       <p class="mb-4 text-gray-600">توجد عناصر سعرها أقل من سعر التكلفة... هل تريد المتابعة على أية حال؟</p>
       <template #footer>
         <div class="flex w-full flex-col gap-2">
-          <UButton color="success" block @click="confirmCostAndContinue">متابعة</UButton>
-          <UButton color="neutral" variant="ghost" block @click="costConfirmOpen = false">إلغاء</UButton>
+          <UButton color="success" block :loading="printing" :disabled="printing" @click="confirmCostAndContinue">متابعة</UButton>
+          <UButton color="neutral" variant="ghost" block :disabled="printing" @click="costConfirmOpen = false">إلغاء</UButton>
         </div>
       </template>
     </UiAppDialog>
@@ -200,6 +200,17 @@ async function startPrint(saveOnly?: boolean) {
     notify("بيانات وحدة أحد الأسطر أو كميته الأساسية غير مكتملة. أعد اختيار النوع والوحدة.", "error");
     return true;
   }
+  // Admin/client parity with the cashier path: a discount can never exceed the
+  // invoice (the server rejects it too — this fails fast with a clear message).
+  const gross = calcTotal(props.invoiceData);
+  const discountRaw = Number(props.invoiceData.discount || 0);
+  if (!isReadOnly.value && (!Number.isFinite(discountRaw) || discountRaw < 0
+    || (props.invoiceData.discount_percentage && discountRaw > 100)
+    || (!props.invoiceData.discount_percentage && discountRaw - gross > 0.005)
+    || gross - (props.invoiceData.discount_percentage ? (gross * discountRaw) / 100 : discountRaw) < -0.005)) {
+    notify("راجع الخصم: لا يجوز أن يتجاوز إجمالي الفاتورة.", "error");
+    return true;
+  }
   const _time = resolveTime(props.invoiceData.date, props.invoiceData.time);
   void _time;
   if (!isReadOnly.value && !costConfirmed.value) {
@@ -229,6 +240,7 @@ async function startPrint(saveOnly?: boolean) {
 }
 
 function confirmCostAndContinue(): void {
+  if (printing.value) return;
   costConfirmed.value = true;
   costConfirmOpen.value = false;
   void doSave(pendingSaveOnly.value);
@@ -288,6 +300,8 @@ const discountAmount = computed(() => {
   }
   return Number(props.invoiceData.discount || 0);
 });
+/** Human-readable discount basis: `10%` or `مبلغ ثابت`. Amount always shown beside it. */
+const discountLabel = computed(() => props.invoiceData.discount_percentage ? `${props.invoiceData.discount}%` : "مبلغ ثابت");
 // Ctrl+S lives on the host page (pages/index.vue) so hidden + preview
 // instances never double-fire.
 defineExpose({ startPrint });
@@ -311,6 +325,13 @@ defineExpose({ startPrint });
 }
 .inv-footer > div:not(:last-of-type) {
   border-bottom: 1px dashed rgba(128, 128, 128, 0.163);
+}
+.inv-grand {
+  font-size: 1.15em;
+  font-weight: 800;
+}
+.inv-remaining {
+  font-weight: 800;
 }
 @media print {
   .no-print {
