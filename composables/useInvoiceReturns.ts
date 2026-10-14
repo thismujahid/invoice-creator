@@ -1,61 +1,75 @@
-import { collection, doc, getDocs, limit as fsLimit, orderBy, query, where } from "firebase/firestore";
-import type { InvoiceReturn, InvoiceReturnItem } from "~/types/finance";
-import type { Invoice, ProductUnit } from "~/types";
-import { lineBaseQuantity, lineRefundValue, lineUnitFactor, netRatioOf, outstandingDebtOf, round2, round4, splitCustomerReturn, toNum } from "./finance";
-import { summarizeInvoice, writeDebtSummary } from "./debtSummaries";
-import { writeCustomerSummaryDelta, writeInvoiceStatsDelta } from "./performanceSummaries";
+import { collection, getDocs, limit as fsLimit, orderBy, query, where } from "firebase/firestore";
+import type { InvoiceReturn } from "~/types/finance";
+import type { Invoice } from "~/types";
+import { round2, round4 } from "./finance";
+import { callStaff } from "./staffApi";
 
 export interface ReturnLineInput {
-  rowKey: string;
+  line_id: string;
   quantity: number;
+  return_bucket: "loose" | "package";
+  return_unit_id?: string | null;
+}
+
+export interface ReturnPackageUnit {
+  id: string;
+  name: string;
+  factor: number;
 }
 
 export interface ReturnRow {
   key: string;
+  line_id: string;
   product_id: string;
   product_name: string;
-  /** Representative selling price (first line of the group, display only). */
+  inventory_mode: "convertible" | "independent";
   unit_price: number;
-  unit_cost: number;
-  unit_id?: string;
+  unit_id: string;
   unit_name: string;
+  loose_unit_name: string;
   unit_factor: number;
-  /** Sold lines backing this cost group, in invoice order. */
-  lines: { index: number; costGroupIndex: number; unitCost: number; price: number; qty: number; returnedQty: number }[];
+  stock_kind: "loose" | "package";
+  allows_fractional: boolean;
   soldQty: number;
   returnedQty: number;
   maxQty: number;
   qty: number;
+  return_bucket: "loose" | "package";
+  return_unit_id: string | null;
+  return_units: ReturnPackageUnit[];
 }
 
-const EPS = 1e-9;
+export interface ReturnPreview {
+  remaining: number;
+  ratio: number;
+  creditUsed: number;
+  creditRestored: number;
+  creditBalance: number;
+  rows: Omit<ReturnRow, "qty" | "return_bucket" | "return_unit_id">[];
+}
 
 export const useInvoiceReturns = defineStore("invoiceReturns", () => {
-  const { db, serverTimestamp } = useFirebase();
-  const authStore = useAuth();
-  const { notify } = useAppToast();
+  const { db } = useFirebase();
+  let pendingReturn: { fingerprint: string; requestId: string } | null = null;
 
-  const byId = (i: ReturnRow) => i.key;
+  const byId = (row: ReturnRow) => row.line_id;
 
-  /** All returns (bounded) — caller derives per-invoice aggregates. */
   async function fetchRecentReturns(max = 500): Promise<InvoiceReturn[]> {
     try {
-      const q = query(collection(db, "invoice_returns"), orderBy("created_at", "desc"), fsLimit(max));
-      const snap = await getDocs(q);
-      return snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) }) as InvoiceReturn);
-    } catch (e) {
-      console.error(e);
+      const snapshot = await getDocs(query(collection(db, "invoice_returns"), orderBy("created_at", "desc"), fsLimit(max)));
+      return snapshot.docs.map((item) => ({ id: item.id, ...(item.data() as object) }) as InvoiceReturn);
+    } catch (error) {
+      console.error(error);
       return [];
     }
   }
 
-  async function fetchReturnsForInvoice(invoice_id: string): Promise<InvoiceReturn[]> {
+  async function fetchReturnsForInvoice(invoiceId: string): Promise<InvoiceReturn[]> {
     try {
-      const q = query(collection(db, "invoice_returns"), where("invoice_id", "==", invoice_id));
-      const snap = await getDocs(q);
-      return snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) }) as InvoiceReturn);
-    } catch (e) {
-      console.error(e);
+      const snapshot = await getDocs(query(collection(db, "invoice_returns"), where("invoice_id", "==", invoiceId)));
+      return snapshot.docs.map((item) => ({ id: item.id, ...(item.data() as object) }) as InvoiceReturn);
+    } catch (error) {
+      console.error(error);
       return [];
     }
   }
@@ -70,131 +84,10 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
     return result;
   }
 
-  /** Build returnable rows for an invoice: sold per (product,price) minus
-   *  previously returned per product (F11/F12). Accepts return docs or a
-   *  plain product->qty map (the transactional path uses the stored map). */
-  function returnedMapOf(previous: InvoiceReturn[] | Record<string, number>): Map<string, number> {
-    const m = new Map<string, number>();
-    if (Array.isArray(previous)) {
-      for (const r of previous) {
-        for (const it of r.items ?? []) {
-          m.set(it.product_id, round2((m.get(it.product_id) ?? 0) + Number(it.base_quantity ?? toNum(it.quantity) * Number(it.unit_factor || 1))));
-        }
-      }
-    } else {
-      for (const [k, v] of Object.entries(previous ?? {})) m.set(k, round2(toNum(v)));
-    }
-    return m;
-  }
-  function buildReturnRows(
-    invoice: Invoice,
-    previous: InvoiceReturn[] | Record<string, number>,
-    aggregateReturned: Record<string, number> = {},
-  ): ReturnRow[] {
-    const returnedByProduct = Array.isArray(previous) ? new Map<string, number>() : returnedMapOf(previous);
-    if (Array.isArray(previous)) for (const ret of previous) for (const item of ret.items ?? []) {
-      returnedByProduct.set(item.product_id, round2((returnedByProduct.get(item.product_id) ?? 0) + toNum(item.quantity)));
-    }
-    if (!Array.isArray(previous)) for (const [productId, quantity] of Object.entries(aggregateReturned)) {
-      returnedByProduct.set(productId, Math.max(returnedByProduct.get(productId) ?? 0, round2(toNum(quantity))));
-    }
-    const returnedByCost = new Map<string, number>();
-    const returnedByLine = new Map<string, number>();
-    if (Array.isArray(previous)) {
-      for (const ret of previous) {
-        for (const item of ret.items ?? []) {
-          const costKey = `${item.product_id}||${round2(toNum(item.original_unit_cost))}||${item.unit_id ?? "legacy"}||${Number(item.unit_factor || 1)}`;
-          returnedByCost.set(costKey, round2((returnedByCost.get(costKey) ?? 0) + toNum(item.quantity)));
-          if (item.source_line_index !== undefined) {
-            const lineKey = `${item.product_id}||${item.source_line_index}||${item.source_cost_group_index ?? "legacy"}`;
-            returnedByLine.set(lineKey, round2((returnedByLine.get(lineKey) ?? 0) + toNum(item.quantity)));
-          }
-        }
-      }
-    }
-    // Group by product, historical cost, and unit snapshot. Mixed cost groups
-    // on one edited line are exposed as separate returnable slices.
-    const groups = new Map<string, ReturnRow>();
-    for (const [index, l] of (invoice.products ?? []).entries()) {
-      if (!l.product_id) continue;
-      const price = round2(toNum(l.product_price));
-      const factor = lineUnitFactor(l);
-      const costGroups = Array.isArray(l.cost_groups) && l.cost_groups.length
-        ? l.cost_groups.map((group, groupIndex) => ({ groupIndex, cost: round4(toNum(group.unit_cost)), quantity: round2(toNum(group.base_quantity) / factor) }))
-        : [{ groupIndex: 0, cost: round4(toNum(l.product_cost_price)), quantity: toNum(l.product_quantity) }];
-      for (const costGroup of costGroups) {
-        if (costGroup.quantity <= 0) continue;
-        const cost = costGroup.cost;
-        const key = `${l.product_id}||${cost}||${l.unit_id ?? "legacy"}||${factor}`;
-        const g = groups.get(key) ?? {
-          key,
-          product_id: l.product_id,
-          product_name: l.product_name || "",
-          unit_price: price,
-          unit_cost: cost,
-          unit_id: l.unit_id,
-          unit_name: l.unit_name || "وحدة",
-          unit_factor: factor,
-          lines: [] as ReturnRow["lines"],
-          soldQty: 0,
-          returnedQty: 0,
-          maxQty: 0,
-          qty: 0,
-        };
-        let returnedQty = returnedByLine.get(`${l.product_id}||${index}||${costGroup.groupIndex}`)
-          ?? (costGroups.length === 1 ? returnedByLine.get(`${l.product_id}||${index}||legacy`) : undefined)
-          ?? 0;
-        if (Array.isArray(previous) && returnedQty === 0) {
-          const groupReturned = returnedByCost.get(key) ?? 0;
-          const priorMatchingLines = g.lines.reduce((sum, line) => sum + line.returnedQty, 0);
-          const legacyPriceMatches = previous.reduce((sum, ret) => sum + (ret.items ?? [])
-            .filter((item) => item.product_id === l.product_id && round2(toNum(item.original_unit_cost)) === cost &&
-              round2(toNum(item.original_unit_price)) === price && item.source_line_index === undefined &&
-              (item.unit_id ?? "legacy") === (l.unit_id ?? "legacy") && Number(item.unit_factor || 1) === factor)
-            .reduce((itemSum, item) => itemSum + toNum(item.quantity), 0), 0);
-          returnedQty = Math.min(costGroup.quantity, legacyPriceMatches - priorMatchingLines);
-          if (groupReturned <= priorMatchingLines) returnedQty = 0;
-        }
-        g.lines.push({ index, costGroupIndex: costGroup.groupIndex, unitCost: cost, price, qty: costGroup.quantity, returnedQty: Math.max(0, round2(returnedQty)) });
-        g.soldQty = round2(g.soldQty + costGroup.quantity);
-        groups.set(key, g);
-      }
-    }
-    const rows = [...groups.values()];
-    const legacyReturned = new Map(returnedByProduct);
-    if (Array.isArray(previous)) {
-      for (const [productId, returned] of returnedByProduct) {
-        const exactReturned = [...returnedByCost.entries()]
-          .filter(([key]) => key.startsWith(`${productId}||`))
-          .reduce((sum, [, qty]) => sum + qty, 0);
-        legacyReturned.set(productId, Math.max(0, round2(returned - exactReturned)));
-      }
-    }
-    const legacyAllocated = new Map<string, number>();
-    for (const r of rows) {
-      const lineReturned = r.lines.reduce((sum, line) => sum + line.returnedQty, 0);
-      const knownGroupReturned = Array.isArray(previous) ? returnedByCost.get(r.key) ?? 0 : 0;
-      const legacy = legacyReturned.get(r.product_id) ?? 0;
-      const legacyUsed = legacyAllocated.get(r.product_id) ?? 0;
-      const legacyTake = Math.min(Math.max(0, round2(legacy - legacyUsed)), Math.max(0, r.soldQty - lineReturned - knownGroupReturned));
-      if (legacyTake > 0 && r.lines.length) {
-        let remaining = legacyTake;
-        for (const line of r.lines) {
-          const take = Math.min(remaining, line.qty - line.returnedQty);
-          line.returnedQty = round2(line.returnedQty + take);
-          remaining = round2(remaining - take);
-          if (remaining <= EPS) break;
-        }
-      }
-      legacyAllocated.set(r.product_id, round2(legacyUsed + legacyTake));
-      r.returnedQty = round2(r.lines.reduce((sum, line) => sum + line.returnedQty, 0));
-      r.maxQty = Math.max(0, round2(r.soldQty - r.returnedQty));
-    }
-    return rows.filter((r) => r.soldQty > 0);
+  async function previewReturn(invoiceId: string): Promise<ReturnPreview> {
+    return callStaff<{ id: string }, ReturnPreview>("getStaffReturnPreview", { id: invoiceId });
   }
 
-  /** Atomic return (F14/F29): return doc + restock + logs + debt-first
-   *  split + cash only for real refunds. */
   async function createReturn(
     invoice: Invoice,
     items: ReturnLineInput[],
@@ -202,248 +95,27 @@ export const useInvoiceReturns = defineStore("invoiceReturns", () => {
     cashRefundRequested = 0,
   ): Promise<{ ok: true; id: string; debtReduction: number; cashRefund: number; creditIssued: number; creditRestored: number } | { ok: false; error: string }> {
     if (!invoice.id) return { ok: false, error: "الفاتورة غير صالحة." };
-    const wanted = items.filter((i) => i.rowKey && toNum(i.quantity) > 0);
+    const wanted = items.filter((item) => item.line_id && Number(item.quantity) > 0);
     if (!wanted.length) return { ok: false, error: "حدد صنفاً واحداً على الأقل بكمية أكبر من صفر." };
+    const payload = {
+      id: invoice.id,
+      items: wanted.map((item) => ({ line_id: item.line_id, quantity: round4(item.quantity), return_bucket: item.return_bucket, return_unit_id: item.return_unit_id ?? null })),
+      note: note?.trim() || null,
+      cashRefund: round2(cashRefundRequested),
+    };
     try {
-      const priorReturnsSnapshot = await getDocs(query(collection(db, "invoice_returns"), where("invoice_id", "==", invoice.id)));
-      const priorReturns = priorReturnsSnapshot.docs.map((d) => ({ id: d.id, ...(d.data() as object) }) as InvoiceReturn);
-      let returnId = "";
-      let debtReduction = 0;
-      let cashRefund = 0;
-      let creditIssued = 0;
-      let creditRestored = 0;
-      await runTx(async (tx) => {
-        // 1. Fresh invoice + previous returns (anti over-return).
-        const invRef = doc(db, "invoices", invoice.id as string);
-        const invSnap = await tx.get(invRef);
-        if (!invSnap.exists()) throw new Error("VALIDATION:الفاتورة غير موجودة.");
-        const fresh = { ...(invSnap.data() as object), id: invSnap.id } as Invoice;
-        // Authoritative returned map lives on the invoice doc (transactional).
-        const storedReturned = { ...((fresh.returned ?? {}) as Record<string, number>) };
-        const returnedFromDocs = returnedMapOf(priorReturns);
-        for (const [productId, storedQty] of Object.entries(storedReturned)) {
-          if (Math.abs(toNum(storedQty) - (returnedFromDocs.get(productId) ?? 0)) > EPS) {
-            throw new Error("VALIDATION:تغيّر سجل المرتجعات — أعد فتح الفاتورة ثم حاول مرة أخرى.");
-          }
-        }
-        const returnedMap = { ...storedReturned };
-        for (const [productId, returnedQty] of returnedFromDocs) {
-          returnedMap[productId] = Math.max(toNum(returnedMap[productId]), returnedQty);
-        }
-        const rows = buildReturnRows(fresh, priorReturns, returnedMap);
-        const ratio = netRatioOf(fresh);
-        // 2. Validate per cost-group row, price from ORIGINAL sale LINES
-        // (F12): a row's qty is spread over its own lines in order, so each
-        // slice refunds at its exact historical selling price (F13).
-        const retItems: InvoiceReturnItem[] = [];
-        const byRowKey = new Map(rows.map((r) => [r.key, r]));
-        const acceptedByRow = new Map<string, number>();
-        for (const w of wanted) {
-          const r = byRowKey.get(w.rowKey);
-          if (!r) throw new Error("VALIDATION:صنف غير موجود بالفاتورة الأصلية.");
-          const want = round2(toNum(w.quantity));
-          const remainingForRow = round2(r.maxQty - (acceptedByRow.get(r.key) ?? 0));
-          if (want - remainingForRow > EPS) {
-            throw new Error(`VALIDATION:الكمية المطلوبة تتجاوز المتاح للإرجاع (${remainingForRow}).`);
-          }
-          acceptedByRow.set(r.key, round2((acceptedByRow.get(r.key) ?? 0) + want));
-          let need = want;
-          for (const ln of r.lines) {
-            if (need <= EPS) break;
-            const take = Math.min(need, ln.qty - ln.returnedQty);
-            if (take <= EPS) continue;
-            need = round2(need - take);
-            retItems.push({
-              product_id: r.product_id,
-              product_name: r.product_name,
-              quantity: take,
-              unit_id: fresh.products[ln.index]?.unit_id ?? null,
-              unit_name: fresh.products[ln.index]?.unit_name ?? null,
-              unit_factor: 1,
-              base_quantity: take,
-              original_unit_price: ln.price,
-              original_unit_cost: ln.unitCost,
-              source_line_index: ln.index,
-              source_cost_group_index: ln.costGroupIndex,
-              refund_amount: lineRefundValue(ln.price, take, ratio),
-            });
-          }
-        }
-        if (!retItems.length) throw new Error("VALIDATION:لا توجد كميات صالحة للإرجاع.");
-        const totalRefund = round2(retItems.reduce((s, i) => s + i.refund_amount, 0));
-        // 3. Debt-first split against CURRENT remaining (shared legacy rule:
-        //    legacy invoices without paid state count as paid → full cash).
-        const remainingDebt = outstandingDebtOf(fresh);
-        let settlement;
-        try { settlement = splitCustomerReturn(totalRefund, remainingDebt, toNum(fresh.credit_used), toNum(fresh.credit_restored), cashRefundRequested); }
-        catch { throw new Error("VALIDATION:مبلغ الرد النقدي يتجاوز المستحق للعميل."); }
-        debtReduction = settlement.debtReduction;
-        creditRestored = settlement.creditRestored;
-        cashRefund = settlement.cashRefund;
-        creditIssued = settlement.creditIssued;
-        if ((creditIssued > 0 || creditRestored > 0) && !fresh.customer_id) throw new Error("VALIDATION:اربط الفاتورة بعميل قبل حفظ رصيد له.");
-        // 4. Stock + products must exist.
-        const stocks = new Map<string, { units: ProductUnit[] }>();
-        for (const it of retItems) {
-          if (stocks.has(it.product_id)) continue;
-          const pSnap = await tx.get(doc(db, "products", it.product_id));
-          if (!pSnap.exists()) throw new Error(`VALIDATION:المنتج ${it.product_name} غير موجود بالمخزون.`);
-          stocks.set(it.product_id, {
-            units: Array.isArray(pSnap.data().units) ? pSnap.data().units : [],
-          });
-        }
-        for (const item of retItems) {
-          const unit = stocks.get(item.product_id)?.units.find((entry) => entry.id === item.unit_id);
-          if (!unit) throw new Error("VALIDATION:وحدة المنتج الأصلية لم تعد موجودة.");
-          if (unit.allows_fractional !== true && !Number.isInteger(item.quantity)) throw new Error("VALIDATION:هذه الوحدة لا تقبل كميات كسرية.");
-        }
-        // 5. Cashbox only when real cash leaves.
-        let cashBal = 0;
-        let cashReady = true;
-        if (cashRefund > 0) {
-          const cSnap = await tx.get(doc(db, "cashbox", "current"));
-          cashReady = cSnap.exists();
-          if (!cashReady) throw new Error("VALIDATION:لا يمكن رد نقدية — الخزنة غير مهيأة بعد.");
-          cashBal = round2(Number(cSnap.data()?.balance || 0));
-          if (cashBal < cashRefund) throw new Error("VALIDATION:رصيد الخزنة لا يكفي للمبلغ المسترد نقداً.");
-        }
-        const creditRef = fresh.customer_id ? doc(db, "customer_credits", fresh.customer_id) : null;
-        const creditSnap = creditRef && (creditIssued > 0 || creditRestored > 0) ? await tx.get(creditRef) : null;
-        const now = serverTimestamp();
-        const returnDate = new Date();
-        const by = (authStore.currentUserKey as string) || null;
-        // 6. Writes.
-        const retRef = doc(collection(db, "invoice_returns"));
-        returnId = retRef.id;
-        tx.set(retRef, {
-          invoice_id: invoice.id,
-          customer_id: (fresh.customer_id as string) || null,
-          items: retItems,
-          total_refund: totalRefund,
-          debt_reduction: debtReduction,
-          cash_refund: cashRefund,
-          credit_issued: creditIssued,
-          credit_restored: creditRestored,
-          note: note ?? null,
-          created_by: by,
-          created_at: now,
-        });
-        // Restored stock applies per product through the canonical helper
-        // (same math replay uses); every slice keeps its own audit log.
-        const restoredPids = [...new Set(retItems.map((it) => it.product_id))];
-        let retSeq = 0;
-        const lastMovementByProduct = new Map<string, string>();
-        const movementIdsByProduct = new Map<string, string[]>();
-        for (const it of retItems) {
-          const movementRef = doc(collection(db, "inventory_transactions"));
-          lastMovementByProduct.set(it.product_id, movementRef.id);
-          const movementIds = movementIdsByProduct.get(it.product_id) ?? [];
-          movementIds.push(movementRef.id);
-          movementIdsByProduct.set(it.product_id, movementIds);
-          tx.set(movementRef, {
-            type: "refund",
-            product_id: it.product_id,
-            product_name: it.product_name,
-            quantity: it.quantity,
-            unit_id: it.unit_id ?? null,
-            unit_name: it.unit_name ?? null,
-            unit_factor: 1,
-            unit_quantity: it.quantity,
-            base_quantity: it.quantity,
-            direction: "in",
-            unit_cost: it.original_unit_cost,
-            invoice_id: invoice.id,
-            return_id: returnId,
-            note: null,
-            seq: retSeq++,
-            created_by: by,
-            created_at: now,
-          });
-        }
-        for (const pid of restoredPids) {
-          const st = stocks.get(pid)!;
-          const nextUnits = st.units.map((unit) => {
-            const inflows = retItems.filter((it) => it.product_id === pid && it.unit_id === unit.id);
-            if (!inflows.length) return unit;
-            const oldStock = toNum(unit.stock_quantity);
-            const added = round2(inflows.reduce((sum, item) => sum + item.quantity, 0));
-            const value = inflows.reduce((sum, item) => sum + item.quantity * toNum(item.original_unit_cost), 0);
-            return {
-              ...unit,
-              stock_quantity: round2(oldStock + added),
-              average_cost: round4(oldStock > 0 ? (oldStock * toNum(unit.average_cost) + value) / (oldStock + added) : value / added),
-            };
-          });
-          tx.update(doc(db, "products", pid), {
-            units: nextUnits,
-            last_inventory_transaction_id: lastMovementByProduct.get(pid),
-            last_inventory_transaction_ids: movementIdsByProduct.get(pid) ?? [],
-          });
-        }
-        const mergedReturned: Record<string, number> = { ...returnedMap };
-        for (const it of retItems) {
-          mergedReturned[it.product_id] = round2((mergedReturned[it.product_id] ?? 0) + Number(it.base_quantity ?? it.quantity));
-        }
-        const returnedBaseQuantity = round2(Object.values(mergedReturned).reduce((sum, quantity) => sum + toNum(quantity), 0));
-        const soldBaseQuantity = round2((fresh.products ?? []).reduce((sum, line) => sum + lineBaseQuantity(line), 0));
-        const updatedRemaining = round2(remainingDebt - debtReduction);
-        const updatedReturnStatus = returnedBaseQuantity + EPS >= soldBaseQuantity ? "full" : "partial";
-        tx.update(invRef, {
-          remaining: updatedRemaining,
-          returned: mergedReturned,
-          returned_base_quantity: returnedBaseQuantity,
-          return_status: updatedReturnStatus,
-          credit_restored: round2(toNum(fresh.credit_restored) + creditRestored),
-        });
-        if (creditRef && (creditIssued > 0 || creditRestored > 0)) {
-          tx.set(creditRef, { balance: round2(toNum(creditSnap?.data()?.balance) + creditIssued + creditRestored), updated_at: now }, { merge: true });
-          tx.set(doc(collection(db, "customer_credit_transactions")), { customer_id: fresh.customer_id, invoice_id: invoice.id, return_id: returnId, type: "issued", amount: round2(creditIssued + creditRestored), created_by: by, created_at: now });
-        }
-        writeDebtSummary(tx, db, {
-          invoice_id: invoice.id as string,
-          customer_id: (fresh.customer_id as string) || null,
-          customer_name: (fresh.customer_name as string | null) ?? null,
-          customer_phone: (fresh.customer_phone as string | number | null) ?? null,
-          date: (fresh.date as unknown) ?? null,
-          ...summarizeInvoice({ ...fresh, remaining: round2(remainingDebt - debtReduction) }),
-        });
-        const returnedCost = round2(retItems.reduce((s, i) => s + toNum(i.original_unit_cost) * toNum(i.base_quantity ?? i.quantity), 0));
-        writeInvoiceStatsDelta(tx, db, fresh, {
-          ...fresh,
-          remaining: updatedRemaining,
-          returned: mergedReturned,
-          returned_base_quantity: returnedBaseQuantity,
-          return_status: updatedReturnStatus,
-        }, { count: 1, total: totalRefund, profit: round2(totalRefund - returnedCost) }, returnDate);
-        writeCustomerSummaryDelta(tx, db, fresh, { total_sales: -totalRefund, outstanding_debt: -debtReduction });
-        if (cashRefund > 0) {
-          const cRef = doc(db, "cashbox", "current");
-          tx.set(cRef, { balance: round2(cashBal - cashRefund), updated_at: now }, { merge: true });
-          tx.set(doc(collection(db, "cash_transactions")), {
-            type: "invoice_refund",
-            direction: "out",
-            amount: cashRefund,
-            invoice_id: invoice.id,
-            return_id: returnId,
-            reference_type: "return",
-            reference_id: returnId,
-            reference_label: `مرتجع فاتورة ${String(fresh.customer_name || "عميل")}`,
-            note: note ?? null,
-            created_by: by,
-            created_at: now,
-          });
-        }
-      });
+      const fingerprint = JSON.stringify(payload);
+      if (pendingReturn?.fingerprint !== fingerprint) pendingReturn = { fingerprint, requestId: crypto.randomUUID() };
+      const result = await callStaff<typeof payload & { requestId: string }, { id: string; debtReduction: number; cashRefund: number; creditIssued: number; creditRestored: number }>("createStaffReturn", { ...payload, requestId: pendingReturn.requestId });
+      pendingReturn = null;
       useProductsStore().invalidateCache();
-      return { ok: true, id: returnId, debtReduction, cashRefund, creditIssued, creditRestored };
-    } catch (e) {
-      if (e instanceof Error && e.message.startsWith("VALIDATION:")) {
-        return { ok: false, error: e.message.slice("VALIDATION:".length) };
-      }
-      console.error(e);
-      return { ok: false, error: "تعذر حفظ العملية، لم يتم تعديل الخزنة أو المخزون." };
+      return { ok: true, ...result };
+    } catch (error) {
+      console.error(error);
+      const message = error instanceof Error ? error.message : "";
+      return { ok: false, error: message || "تعذر حفظ المرتجع." };
     }
   }
 
-  return { byId, fetchRecentReturns, fetchReturnsForInvoice, fetchForInvoices, buildReturnRows, createReturn };
+  return { byId, fetchRecentReturns, fetchReturnsForInvoice, fetchForInvoices, previewReturn, createReturn };
 });

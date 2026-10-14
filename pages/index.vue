@@ -115,11 +115,19 @@
                     </div>
                   </div>
                 </div>
-                <div v-if="creditBalance > 0 && customerDebt > 0" class="mt-2 text-xs font-medium text-slate-600">
-                  تسوية تلقائية عند الحفظ: {{ formatePrice(Math.min(creditBalance, customerDebt)) }} ج من الرصيد مقابل الدين.
+                <div
+                  v-if="creditBalance > 0 && customerDebt > 0"
+                  class="mt-2 text-xs font-medium text-slate-600"
+                >
+                  تسوية تلقائية عند الحفظ:
+                  {{ formatePrice(Math.min(creditBalance, customerDebt)) }} ج من
+                  الرصيد مقابل الدين.
                 </div>
                 <div
-                  v-if="invoiceData.customer_id && creditAvailableAfterSettlement > 0"
+                  v-if="
+                    invoiceData.customer_id &&
+                    creditAvailableAfterSettlement > 0
+                  "
                   class="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-600"
                 >
                   <label for="invoice-customer-credit">استخدام الرصيد:</label>
@@ -127,7 +135,9 @@
                     id="invoice-customer-credit"
                     :model-value="invoiceData.credit_used"
                     :min="0"
-                    :max="Math.min(creditAvailableAfterSettlement, totalOfInvoice)"
+                    :max="
+                      Math.min(creditAvailableAfterSettlement, totalOfInvoice)
+                    "
                     :step="0.01"
                     size="xs"
                     class="w-28"
@@ -294,28 +304,65 @@
                   </div>
                 </div>
                 <div class="grid grid-cols-2 gap-2">
-                  <UFormField label="المنتج" class="col-span-2">
+                  <UFormField label="المنتج">
+                    <USelectMenu
+                      :model-value="selectedFamily(form)"
+                      :items="productFamilyOptions"
+                      label-key="name"
+                      by="id"
+                      :search-input="{
+                        placeholder: 'بحث باسم المنتج...',
+                        icon: 'i-lucide-search',
+                      }"
+                      placeholder="اختر المنتج"
+                      :loading="loadingProds"
+                      class="w-full"
+                      @update:model-value="
+                        (family) => onPickFamily(form, family)
+                      "
+                    />
+                  </UFormField>
+                  <UFormField
+                    v-if="
+                      selectedFamilyId(form) &&
+                      selectedFamily(form)?.inventory_mode !== 'independent' &&
+                      selectedFamily(form)?.uses_variants !== false
+                    "
+                    label="النوع"
+                  >
                     <USelectMenu
                       :model-value="
                         (selectedProd(form) ?? null) as Product | undefined
                       "
                       :items="productMenuItems(form)"
-                      label-key="name"
+                      label-key="variant_name"
                       by="id"
                       :search-term="getProdSearch(form)"
                       :search-input="{
-                        placeholder: 'بحث عن منتج...',
+                        placeholder: 'بحث عن نوع...',
                         icon: 'i-lucide-search',
                       }"
                       :ignore-filter="true"
-                      placeholder="المنتج"
+                      placeholder="اختر النوع"
                       :loading="loadingProds"
                       class="w-full"
                       @update:search-term="(v) => setProdSearch(form, v)"
                       @update:model-value="(prod) => onPickProduct(form, prod)"
                     />
                   </UFormField>
-                  <UFormField v-if="unitsOf(form).length > 1" label="الوحدة">
+                  <UFormField v-if="selectedFamilyId(form) && selectedFamily(form)?.inventory_mode === 'independent' && selectedFamily(form)?.uses_variants !== false" label="النوع">
+                    <USelectMenu :model-value="selectedVariantOption(form)" :items="variantOptions(form)" label-key="name" by="key" :search-input="{ placeholder: 'بحث عن نوع...', icon: 'i-lucide-search' }" placeholder="اختر النوع" class="w-full" @update:model-value="(variant) => onPickVariant(form, variant)" />
+                  </UFormField>
+                  <UFormField v-if="selectedFamilyId(form) && selectedFamily(form)?.inventory_mode === 'independent' && (selectedFamily(form)?.uses_variants === false || form.variant_key)" label="حجم العبوة">
+                    <USelectMenu :model-value="(selectedProd(form) ?? null) as Product | undefined" :items="packSizeMenuItems(form)" label-key="pack_size_name" by="id" :search-input="{ placeholder: 'بحث عن حجم عبوة...', icon: 'i-lucide-search' }" placeholder="اختر حجم العبوة" class="w-full" @update:model-value="(prod) => onPickProduct(form, prod)" />
+                  </UFormField>
+                  <UFormField
+                    v-if="
+                      unitsOf(form).length > 1 ||
+                      (form.product_id && !selectedUnit(form))
+                    "
+                    label="الوحدة"
+                  >
                     <USelectMenu
                       :model-value="selectedUnit(form)"
                       :items="unitsOf(form)"
@@ -329,7 +376,7 @@
                   <UFormField
                     :label="
                       form.product_id
-                        ? `الكمية (${stockNumberOf(form) ?? '—'})`
+                        ? `الكمية (المتاح ${stockNumberOf(form) ?? '—'} ${selectedUnit(form)?.name || ''})`
                         : 'الكمية'
                     "
                   >
@@ -378,11 +425,19 @@
                       >
                         {{ exceedText(form) }}
                       </span>
+                      <span
+                        v-else-if="form.product_id && packageExceeds(form)"
+                        class="block text-xs font-bold text-red-600"
+                      >
+                        {{ packageExceeds(form)?.message }}
+                      </span>
                     </template>
                   </UFormField>
-                  <UFormField label="سعر المنتج">
+                  <UFormField label="سعر الوحدة">
                     <UInputNumber
                       v-model="form.product_price"
+                      locale="en-US"
+                      @input="(event: Event) => onUnitPriceInput(form, event)"
                       :min="0"
                       :step="0.01"
                       class="w-full"
@@ -392,20 +447,25 @@
                     />
                     <template
                       v-if="
-                        (authStore.role === 'admin' && form.product_cost_price) ||
+                        (authStore.role === 'admin' &&
+                          form.product_cost_price) ||
                         priceHintOf(form) !== null
                       "
                       #hint
                     >
                       <span
-                        v-if="authStore.role === 'admin' && form.product_cost_price"
+                        v-if="
+                          authStore.role === 'admin' && form.product_cost_price
+                        "
                         class="block text-xs text-gray-500"
-                        >{{
+                        >تكلفة الوحدة:
+                        {{
                           formatePrice(
                             Number(form.product_cost_price ?? 0) *
-                              Number(form.unit_factor || 1),
+                              Number(form.unit_factor),
                           )
-                        }}</span
+                        }}
+                        ج</span
                       >
                       <span
                         v-if="priceHintOf(form) !== null"
@@ -710,6 +770,7 @@ const { formatePrice, calcTotal, formatInvoiceLineName } = useHelpers();
 const {
   unitsForProduct,
   unitSellingPrice,
+  unitStockDisplay,
   lineBaseQuantity,
   normalizePhone,
   round2,
@@ -754,6 +815,12 @@ function emptyLine(): InvoiceProductLine {
     total: 0,
     option: "",
     product_id: "",
+    family_id: null,
+    family_name: null,
+    variant_name: null,
+    variant_key: null,
+    pack_size_name: null,
+    inventory_mode: "convertible",
     unit_factor: 1,
     base_quantity: 1,
   };
@@ -789,7 +856,9 @@ const creditBalance = ref(0);
 const creditLoading = ref(false);
 const customerDebt = ref(0);
 const creditTouched = ref(false);
-const creditAvailableAfterSettlement = computed(() => Math.max(0, round2(creditBalance.value - customerDebt.value)));
+const creditAvailableAfterSettlement = computed(() =>
+  Math.max(0, round2(creditBalance.value - customerDebt.value)),
+);
 const balanceError = ref(false);
 const balanceCustomerId = ref<string | null>(null);
 const printOpeningBalance = computed(() =>
@@ -798,7 +867,10 @@ const printOpeningBalance = computed(() =>
   !loadingDebt.value &&
   invoiceData.value.customer_id === balanceCustomerId.value &&
   balanceCustomerId.value
-    ? { credit: creditAvailableAfterSettlement.value, debt: Math.max(0, round2(customerDebt.value - creditBalance.value)) }
+    ? {
+        credit: creditAvailableAfterSettlement.value,
+        debt: Math.max(0, round2(customerDebt.value - creditBalance.value)),
+      }
     : null,
 );
 let creditRequest = 0;
@@ -847,7 +919,8 @@ watch(
     if (
       !Number.isFinite(next) ||
       next < 0 ||
-      next > Math.min(creditAvailableAfterSettlement.value, totalOfInvoice.value)
+      next >
+        Math.min(creditAvailableAfterSettlement.value, totalOfInvoice.value)
     ) {
       invoiceData.value.credit_used = previous || 0;
       return;
@@ -882,10 +955,24 @@ watch(totalOfInvoice, (total) => {
   if (Number(invoiceData.value.credit_used || 0) > total)
     invoiceData.value.credit_used = Math.max(0, round2(total));
 });
-watch([creditAvailableAfterSettlement, totalOfInvoice, creditLoading, loadingDebt], ([available, total]) => {
-  if (creditTouched.value || invoiceData.value.id || !invoiceData.value.customer_id || balanceError.value || creditLoading.value || loadingDebt.value) return;
-  invoiceData.value.credit_used = Math.min(available, Math.max(0, round2(total)));
-});
+watch(
+  [creditAvailableAfterSettlement, totalOfInvoice, creditLoading, loadingDebt],
+  ([available, total]) => {
+    if (
+      creditTouched.value ||
+      invoiceData.value.id ||
+      !invoiceData.value.customer_id ||
+      balanceError.value ||
+      creditLoading.value ||
+      loadingDebt.value
+    )
+      return;
+    invoiceData.value.credit_used = Math.min(
+      available,
+      Math.max(0, round2(total)),
+    );
+  },
+);
 watch(
   () => [
     invoiceData.value.products,
@@ -1262,6 +1349,108 @@ function selectedProd(form: InvoiceProductLine): Product | undefined {
   if (!form.product_id) return undefined;
   return products.list.find((p) => p.id === form.product_id);
 }
+const productFamilyOptions = computed(() =>
+  [
+    ...new Map(
+      products.list
+        .filter(
+          (product) =>
+            product.is_active !== false &&
+            product.family_id &&
+            product.family_name,
+        )
+        .map((product) => [
+          product.family_id as string,
+          {
+            id: product.family_id as string,
+            name: product.family_name as string,
+            uses_variants: product.uses_variants !== false,
+            inventory_mode: product.inventory_mode === "independent" ? "independent" as const : "convertible" as const,
+          },
+        ]),
+    ),
+  ]
+    .map(([, family]) => family)
+    .sort((left, right) => left.name.localeCompare(right.name, "ar")),
+);
+function selectedFamilyId(form: InvoiceProductLine): string | null {
+  return form.family_id || selectedProd(form)?.family_id || null;
+}
+function selectedFamily(
+  form: InvoiceProductLine,
+): { id: string; name: string; uses_variants: boolean; inventory_mode: "convertible" | "independent" } | undefined {
+  const id = selectedFamilyId(form);
+  return id
+    ? productFamilyOptions.value.find((family) => family.id === id)
+    : undefined;
+}
+function clearSelectedProduct(form: InvoiceProductLine): void {
+  form.product_id = "";
+  form.product_name = "";
+  form.product_price = 0;
+  form.product_cost_price = 0;
+  form.variant_name = null;
+  form.variant_key = null;
+  form.pack_size_name = null;
+  form.inventory_mode = "convertible";
+  form.unit_id = undefined;
+  form.unit_name = undefined;
+  form.unit_factor = 1;
+  form.stock_kind = undefined;
+  form.allows_fractional = false;
+  form.base_quantity = 0;
+  form.cost_groups = undefined;
+  form.component_deltas = undefined;
+  form.opened_packages = undefined;
+}
+function onPickFamily(
+  form: InvoiceProductLine,
+  family: { id: string; name: string } | null | undefined,
+): void {
+  if (!family) {
+    form.family_id = null;
+    form.family_name = null;
+    clearSelectedProduct(form);
+    return;
+  }
+  form.family_id = family.id;
+  form.family_name = family.name;
+  if (selectedProd(form)?.family_id !== family.id) clearSelectedProduct(form);
+  const options = products.list.filter(
+    (product) => product.family_id === family.id && product.is_active !== false,
+  );
+  const selected = selectedFamily(form);
+  if (selected?.inventory_mode === "independent") {
+    form.inventory_mode = "independent";
+    if (selected.uses_variants === false) form.variant_key = "default";
+    const variants = variantOptions(form);
+    if (selected.uses_variants !== false && variants.length === 1) onPickVariant(form, variants[0]);
+    const sizes = packSizeMenuItems(form);
+    if (sizes.length === 1) onPickProduct(form, sizes[0]);
+  } else if (options.length === 1 && options[0]?.uses_variants === false) onPickProduct(form, options[0]);
+}
+type VariantOption = { key: string; name: string };
+function variantOptions(form: InvoiceProductLine): VariantOption[] {
+  const options = new Map<string, VariantOption>();
+  for (const product of products.list) {
+    if (product.is_active === false || product.family_id !== selectedFamilyId(form) || product.inventory_mode !== "independent") continue;
+    const key = product.variant_key || "default";
+    if (!options.has(key)) options.set(key, { key, name: product.variant_name || "أساسي" });
+  }
+  return [...options.values()].sort((left, right) => Number(products.list.find(product => product.family_id === selectedFamilyId(form) && product.variant_key === left.key)?.variant_order || 0) - Number(products.list.find(product => product.family_id === selectedFamilyId(form) && product.variant_key === right.key)?.variant_order || 0));
+}
+function selectedVariantOption(form: InvoiceProductLine): VariantOption | undefined { return variantOptions(form).find(option => option.key === form.variant_key); }
+function onPickVariant(form: InvoiceProductLine, variant?: VariantOption | null): void {
+  clearSelectedProduct(form);
+  form.inventory_mode = "independent";
+  form.variant_key = variant?.key || null;
+  form.variant_name = variant?.name || null;
+  const sizes = packSizeMenuItems(form);
+  if (sizes.length === 1) onPickProduct(form, sizes[0]);
+}
+function packSizeMenuItems(form: InvoiceProductLine): Product[] {
+  return products.list.filter(product => product.is_active !== false && product.family_id === selectedFamilyId(form) && product.inventory_mode === "independent" && (product.variant_key || "default") === (form.variant_key || "default") && sellableUnitsForProduct(product).length > 0 && Number(product.stock_quantity ?? 0) > 0).sort((left, right) => (left.pack_size_order ?? 0) - (right.pack_size_order ?? 0));
+}
 function unitsOf(form: InvoiceProductLine): ProductUnit[] {
   const product = selectedProd(form);
   if (!product) return [];
@@ -1269,17 +1458,31 @@ function unitsOf(form: InvoiceProductLine): ProductUnit[] {
 }
 function selectedUnit(form: InvoiceProductLine): ProductUnit | undefined {
   const options = unitsOf(form);
-  return options.find((unit) => unit.id === form.unit_id) ?? options[0];
+  return options.find((unit) => unit.id === form.unit_id);
+}
+function onUnitPriceInput(form: InvoiceProductLine, event: Event): void {
+  const target = event.target as HTMLInputElement | null;
+  if (!target || typeof target.value !== "string") return;
+  const text = target.value.replace(/,/g, "").trim();
+  const price = text === "" ? 0 : Number(text);
+  if (Number.isFinite(price) && price >= 0) form.product_price = price;
 }
 function onPickUnit(form: InvoiceProductLine, unit?: ProductUnit): void {
   if (!unit) return;
+  const factor = Number(unit.factor);
+  if (!Number.isFinite(factor) || factor <= 0) {
+    notify("معامل تحويل الوحدة غير صالح. راجع إعدادات النوع.", "error");
+    return;
+  }
   form.unit_id = unit.id;
   form.unit_name = unit.name;
-  form.unit_factor = 1;
-  form.base_quantity = Number(form.product_quantity || 0);
-  if (!invoiceData.value.id || !form.cost_groups?.length)
-    form.product_cost_price = Number(unit.average_cost ?? 0);
+  form.unit_factor = factor;
+  form.stock_kind = unit.stock_kind;
+  form.allows_fractional = unit.allows_fractional === true;
+  form.base_quantity = round4(Number(form.product_quantity || 0) * factor);
   const product = selectedProd(form);
+  if (!invoiceData.value.id || !form.cost_groups?.length)
+    form.product_cost_price = Number(product?.cost_price ?? 0);
   const price = product ? unitSellingPrice(product, unit) : null;
   form.product_price = price === null ? 0 : price;
 }
@@ -1296,9 +1499,9 @@ function productMenuItems(form: InvoiceProductLine): Product[] {
   const inStock = products.list.filter(
     (p) =>
       p.is_active !== false &&
-      sellableUnitsForProduct(p).some(
-        (unit) => Number(unit.stock_quantity ?? 0) > 0,
-      ),
+      sellableUnitsForProduct(p).length > 0 &&
+      p.family_id === selectedFamilyId(form) &&
+      Number(p.stock_quantity ?? 0) > 0,
   );
   const base = q
     ? inStock.filter((p) => p.name?.toLowerCase().includes(q))
@@ -1312,37 +1515,53 @@ function onPickProduct(
   if (!prod) return;
   // Canonical store object + clear the line search (same fix as customers).
   const real = products.list.find((p) => p.id === prod.id) ?? prod;
+  if (real.family_id !== selectedFamilyId(form)) {
+    notify("اختر النوع من المجموعة المحددة.", "error");
+    return;
+  }
   const wanted = Number(form.product_quantity || 0);
   const availableUnits = sellableUnitsForProduct(real);
   const selected =
-    availableUnits.find((unit) => Number(unit.stock_quantity ?? 0) > 0) ??
-    availableUnits[0];
+    availableUnits.find((unit) => {
+      const f = Number(unit.factor);
+      return Number(real.stock_quantity ?? 0) / f > 0;
+    }) ?? availableUnits[0];
   if (!selected) {
     notify("لا توجد وحدات بيع لهذا المنتج. راجع إعدادات وحداته.", "error");
     return;
   }
-  let need = round4(wanted);
+  const selFactor = Number(selected.factor);
+  let needBase = round4(wanted * selFactor);
   for (const line of invoiceData.value.products) {
-    if (
-      line === form ||
-      line.product_id !== real.id ||
-      line.unit_id !== selected.id
-    )
-      continue;
-    need = round4(need + Number(line.product_quantity || 0));
+    if (line === form || line.product_id !== real.id) continue;
+    const lf = Number(line.unit_factor);
+    if (!Number.isFinite(lf) || lf <= 0) {
+      notify(
+        "معامل وحدة أحد الأسطر غير صالح. أعد اختيار النوع والوحدة.",
+        "error",
+      );
+      return;
+    }
+    needBase = round4(needBase + Number(line.product_quantity || 0) * lf);
   }
-  const allowed = availableOf(real.id ?? "", selected.id);
-  if (need - allowed > 1e-9) {
+  const allowedBase = availableBaseOf(real.id ?? "");
+  if (needBase - allowedBase > 1e-9) {
     notify(
-      `إجمالي المطلوب (${need}) يتجاوز المتاح بالمخزون (${allowed}). خفّض الكمية أولاً.`,
+      `إجمالي المطلوب يتجاوز المتاح بالمخزون. خفّض الكمية أولاً.`,
       "error",
     );
     return;
   }
   form.product_price = unitSellingPrice(real, selected) ?? 0;
   form.product_id = real?.id ?? "";
-  form.product_cost_price = Number(selected.average_cost ?? 0);
+  form.product_cost_price = Number(real?.cost_price ?? 0);
   form.product_name = real?.name ?? "";
+  form.family_id = real.family_id ?? null;
+  form.family_name = real.family_name ?? null;
+  form.variant_name = real.variant_name ?? real.name;
+  form.variant_key = real.variant_key ?? null;
+  form.pack_size_name = real.pack_size_name ?? null;
+  form.inventory_mode = real.inventory_mode ?? "convertible";
   onPickUnit(form, selected);
   // Never auto-collapse: the line stays expanded until the user locks it
   // explicitly with collapseLine() (إغلاق).
@@ -1374,17 +1593,24 @@ function setQtyText(form: InvoiceProductLine, v: string): void {
     return;
   }
   form.product_quantity = Math.max(0, n);
-  form.base_quantity = form.product_quantity;
+  const f = unit ? Number(unit.factor) : Number(form.unit_factor);
+  if (!Number.isFinite(f) || f <= 0) {
+    qtyDrafts.set(form, v);
+    return;
+  }
+  form.base_quantity = round4(Math.max(0, n) * f);
   qtyDrafts.delete(form);
 }
 // Expanded/collapsed state by object identity (never persisted to Firestore).
 const expandedLines = reactive(new Set<InvoiceProductLine>());
+// Reserved base quantities for editing persisted invoices (product → base qty).
 const originalReserved = reactive(new Map<string, number>());
+const originalReservedBase = originalReserved;
 function stockKey(
   productId: string,
-  unitId: string | null | undefined,
+  _unitId: string | null | undefined,
 ): string {
-  return `${productId}||${unitId ?? ""}`;
+  return productId;
 }
 function isExpanded(form: InvoiceProductLine): boolean {
   return expandedLines.has(form) || !form.product_id;
@@ -1393,61 +1619,83 @@ function expandLine(form: InvoiceProductLine): void {
   expandedLines.add(form);
 }
 // Live stock info per line (reactive to store + typed qty).
+// Canonical: one base balance per product; needs aggregate across ALL units.
 function stockLabelOf(form: InvoiceProductLine): string {
-  const unit = selectedUnit(form);
-  const quantity = stockNumberOf(form);
-  if (quantity === null || !unit) return "—";
-  return `${quantity} ${unit.name}`;
+  const product = products.list.find((item) => item.id === form.product_id);
+  if (!product) return "—";
+  return stockQuantityLabel(product);
 }
 function stockNumberOf(form: InvoiceProductLine): number | null {
-  const product = products.list.find((item) => item.id === form.product_id);
+  const product = selectedProd(form);
   const unit = selectedUnit(form);
-  if (!product || !unit) return null;
-  if (invoiceData.value.id)
-    return round4(Number(unit.stock_quantity ?? 0));
-  const key = stockKey(form.product_id ?? "", unit.id);
-  const remaining = Math.max(
-    0,
-    round4(
-      availableOf(form.product_id ?? "", unit.id) -
-        (needByProduct.value.get(key) ?? 0),
-    ),
-  );
-  return remaining;
+  if (!product?.inventory || !unit) return null;
+  return unitStockDisplay(product, unit);
 }
-const needByProduct = computed(() => {
+const needBaseByProduct = computed(() => {
   const need = new Map<string, number>();
   for (const line of invoiceData.value.products) {
-    if (!line.product_id || !line.unit_id) continue;
-    const key = stockKey(line.product_id, line.unit_id);
+    if (!line.product_id) continue;
+    const f = Number(line.unit_factor);
+    if (!Number.isFinite(f) || f <= 0) {
+      need.set(line.product_id, Number.POSITIVE_INFINITY);
+      continue;
+    }
     need.set(
-      key,
-      round4((need.get(key) ?? 0) + Number(line.product_quantity || 0)),
+      line.product_id,
+      round4(
+        (need.get(line.product_id) ?? 0) +
+          Number(line.product_quantity || 0) * f,
+      ),
     );
   }
   return need;
 });
-function availableOf(productId: string, unitId: string): number {
+// Legacy alias kept for template compat where referenced.
+const needByProduct = needBaseByProduct;
+function availableBaseOf(productId: string): number {
   const product = products.list.find((p) => p.id === productId);
-  const unit = product?.units?.find((candidate) => candidate.id === unitId);
   return round4(
-    Number(unit?.stock_quantity ?? product?.stock_quantity ?? 0) +
-      (originalReserved.get(stockKey(productId, unitId)) ?? 0),
+    Number(product?.stock_quantity ?? 0) +
+      (originalReservedBase.get(productId) ?? 0),
   );
 }
 function exceedsByProduct(
   productId: string,
-  unitId: string | null | undefined,
+  _unitId: string | null | undefined,
 ): { need: number; available: number } | null {
-  if (!productId || !unitId) return null;
-  const need = needByProduct.value.get(stockKey(productId, unitId)) ?? 0;
-  const available = availableOf(productId, unitId);
+  if (!productId) return null;
+  const need = needBaseByProduct.value.get(productId) ?? 0;
+  const available = availableBaseOf(productId);
   return need - available > 1e-9 ? { need, available } : null;
 }
 function qtyExceeds(form: InvoiceProductLine): boolean {
   return form.product_id
     ? exceedsByProduct(form.product_id, form.unit_id) !== null
     : false;
+}
+function packageExceeds(form: InvoiceProductLine): { message: string } | null {
+  const unit = selectedUnit(form);
+  if (!form.product_id || !unit || unit.stock_kind !== "package") return null;
+  const product = selectedProd(form);
+  if (!product?.inventory)
+    return { message: "رصيد العبوات غير متاح؛ حدّث بيانات النوع قبل الحفظ." };
+  const current = Number(product.inventory.closed_packages[unit.id] ?? 0);
+  const reversed = Number(
+    invoiceData.value.inventory_effects?.[form.product_id]?.closed_packages?.[
+      unit.id
+    ] ?? 0,
+  );
+  const available = Math.max(0, current - reversed);
+  const requested = invoiceData.value.products.reduce((sum, line) => {
+    if (line.product_id !== form.product_id || line.unit_id !== unit.id)
+      return sum;
+    return sum + Number(line.product_quantity || 0);
+  }, 0);
+  return requested - available > 1e-9
+    ? {
+        message: `المتاح ${available} ${unit.name} مغلقة للبيع، والمطلوب ${requested}.`,
+      }
+    : null;
 }
 function exceedText(form: InvoiceProductLine): string {
   const info = form.product_id
@@ -1456,10 +1704,31 @@ function exceedText(form: InvoiceProductLine): string {
   if (!info) return "";
   const product = products.list.find((item) => item.id === form.product_id);
   if (!product) return "الكمية المطلوبة تتجاوز المخزون المتاح.";
-  const unit = selectedUnit(form);
-  return `إجمالي المطلوب ${info.need} ${unit?.name ?? "وحدة"} يتجاوز المتاح ${info.available} ${unit?.name ?? "وحدة"}.`;
+  return `إجمالي المطلوب ${info.need} ${product.base_unit_name || "وحدة أساسية"} يتجاوز المتاح ${info.available} ${product.base_unit_name || "وحدة أساسية"}.`;
 }
 function validateStock(): boolean {
+  const invalidUnitLine = invoiceData.value.products.find(
+    (item) =>
+      item.product_id &&
+      (!selectedUnit(item) ||
+        !Number.isFinite(Number(item.unit_factor)) ||
+        Number(item.unit_factor) <= 0),
+  );
+  if (invalidUnitLine) {
+    notify("اختر وحدة صالحة لكل نوع قبل الحفظ.", "error");
+    return false;
+  }
+  const packageLine = invoiceData.value.products.find(
+    (item) => packageExceeds(item) !== null,
+  );
+  if (packageLine) {
+    notify(
+      packageExceeds(packageLine)?.message ||
+        "العبوات المغلقة المتاحة لا تكفي للبيع.",
+      "error",
+    );
+    return false;
+  }
   if (
     invoiceData.value.products.some(
       (item) =>
@@ -1504,7 +1773,9 @@ function applyCurrentPrice(form: InvoiceProductLine): void {
 function changeQty(form: InvoiceProductLine, delta: number): void {
   const next = Number(form.product_quantity || 0) + delta;
   form.product_quantity = Math.max(0, Number.isFinite(next) ? next : 0);
-  form.base_quantity = form.product_quantity;
+  const f = Number(form.unit_factor);
+  if (!Number.isFinite(f) || f <= 0) return;
+  form.base_quantity = round4(form.product_quantity * f);
   qtyDrafts.delete(form);
 }
 function stepOf(form: InvoiceProductLine): number {
@@ -1524,7 +1795,7 @@ function collapseLine(form: InvoiceProductLine): void {
           line !== form &&
           line.product_id === form.product_id &&
           line.unit_id === form.unit_id &&
-          Number(line.unit_factor || 1) === Number(form.unit_factor || 1) &&
+          Number(line.unit_factor) === Number(form.unit_factor) &&
           Number(line.product_price) === Number(form.product_price) &&
           Number(line.product_cost_price ?? 0) ===
             Number(form.product_cost_price ?? 0) &&
@@ -1536,21 +1807,30 @@ function collapseLine(form: InvoiceProductLine): void {
     Number(form.product_quantity || 0) +
     Number(duplicateLine?.product_quantity || 0);
 
-  let need = round4(mergedQuantity);
+  const formFactor = Number(form.unit_factor);
+  if (!Number.isFinite(formFactor) || formFactor <= 0) {
+    notify("معامل وحدة السطر غير صالح. أعد اختيار الوحدة.", "error");
+    return;
+  }
+  let needBase = round4(mergedQuantity * formFactor);
   for (const line of invoiceData.value.products) {
     if (
       line === form ||
       line === duplicateLine ||
-      line.product_id !== form.product_id ||
-      line.unit_id !== form.unit_id
+      line.product_id !== form.product_id
     )
       continue;
-    need = round4(need + Number(line.product_quantity || 0));
+    const lf = Number(line.unit_factor);
+    if (!Number.isFinite(lf) || lf <= 0) {
+      notify("معامل وحدة أحد الأسطر غير صالح. أعد اختيار الوحدة.", "error");
+      return;
+    }
+    needBase = round4(needBase + Number(line.product_quantity || 0) * lf);
   }
-  const allowed = availableOf(form.product_id ?? "", form.unit_id ?? "");
-  if (need - allowed > 1e-9) {
+  const allowedBase = availableBaseOf(form.product_id ?? "");
+  if (needBase - allowedBase > 1e-9) {
     notify(
-      `إجمالي المطلوب (${need}) يتجاوز المتاح بالمخزون (${allowed}) لمنتج ${form.product_name}.`,
+      `إجمالي المطلوب يتجاوز المتاح بالمخزون لمنتج ${form.product_name}.`,
       "error",
     );
     return;
@@ -1559,7 +1839,7 @@ function collapseLine(form: InvoiceProductLine): void {
   let lineToCollapse = form;
   if (duplicateLine) {
     duplicateLine.product_quantity = mergedQuantity;
-    duplicateLine.base_quantity = mergedQuantity;
+    duplicateLine.base_quantity = round4(mergedQuantity * formFactor);
     expandedLines.delete(duplicateLine);
     lineToCollapse = duplicateLine;
     const duplicateIndex = invoiceData.value.products.indexOf(form);
@@ -1656,13 +1936,17 @@ function updateProdsPrices(preserveHistoricalCosts = false): void {
         if (!unit) return;
         item.unit_id = unit.id;
         item.unit_name = unit.name;
-        item.unit_factor = 1;
+        const uf = Number(unit.factor);
+        if (!Number.isFinite(uf) || uf <= 0) return;
+        item.unit_factor = uf;
+        item.stock_kind = unit.stock_kind;
+        item.allows_fractional = unit.allows_fractional === true;
         item.product_price = unitSellingPrice(prod, unit) ?? 0;
-        item.base_quantity = Number(item.product_quantity || 0);
+        item.base_quantity = round4(Number(item.product_quantity || 0) * uf);
       }
       // Never rewrite historical line costs of a persisted invoice (§1.2).
       if (!preserveHistoricalCosts) {
-        item.product_cost_price = Number(unit?.average_cost ?? 0);
+        item.product_cost_price = Number(prod.cost_price ?? 0);
       }
       item.product_name = prod.name;
     }
@@ -1684,11 +1968,18 @@ watch(
         Number(line.product_price) === Number(oldUnit.selling_price)
       )
         line.product_price = Number(unit.selling_price ?? 0);
-      line.product_cost_price = Number(unit.average_cost ?? 0);
+      line.product_cost_price = Number(product.cost_price ?? 0);
       line.product_name = product.name;
       line.unit_name = unit.name;
-      line.unit_factor = 1;
-      line.base_quantity = Number(line.product_quantity || 0);
+      const uf = Number(unit.factor);
+      if (!Number.isFinite(uf) || uf <= 0) continue;
+      line.unit_factor = uf;
+      line.stock_kind = unit.stock_kind;
+      line.allows_fractional = unit.allows_fractional === true;
+      line.base_quantity = round4(Number(line.product_quantity || 0) * uf);
+      line.family_id = product.family_id ?? null;
+      line.family_name = product.family_name ?? null;
+      line.variant_name = product.variant_name ?? product.name;
     }
   },
 );
@@ -1722,13 +2013,14 @@ onMounted(async () => {
       (src as { inventory_applied?: boolean }).inventory_applied === true
     ) {
       for (const line of src.products ?? []) {
-        if (!line.product_id || !line.unit_id) continue;
-        const key = stockKey(line.product_id, line.unit_id);
+        if (!line.product_id) continue;
+        const f = Number(line.unit_factor);
+        if (!Number.isFinite(f) || f <= 0) continue;
         originalReserved.set(
-          key,
+          line.product_id,
           round4(
-            (originalReserved.get(key) ?? 0) +
-              Number(line.product_quantity || 0),
+            (originalReserved.get(line.product_id) ?? 0) +
+              Number(line.product_quantity || 0) * f,
           ),
         );
       }

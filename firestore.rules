@@ -17,86 +17,6 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/staff_users/$(request.auth.uid)).data.email == request.auth.token.email;
     }
 
-    // Invoice invariants enforceable in Rules (client transaction code owns
-    // the full accounting orchestration — multi-document atomicity such as
-    // stock/cash/debt consistency and paid<=payable / per-line factor checks
-    // CANNOT be proven by Rules alone (no list iteration/aggregation) and must
-    // eventually move to a trusted server/Cloud Function layer; Rules here
-    // only reject obviously invalid shapes while keeping single-admin compat).
-    function validInvoice() {
-      return request.resource.data.customer_name is string
-        && request.resource.data.products is list
-        && request.resource.data.products.size() > 0
-        && request.resource.data.products.size() <= 200
-        && (!('paid_amount' in request.resource.data) || request.resource.data.paid_amount == null || (request.resource.data.paid_amount is number && request.resource.data.paid_amount >= 0))
-        && (!('remaining' in request.resource.data) || request.resource.data.remaining == null || (request.resource.data.remaining is number && request.resource.data.remaining >= 0))
-        && (!('debt' in request.resource.data) || request.resource.data.debt == null || (request.resource.data.debt is number && request.resource.data.debt >= 0) || (request.resource.data.debt is string))
-        && (!('discount' in request.resource.data) || request.resource.data.discount == null || (request.resource.data.discount is number && request.resource.data.discount >= 0) || (request.resource.data.discount is string));
-    }
-
-    function hasFreshInventoryMovement(productId) {
-      let purchaseInvoiceId = request.resource.data.get('last_purchase_invoice_id', null);
-      let purchasePath = /databases/$(database)/documents/purchase_invoices/$(purchaseInvoiceId);
-      let movementId = request.resource.data.get('last_inventory_transaction_id', null);
-      let movementIds = request.resource.data.get('last_inventory_transaction_ids', []);
-      let movementPath = /databases/$(database)/documents/inventory_transactions/$(movementId);
-      return (purchaseInvoiceId is string
-          && !exists(purchasePath)
-          && existsAfter(purchasePath)
-          && getAfter(purchasePath).data.product_ids.hasAny([productId]))
-        || (movementId is string && movementIds is list
-        && movementIds.hasAny([movementId])
-        && !exists(movementPath)
-        && existsAfter(movementPath)
-        && getAfter(movementPath).data.product_id == productId
-        && getAfter(movementPath).data.quantity is number
-        && getAfter(movementPath).data.quantity > 0
-        && getAfter(movementPath).data.direction in ['in', 'out']);
-    }
-
-    function hasFreshCostMovement(productId) {
-      let purchaseInvoiceId = request.resource.data.get('last_purchase_invoice_id', null);
-      let purchasePath = /databases/$(database)/documents/purchase_invoices/$(purchaseInvoiceId);
-      let movementId = request.resource.data.get('last_inventory_transaction_id', null);
-      let movementPath = /databases/$(database)/documents/inventory_transactions/$(movementId);
-      let movementIds = request.resource.data.get('last_inventory_transaction_ids', []);
-      return (purchaseInvoiceId is string
-          && !exists(purchasePath)
-          && existsAfter(purchasePath)
-          && getAfter(purchasePath).data.product_ids.hasAny([productId]))
-        || (movementId is string && movementIds is list
-        && movementIds.hasAny([movementId])
-        && !exists(movementPath)
-        && existsAfter(movementPath)
-        && getAfter(movementPath).data.product_id == productId
-        && getAfter(movementPath).data.direction == 'in'
-        && getAfter(movementPath).data.unit_cost is number);
-    }
-
-    function hasFreshPurchaseMovement(productId, invoiceId) {
-      let invoicePath = /databases/$(database)/documents/purchase_invoices/$(invoiceId);
-      return invoiceId is string
-        && !exists(invoicePath)
-        && existsAfter(invoicePath)
-        && getAfter(invoicePath).data.product_ids.hasAny([productId]);
-    }
-
-    function hasFreshCostAdjustment(productId) {
-      let adjustmentId = request.resource.data.get('last_cost_adjustment_id', null);
-      let adjustmentPath = /databases/$(database)/documents/inventory_cost_adjustments/$(adjustmentId);
-      return adjustmentId is string
-        && !exists(adjustmentPath)
-        && existsAfter(adjustmentPath)
-        && getAfter(adjustmentPath).data.product_id == productId
-        && getAfter(adjustmentPath).data.new_cost == request.resource.data.cost_price;
-    }
-
-    function hasProductMovementLink(productId, movementId) {
-      let productPath = /databases/$(database)/documents/products/$(productId);
-      return existsAfter(productPath)
-        && getAfter(productPath).data.get('last_inventory_transaction_ids', []).hasAny([movementId]);
-    }
-
     function validNewPurchaseInvoice() {
       let supplierId = request.resource.data.get('supplier_id', null);
       let supplierPath = /databases/$(database)/documents/suppliers/$(supplierId);
@@ -162,31 +82,19 @@ service cloud.firestore {
 
     match /invoices/{id} {
       allow read: if isStaff();
-      allow create: if isStaff() && validInvoice();
-      allow update: if isStaff() && validInvoice();
-      // deletes admin-only; bulk deleteOldInvoices must run server-side
-      allow delete: if isAdmin();
+      allow create, delete: if false;
+      allow update: if isStaff()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'customer_id', 'customer_phone', 'customer_phone_digits', 'customer_name_norm'
+        ]);
+    }
+    match /product_families/{id} {
+      allow read: if isStaff();
+      allow write: if false;
     }
     match /products/{id} {
       allow read: if isStaff();
-      allow create: if isStaff()
-        && request.resource.data.get('low_stock_threshold', 5) is number
-        && request.resource.data.get('low_stock_threshold', 5) >= 0
-        && request.resource.data.get('units', []) is list
-        && request.resource.data.get('units', []).size() > 0;
-      allow update: if isAdmin() || (isStaff()
-        && (request.resource.data.get('stock_quantity', null) == resource.data.get('stock_quantity', null)
-          || hasFreshInventoryMovement(id))
-        && (request.resource.data.get('cost_price', null) == resource.data.get('cost_price', null)
-          || hasFreshCostMovement(id)
-          || hasFreshCostAdjustment(id))
-        && (!('base_unit_id' in resource.data)
-          || request.resource.data.get('base_unit_id', null) == resource.data.get('base_unit_id', null))
-        && request.resource.data.get('units', []) is list
-        && request.resource.data.get('units', []).size() > 0
-        && request.resource.data.get('low_stock_threshold', 5) is number
-        && request.resource.data.get('low_stock_threshold', 5) >= 0);
-      allow delete: if false;
+      allow write: if false;
     }
     match /customers/{id} {
       allow read: if isStaff() || isCashier();
@@ -221,30 +129,15 @@ service cloud.firestore {
     }
     match /inventory_transactions/{id} {
       allow read: if isStaff();
-      allow create: if isAdmin() || (isStaff()
-        && request.resource.data.product_id is string
-        && request.resource.data.quantity is number
-        && request.resource.data.quantity > 0
-        && request.resource.data.direction in ['in', 'out']
-        && ((request.resource.data.get('purchase_invoice_id', null) is string
-          && hasFreshPurchaseMovement(request.resource.data.product_id, request.resource.data.purchase_invoice_id))
-          || hasProductMovementLink(request.resource.data.product_id, id)));
-      allow update, delete: if isAdmin();
+      allow write: if false;
     }
     match /inventory_cost_adjustments/{id} {
       allow read: if isStaff();
-      allow create: if isStaff()
-        && request.resource.data.product_id is string
-        && request.resource.data.new_cost is number
-        && existsAfter(/databases/$(database)/documents/products/$(request.resource.data.product_id))
-        && getAfter(/databases/$(database)/documents/products/$(request.resource.data.product_id)).data.last_cost_adjustment_id == id
-        && getAfter(/databases/$(database)/documents/products/$(request.resource.data.product_id)).data.cost_price == request.resource.data.new_cost;
-      allow update, delete: if isAdmin();
+      allow write: if false;
     }
     match /invoice_returns/{id} {
       allow read: if isStaff();
-      allow create: if isStaff();
-      allow update, delete: if isAdmin();
+      allow write: if false;
     }
     match /customer_credits/{id} {
       allow read, create, update: if isAdmin();
@@ -255,8 +148,8 @@ service cloud.firestore {
       allow update, delete: if false;
     }
     match /supplier_returns/{id} {
-      allow read, create: if isAdmin();
-      allow update, delete: if false;
+      allow read: if isAdmin();
+      allow write: if false;
     }
     match /customer_loans/{id} {
       allow read: if isStaff();
@@ -300,11 +193,11 @@ service cloud.firestore {
     }
     match /purchase_invoices/{id} {
       allow read: if isStaff();
-      allow create: if isStaff() && validNewPurchaseInvoice();
-      allow update: if isAdmin() || (isStaff() && (validSupplierPaymentUpdate(id)
+      allow create: if false;
+      allow update: if isStaff() && (validSupplierPaymentUpdate(id)
         || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pinned'])
-          && request.resource.data.get('pinned', false) is bool));
-      allow delete: if isAdmin();
+          && request.resource.data.get('pinned', false) is bool);
+      allow delete: if false;
     }
     match /supplier_payments/{id} {
       allow read: if isStaff();

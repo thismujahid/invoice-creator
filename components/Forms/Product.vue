@@ -1,857 +1,205 @@
 <template>
-  <span @click="openDialog" class="inline-flex">
-    <slot></slot>
-  </span>
-  <UiAppDialog
-    v-model:open="open"
-    :title="productForm?.id ? 'تعديل المنتج' : 'إضافة منتج جديد'"
-    width="sm:max-w-[662px]"
-  >
-    <div class="space-y-3">
-      <UFormField label="اسم المنتج" required :error="errors.name">
-        <UInput
-          v-model="productForm.name"
-          placeholder="اسم المنتج"
-          size="lg"
-          class="w-full"
-          :disabled="saving"
-        />
+  <span class="inline-flex" @click="open = true"><slot /></span>
+  <UiAppDialog v-model:open="open" :title="edit ? 'تعديل المنتج' : 'إضافة منتج'" width="sm:max-w-[760px]">
+    <div class="space-y-4">
+      <UFormField label="اسم المنتج" required :error="nameError || undefined">
+        <UInput v-model="name" placeholder="مثال: شاي" size="lg" class="w-full" :disabled="saving" />
       </UFormField>
-      <!-- Prices live on units now (base row below carries the base
-        sale/purchase prices); no top-level price fields. -->
-      <div class="space-y-2 rounded-xl border border-gray-200 p-3">
-        <div class="flex items-center justify-between gap-2">
-          <div>
-            <h3 class="text-sm font-bold">الوحدات وأسعارها</h3>
+      <UFormField label="طريقة المخزون" required :error="modeError || undefined">
+        <USelect :model-value="inventoryMode" :items="inventoryModeItems" value-key="value" label-key="label" size="lg" class="w-full" :disabled="saving || hasRecordedActivity" @update:model-value="changeInventoryMode" />
+        <p class="mt-1 text-xs text-gray-500">{{ inventoryMode === 'independent' ? 'كل حجم عبوة صنف مستقل برصيده وتكلفته وأسعاره.' : 'الوحدات بدائل لنفس المخزون ويمكن فتح العبوات عند البيع.' }}</p>
+        <p v-if="hasRecordedActivity" class="mt-1 text-xs text-amber-700">طريقة المخزون ثابتة بعد تسجيل رصيد أو حركة.</p>
+      </UFormField>
+      <USwitch :model-value="usesVariants" @update:model-value="changeVariantMode" label="استخدام الأنواع" :disabled="saving || typeCount > 1" />
+      <p v-if="typeCount > 1" class="text-xs text-gray-500">هذا المنتج يحتوي على عدة أنواع مستقلة.</p>
+
+      <template v-if="inventoryMode === 'convertible'">
+        <template v-if="usesVariants">
+          <div class="flex items-center justify-between gap-2">
+            <h3 class="font-semibold">الأنواع</h3>
+            <UButton icon="i-lucide-plus" :disabled="saving || variants.length >= 40" @click="editVariant()">إضافة نوع</UButton>
           </div>
-          <UButton
-            size="sm"
-            color="neutral"
-            variant="soft"
-            icon="i-lucide-plus"
-            class="shrink-0 whitespace-nowrap"
-            :disabled="saving"
-            @click="openUnitModal('new')"
-            >إضافة وحدة</UButton
-          >
-        </div>
-        <p
-          v-if="
-            errors.base_sale || errors.base_purchase || errors.base_unit_name
-          "
-          class="text-xs text-red-600"
-        >
-          {{
-            errors.base_sale || errors.base_purchase || errors.base_unit_name
-          }}
-        </p>
-        <!-- Unit lines: compact text display (responsive) + edit/delete only -->
-        <div class="space-y-2">
-          <div
-            class="flex items-center justify-between gap-2 rounded-lg border border-gray-100 p-2"
-          >
-            <div class="min-w-0 text-xs">
-              <span class="font-bold">
-                {{ productForm.base_unit_name?.trim() || "وحدة" }}
-              </span>
-              <span class="mt-0.5 block text-gray-500">
-                <template v-if="isEditMode"
-                  >التكلفة {{ avgBaseText }} · </template
-                >سعر البيع
-                {{
-                  baseSalePrice == null
-                    ? "—"
-                    : `${formatePrice(baseSalePrice)} ج`
-                }}<span v-if="isEditMode && baseSalePrice != null">
-                  · هامش الربح {{ baseMarginText }}</span
-                >
-              </span>
-              <span class="mt-0.5 block text-gray-500">
-                مؤشر النقص:
-                {{
-                  baseThreshold == null
-                    ? "—"
-                    : `${baseThreshold} ${productForm.base_unit_name?.trim() || "وحدة"}`
-                }}
-              </span>
-            </div>
-            <div class="flex shrink-0 gap-1">
-              <UButton
-                v-if="baseHistory"
-                size="xs"
-                color="info"
-                variant="soft"
-                icon="i-lucide-history"
-                aria-label="تطور سعر الشراء"
-                :disabled="saving"
-                @click="openHistory(productForm.base_unit_name, baseHistory)"
-                >السعر</UButton
-              >
-              <UButton
-                size="xs"
-                color="neutral"
-                variant="soft"
-                icon="i-lucide-pencil"
-                aria-label="تعديل الوحدة"
-                :disabled="saving"
-                @click="openUnitModal('base')"
-                >تعديل</UButton
-              >
-              <UButton
-                v-if="additionalUnits.length > 0"
-                size="xs"
-                color="error"
-                variant="ghost"
-                icon="i-lucide-trash-2"
-                aria-label="حذف الوحدة"
-                :disabled="saving"
-                @click="removeUnit('base')"
-              />
-            </div>
-          </div>
-          <div
-            v-for="(unit, index) in additionalUnits"
-            :key="unit.id"
-            class="flex items-center justify-between gap-2 rounded-lg border border-gray-100 p-2"
-          >
-            <div class="min-w-0 text-xs">
-              <span class="font-bold"
-                >{{ unit.name?.trim() || "وحدة جديدة" }}</span
-              >
-              <span class="text-gray-400">
-                · {{ unitUsageLabel(unit.usage) }}
-              </span>
-              <span class="mt-0.5 block text-gray-500">
-                <template v-if="isEditMode"
-                  >التكلفة {{ unitAvgText(unit) }} · </template
-                >سعر البيع
-                {{
-                  !unit.can_sell
-                    ? "لا تباع"
-                    : unit.selling_price == null
-                      ? "—"
-                      : `${formatePrice(unit.selling_price)} ج`
-                }}<span
-                  v-if="
-                    isEditMode && unit.can_sell && unit.selling_price != null
-                  "
-                >
-                  · هامش الربح {{ unitMarginText(unit) }}</span
-                >
-              </span>
-              <span class="mt-0.5 block text-gray-500">
-                مؤشر النقص:
-                {{
-                  unit.low_stock_threshold == null
-                    ? "—"
-                    : `${unit.low_stock_threshold} ${unit.name?.trim() || "وحدة"}`
-                }}
-              </span>
-            </div>
-            <div class="flex shrink-0 gap-1">
-              <UButton
-                v-if="unit.purchase_price_history"
-                size="xs"
-                color="info"
-                variant="soft"
-                icon="i-lucide-history"
-                aria-label="تطور سعر الشراء"
-                :disabled="saving"
-                @click="openHistory(unit.name, unit.purchase_price_history)"
-                >السعر</UButton
-              >
-              <UButton
-                size="xs"
-                color="neutral"
-                variant="soft"
-                icon="i-lucide-pencil"
-                aria-label="تعديل الوحدة"
-                :disabled="saving"
-                @click="openUnitModal(index)"
-                >تعديل</UButton
-              >
-              <UButton
-                v-if="additionalUnits.length > 0"
-                size="xs"
-                color="error"
-                variant="ghost"
-                icon="i-lucide-trash-2"
-                aria-label="حذف الوحدة"
-                :disabled="saving"
-                @click="removeUnit(index)"
-              />
-            </div>
-          </div>
-        </div>
-        <p v-if="errors.units" class="text-xs text-red-600">
-          {{ errors.units }}
-        </p>
-      </div>
-      <!-- Unit-level shortage thresholds live on each unit row (edited
-        inside the unit dialog below); there is no product-level threshold. -->
-      <!-- Unit editor modal (slideover on mobile): add new or edit one row -->
-      <UiAppDialog
-        v-model:open="unitModalOpen"
-        :title="unitModalTitle"
-        :z-index="70"
-      >
-        <div class="space-y-3">
-          <UFormField label="اسم الوحدة" required>
-            <UInput
-              v-model="unitDraft.name"
-              placeholder="مثال: علبة، مكعب، كيس"
-              size="lg"
-              class="w-full"
-              :disabled="saving"
-            />
-          </UFormField>
-          <UFormField
-            label="مؤشر نقص المخزون"
-            hint="بهذه الوحدة — اتركه فارغًا لتعطيل التنبيه لها"
-          >
-            <UInputNumber
-              v-model="unitDraft.low_stock_threshold"
-              :min="0"
-              :step="1"
-              size="lg"
-              class="w-full"
-              dir="ltr"
-              placeholder="بدون تنبيه"
-            />
-          </UFormField>
-          <UFormField label="الاستخدام">
-            <USelect
-              v-model="unitDraft.usage"
-              :items="unitUsageItems"
-              value-key="value"
-              label-key="label"
-              size="lg"
-              class="w-full"
-              @update:model-value="(usage) => setUnitUsage(unitDraft, usage)"
-            />
-          </UFormField>
-          <UCheckbox
-            v-model="unitDraft.allows_fractional"
-            label="تقبل الكسور"
-          />
-          <UFormField v-if="unitDraft.can_sell" label="سعر البيع" required>
-            <UInputNumber
-              v-model="unitDraft.selling_price"
-              :min="0"
-              :step="0.01"
-              size="lg"
-              class="w-full"
-              dir="ltr"
-              placeholder="0"
-            />
-          </UFormField>
-          <UFormField v-if="!isEditMode" label="سعر الشراء">
-            <UInputNumber
-              v-model="unitDraft.purchase_price"
-              :min="0"
-              :step="0.01"
-              size="lg"
-              class="w-full"
-              dir="ltr"
-              placeholder="0"
-            />
-          </UFormField>
-          <UFormField v-else label="سعر الشراء (مرجعي، يُدار بالشراء)">
-            <UInput
-              :model-value="
-                unitDraft.purchase_price == null
-                  ? '—'
-                  : formatePrice(unitDraft.purchase_price)
-              "
-              readonly
-              size="lg"
-              class="w-full"
-              dir="ltr"
-            />
-          </UFormField>
-          <p v-if="unitModalError" class="text-xs text-red-600">
-            {{ unitModalError }}
-          </p>
-        </div>
-        <template #footer>
-          <div class="flex w-full gap-2">
-            <UButton
-              color="success"
-              icon="i-lucide-check"
-              class="min-h-11 flex-1"
-              @click="confirmUnitModal"
-              >تم</UButton
-            >
-            <UButton
-              color="neutral"
-              variant="soft"
-              class="min-h-11 flex-1"
-              @click="unitModalOpen = false"
-              >إلغاء</UButton
-            >
+          <p class="text-xs text-gray-500">تُحفظ جميع الأنواع عند الضغط على «حفظ المنتج».</p>
+          <UEmpty v-if="!variants.length" title="أضف أول نوع" description="حدّد اسمه ووحداته وأسعاره وتنبيهاته." />
+          <div v-for="(variant, index) in variants" :key="variant.id || index" class="flex items-center justify-between gap-3 rounded-xl border border-gray-200 p-3">
+            <div><h4 class="font-semibold">{{ variant.variant_name }}</h4><p class="text-xs text-gray-500">{{ activeUnitNames(variant) }}</p></div>
+            <div class="flex flex-wrap gap-2"><UButton variant="soft" color="neutral" icon="i-lucide-pencil" :disabled="saving" @click="editVariant(index)">تعديل النوع</UButton><UButton v-if="!variant.id" variant="ghost" color="error" :disabled="saving" @click="variants.splice(index, 1)">إزالة</UButton></div>
           </div>
         </template>
-      </UiAppDialog>
-      <ProductsPriceHistoryDialog
-        v-model:open="historyOpen"
-        :unit-name="historyUnitName"
-        :history="historyLog"
-      />
-      <UAlert
-        v-if="submitError"
-        color="error"
-        variant="soft"
-        :title="submitError"
-      />
+        <FormsProductVariant v-else :key="editorKey" ref="defaultEditor" embedded :edit="variants[0]" :initial-family-name="name" inventory-mode="convertible" />
+      </template>
+
+      <template v-else>
+        <div class="flex items-center justify-between gap-2">
+          <div><h3 class="font-semibold">{{ usesVariants ? 'الأنواع وأحجام العبوات' : 'أحجام العبوات' }}</h3><p class="text-xs text-gray-500">250 جرام (ربع) و125 جرام (ثمن) و100 جرام أرصدة مستقلة ولا يتحول أحدها إلى الآخر.</p></div>
+          <UButton v-if="usesVariants" class="shrink-0 whitespace-nowrap" icon="i-lucide-plus" :disabled="saving || typeDrafts.length >= 40" @click="editType()">إضافة نوع</UButton>
+          <UButton v-else icon="i-lucide-plus" :disabled="saving || variants.length >= 40" @click="editPack('default')">إضافة حجم</UButton>
+        </div>
+        <UEmpty v-if="usesVariants && !typeDrafts.length" title="أضف أول نوع" description="بعد تسمية النوع أضف أحجام العبوات الخاصة به." />
+        <section v-for="type in visibleTypes" :key="type.key" class="space-y-3 rounded-xl border border-gray-200 p-3">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div><h4 v-if="usesVariants" class="font-semibold">{{ type.name }}</h4><p v-if="usesVariants" class="text-xs text-gray-500">{{ type.products.length === 1 ? 'حجم عبوة واحد' : `${type.products.length} أحجام عبوات` }}</p></div>
+            <div class="flex flex-wrap gap-2">
+              <UButton v-if="usesVariants" size="sm" icon="i-lucide-plus" @click="editPack(type.key)">إضافة حجم</UButton>
+              <UButton v-if="usesVariants" size="sm" color="neutral" variant="soft" icon="i-lucide-pencil" @click="editType(type.key)">تعديل الاسم</UButton>
+              <UButton v-if="usesVariants && type.products.every(product => !product.id)" size="sm" color="error" variant="ghost" @click="removeType(type.key)">إزالة</UButton>
+            </div>
+          </div>
+          <UEmpty v-if="!type.products.length" title="لا توجد أحجام" description="أضف حجم عبوة واحدًا على الأقل لهذا النوع." />
+          <div v-for="product in type.products" :key="product.id || `${type.key}-${product.pack_size_name}`" class="flex items-center justify-between gap-3 rounded-lg border border-gray-100 p-3">
+            <div><h5 class="font-semibold">{{ product.pack_size_name }}</h5><p class="text-xs text-gray-500">{{ activeUnitNames(product) }}</p></div>
+            <div class="flex flex-wrap gap-2"><UButton size="sm" color="neutral" variant="soft" icon="i-lucide-pencil" @click="editPack(type.key, variants.indexOf(product))">تعديل الحجم</UButton><UButton v-if="!product.id" size="sm" color="error" variant="ghost" @click="variants.splice(variants.indexOf(product), 1)">إزالة</UButton></div>
+          </div>
+        </section>
+        <p v-if="variants.length" class="text-xs text-gray-500">الأنواع والأحجام مسودة حتى تضغط «حفظ المنتج».</p>
+      </template>
+      <UAlert v-if="error" color="error" :title="error" />
     </div>
-    <template #footer>
-      <div class="flex w-full gap-2">
-        <UButton
-          :loading="saving"
-          color="success"
-          icon="i-lucide-save"
-          class="min-h-11 flex-1"
-          @click="saveProduct"
-          >حفظ</UButton
-        >
-        <UButton
-          :disabled="saving"
-          color="neutral"
-          variant="soft"
-          class="min-h-11 flex-1"
-          @click="closeDialog"
-          >إلغاء</UButton
-        >
-      </div>
-    </template>
+    <template #footer><div class="flex w-full gap-2"><UButton class="min-h-11 flex-1" :loading="saving" :disabled="variantOpen || packOpen || typeOpen" icon="i-lucide-save" @click="save">حفظ المنتج</UButton><UButton class="min-h-11 flex-1" color="neutral" variant="soft" :disabled="saving" @click="open = false">إلغاء</UButton></div></template>
+  </UiAppDialog>
+
+  <FormsProductVariant v-if="variantOpen" v-model="variantOpen" :edit="variantDraft" :initial-family-name="name" :taken-names="variants.filter((_, index) => index !== variantIndex).map(variant => variant.variant_name || '')" inventory-mode="convertible" @done="acceptVariant" />
+  <FormsProductVariant v-if="packOpen" v-model="packOpen" :edit="packDraft" :initial-family-name="name" :taken-names="packNamesFor(packTypeKey, packIndex)" editor-kind="pack_size" inventory-mode="independent" @done="acceptPack" />
+  <UiAppDialog v-model:open="typeOpen" :title="typeEditingKey ? 'تعديل النوع' : 'إضافة نوع'" :z-index="60">
+    <UFormField label="اسم النوع" required :error="typeError || undefined"><UInput v-model="typeName" placeholder="مثال: أخضر" size="lg" class="w-full" /></UFormField>
+    <template #footer><div class="flex w-full gap-2"><UButton class="flex-1" color="success" @click="acceptType">حفظ النوع</UButton><UButton class="flex-1" color="neutral" variant="soft" @click="typeOpen = false">إلغاء</UButton></div></template>
   </UiAppDialog>
 </template>
 
 <script setup lang="ts">
-import type { Product, ProductUnit } from "~/types";
+import type { InventoryMode, Product } from "~/types";
+import { cloneVariantSettings, groupProductsByVariant, productFamilyKey } from "~/utils/productVariants";
 
-// P4: Vuetify dialog/form → UiAppDialog + inline validation.
-// FLAG [B10-FIXED earlier]: duplicate-name guard kept, store ref unified.
-const props = defineProps<{
-  edit?: Product | null;
-  refresher: () => Promise<unknown> | unknown;
-  modelValue?: boolean;
-}>();
-const emit = defineEmits(["done", "close", "update:modelValue"]);
-const productsStore = useProductsStore();
-const auth = useAuth();
-const { notify } = useAppToast();
-const { formatePrice } = useHelpers();
-type UnitUsage = "purchase" | "sell" | "both";
-type EditableProductUnit = ProductUnit & { usage: UnitUsage };
-function emptyForm(): Product {
-  return {
-    name: "",
-    // Mirrors of the base unit row (kept for rules + legacy readers).
-    price: null,
-    cost_price: null,
-    base_unit_name: "وحدة",
-    base_unit_id: "base",
-  };
-}
-const productForm = ref<Product>(emptyForm());
-// Base unit row prices (the only required prices in the form).
-const baseSalePrice = ref<number | null>(null);
-const basePurchasePrice = ref<number | null>(null);
-// Shortage threshold of the BASE unit, in base-unit terms (null = no alert).
-const baseThreshold = ref<number | null>(null);
-const baseAllowsFractional = ref(false);
-const baseUsage = ref<UnitUsage>("both");
-// Purchase-price history log of the BASE unit (reference only, never edited).
-const baseHistory = ref<string | null>(null);
-const baseUnitSnapshot = ref<ProductUnit | null>(null);
-const historyOpen = ref(false);
-const historyUnitName = ref("");
-const historyLog = ref<string | null>(null);
-function openHistory(unitName: unknown, history: unknown): void {
-  historyUnitName.value = String(unitName ?? "").trim() || "الوحدة";
-  historyLog.value = typeof history === "string" ? history : null;
-  historyOpen.value = true;
-}
-const additionalUnits = ref<EditableProductUnit[]>([]);
-const unitUsageItems = [
-  { label: "للشراء فقط", value: "purchase" },
-  { label: "للبيع فقط", value: "sell" },
-  { label: "للشراء والبيع", value: "both" },
-];
-const saving = ref(false);
-const submitError = ref("");
-const errors = ref<{
-  name?: string;
-  base_sale?: string;
-  base_purchase?: string;
-  base_unit_name?: string;
-  units?: string;
-}>({});
-
+const props = defineProps<{ edit?: Product | null; refresher: () => Promise<unknown> | unknown; modelValue?: boolean }>();
+const emit = defineEmits<{ done: [product?: Product]; close: []; "update:modelValue": [value: boolean] }>();
+const store = useProductsStore();
 const internalOpen = ref(false);
-const open = computed({
-  get: () => props.modelValue ?? internalOpen.value,
-  set: (v: boolean) => {
-    internalOpen.value = v;
-    emit("update:modelValue", v);
-    if (!v) emit("close");
-  },
+const saving = ref(false);
+const name = ref("");
+const inventoryMode = ref<InventoryMode>("convertible");
+const usesVariants = ref(false);
+const variants = ref<Product[]>([]);
+const typeDrafts = ref<Array<{ key: string; name: string }>>([]);
+const nameError = ref("");
+const modeError = ref("");
+const error = ref("");
+const variantOpen = ref(false);
+const variantDraft = ref<Product>();
+const variantIndex = ref<number | null>(null);
+const packOpen = ref(false);
+const packDraft = ref<Product>();
+const packIndex = ref<number | null>(null);
+const packTypeKey = ref("default");
+const typeOpen = ref(false);
+const typeName = ref("");
+const typeError = ref("");
+const typeEditingKey = ref<string | null>(null);
+const editorKey = ref(0);
+const defaultEditor = ref<{ getDraft: () => Product | null } | null>(null);
+const inventoryModeItems = [{ label: "سايب قابل للتحويل", value: "convertible" }, { label: "عبوات مستقلة", value: "independent" }];
+const open = computed({ get: () => props.modelValue ?? internalOpen.value, set: (value: boolean) => { if (saving.value) return; internalOpen.value = value; emit("update:modelValue", value); if (!value) emit("close"); } });
+function copy(product: Product): Product { return JSON.parse(JSON.stringify(product)) as Product; }
+function newTypeKey(): string { return typeof crypto !== "undefined" && "randomUUID" in crypto ? `type_${crypto.randomUUID()}` : `type_${Date.now()}_${Math.random().toString(36).slice(2)}`; }
+function activeUnitNames(product: Product): string { return product.units?.filter(unit => !unit.archived).map(unit => unit.name).join(" · ") || "لا توجد وحدات"; }
+const hasRecordedActivity = computed(() => variants.value.some(product => Math.abs(Number(product.stock_quantity || 0)) > 1e-9 || product.last_inventory_transaction_id || product.last_purchase_invoice_id || product.units?.some(unit => !!unit.purchase_price_history)));
+const typeCount = computed(() => inventoryMode.value === "independent" ? typeDrafts.value.length : variants.value.length);
+const visibleTypes = computed(() => {
+  if (!usesVariants.value) return [{ key: "default", name: "أساسي", products: variants.value.filter(product => (product.variant_key || "default") === "default") }];
+  const grouped = new Map(groupProductsByVariant(variants.value).map(group => [group.key, group.products]));
+  return typeDrafts.value.map(type => ({ ...type, products: grouped.get(type.key) || [] }));
 });
-// Edit mode = existing product id; creation allows entering initial costs.
-const isEditMode = computed(() => !!productForm.value?.id);
 
-function openDialog(): void {
-  submitError.value = "";
-  errors.value = {};
-  open.value = true;
-}
-function closeDialog(): void {
-  open.value = false;
-}
+watch(open, (value) => {
+  if (!value) return;
+  const existing = props.edit;
+  name.value = existing?.family_name || existing?.name || "";
+  variants.value = existing ? store.list.filter(product => productFamilyKey(product) === productFamilyKey(existing)).sort((a, b) => (a.variant_order ?? 0) - (b.variant_order ?? 0) || (a.pack_size_order ?? 0) - (b.pack_size_order ?? 0)).map(copy) : [];
+  inventoryMode.value = existing?.inventory_mode === "independent" ? "independent" : "convertible";
+  usesVariants.value = existing ? existing.uses_variants !== false : false;
+  typeDrafts.value = inventoryMode.value === "independent" && usesVariants.value ? groupProductsByVariant(variants.value).map(group => ({ key: group.key, name: group.name })) : [];
+  error.value = ""; nameError.value = ""; modeError.value = ""; editorKey.value++;
+}, { immediate: true });
 
-function newUnitId(): string {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : `unit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-function unitUsageLabel(usage: unknown): string {
-  if (usage === "sell") return "بيع";
-  if (usage === "purchase") return "شراء فقط";
-  return "شراء وبيع";
-}
-// Canonical display: average cost derived from base average (never stored per-unit).
-const avgBaseValue = computed(() => {
-  const raw = (baseUnitSnapshot.value?.average_cost ??
-    basePurchasePrice.value) as unknown;
-  if (raw === null || raw === undefined || raw === "") return null;
-  const v = Number(raw);
-  return Number.isFinite(v) ? v : null;
-});
-const avgBaseText = computed(() =>
-  avgBaseValue.value === null ? "—" : `${formatePrice(avgBaseValue.value)} ج`,
-);
-function unitAvgText(unit: ProductUnit): string {
-  const avg = unit.average_cost ?? unit.purchase_price;
-  return avg == null ? "—" : `${formatePrice(avg)} ج`;
-}
-function unitMarginText(unit: {
-  selling_price: unknown;
-  average_cost?: number | null;
-  purchase_price?: number | null;
-}): string {
-  const avg = unit.average_cost ?? unit.purchase_price;
-  if (
-    avg == null ||
-    unit.selling_price === null ||
-    unit.selling_price === undefined
-  )
-    return "—";
-  if (!(avg > 0)) return "—";
-  const rate = (Number(unit.selling_price) - avg) / avg;
-  return `${Math.round(rate * 10000) / 100}%`;
-}
-// Base unit margin (factor 1) for the base row's cost/price/margin line.
-const baseMarginText = computed(() =>
-  baseSalePrice.value == null
-    ? "—"
-    : unitMarginText({ selling_price: baseSalePrice.value, average_cost: avgBaseValue.value }),
-);
-// Unit editor modal: one draft edited in a focused dialog (mobile-friendly
-// slideover) instead of cramped inline grid inputs.
-type UnitDraft = EditableProductUnit & {
-  key: number | "base" | "new";
-  isBase: boolean;
-};
-const unitModalOpen = ref(false);
-const unitModalError = ref("");
-const unitDraft = ref<UnitDraft>({
-  key: "new",
-  isBase: false,
-  id: "",
-  name: "",
-  factor: 1,
-  selling_price: null,
-  purchase_price: null,
-  low_stock_threshold: null,
-  can_purchase: true,
-  can_sell: true,
-  allows_fractional: false,
-  usage: "both",
-});
-const unitModalTitle = computed(() =>
-  unitDraft.value.key === "new"
-    ? "إضافة وحدة جديدة"
-    : unitDraft.value.isBase
-      ? "تعديل الوحدة"
-      : "تعديل الوحدة",
-);
-function openUnitModal(target: number | "base" | "new"): void {
-  unitModalError.value = "";
-  if (target === "base") {
-    unitDraft.value = {
-      key: "base",
-      isBase: true,
-      id: productForm.value.base_unit_id || "base",
-      name: productForm.value.base_unit_name ?? "",
-      factor: 1,
-      selling_price: baseSalePrice.value,
-      purchase_price: basePurchasePrice.value,
-      low_stock_threshold: baseThreshold.value,
-      can_purchase: baseUsage.value !== "sell",
-      can_sell: baseUsage.value !== "purchase",
-      allows_fractional: baseAllowsFractional.value,
-      usage: baseUsage.value,
-    };
-  } else if (target === "new") {
-    unitDraft.value = {
-      key: "new",
-      isBase: false,
-      id: newUnitId(),
-      name: "",
-      factor: 1,
-      selling_price: null,
-      purchase_price: null,
-      low_stock_threshold: null,
-      can_purchase: true,
-      can_sell: true,
-      allows_fractional: false,
-      usage: "both",
-    };
-  } else {
-    const unit = additionalUnits.value[target];
-    if (!unit) return;
-    unitDraft.value = {
-      key: target,
-      isBase: false,
-      id: unit.id,
-      name: unit.name,
-      factor: unit.factor,
-      selling_price: unit.selling_price,
-      purchase_price: unit.purchase_price ?? null,
-      low_stock_threshold: unit.low_stock_threshold ?? null,
-      can_purchase: unit.can_purchase ?? true,
-      can_sell: unit.can_sell ?? true,
-      allows_fractional: unit.allows_fractional === true,
-      usage: unit.usage,
-    };
-  }
-  unitModalOpen.value = true;
-}
-function confirmUnitModal(): void {
-  const d = unitDraft.value;
-  if (!d.name.trim()) {
-    unitModalError.value = "اسم الوحدة مطلوب.";
-    return;
-  }
-  if (
-    d.selling_price !== null &&
-    d.selling_price !== undefined &&
-    (!Number.isFinite(Number(d.selling_price)) || Number(d.selling_price) < 0)
-  ) {
-    unitModalError.value = "أدخل سعر بيع صالحًا للوحدة.";
-    return;
-  }
-  if (
-    d.purchase_price !== null &&
-    d.purchase_price !== undefined &&
-    (!Number.isFinite(Number(d.purchase_price)) || Number(d.purchase_price) < 0)
-  ) {
-    unitModalError.value = "سعر الشراء يجب أن يكون صفرًا أو رقمًا موجبًا.";
-    return;
-  }
-  // Per-unit shortage threshold in the unit's own denomination.
-  // Empty = no alert for this unit.
-  const rawThr: unknown = d.low_stock_threshold;
-  const normThr =
-    rawThr === null || rawThr === undefined || rawThr === ""
-      ? null
-      : Number(rawThr);
-  if (normThr !== null && (!Number.isFinite(normThr) || normThr < 0)) {
-    unitModalError.value = "مؤشر النقص يجب أن يكون صفرًا أو رقمًا موجبًا.";
-    return;
-  }
-  if (d.isBase) {
-    productForm.value.base_unit_name = d.name.trim();
-    baseSalePrice.value = d.selling_price ?? null;
-    baseThreshold.value = normThr;
-    baseAllowsFractional.value = d.allows_fractional === true;
-    baseUsage.value = d.usage;
-    // Purchase reference is system-managed after creation.
-    if (!isEditMode.value) basePurchasePrice.value = d.purchase_price ?? null;
-  } else if (d.key === "new") {
-    additionalUnits.value.push({
-      id: d.id,
-      name: d.name.trim(),
-      factor: 1,
-      selling_price: d.selling_price ?? null,
-      purchase_price: d.purchase_price ?? null,
-      low_stock_threshold: normThr,
-      can_purchase: d.can_purchase,
-      can_sell: d.can_sell,
-      allows_fractional: d.allows_fractional === true,
-      usage: d.usage,
+function changeInventoryMode(value: unknown): void {
+  if (value !== "convertible" && value !== "independent") return;
+  if (hasRecordedActivity.value && value !== inventoryMode.value) { modeError.value = "لا يمكن تغيير طريقة المخزون بعد تسجيل رصيد أو حركة."; return; }
+  modeError.value = "";
+  if (value === inventoryMode.value) return;
+  if (value === "independent") {
+    const keyByName = new Map<string, string>();
+    variants.value = variants.value.map((product, index) => {
+      const typeName = usesVariants.value ? product.variant_name || `نوع ${index + 1}` : "أساسي";
+      const key = usesVariants.value ? keyByName.get(typeName) || newTypeKey() : "default";
+      keyByName.set(typeName, key);
+      const base = product.units?.find(unit => unit.id === product.base_unit_id) || product.units?.[0];
+      return { ...copy(product), inventory_mode: "independent", variant_key: key, pack_size_name: product.pack_size_name || product.base_unit_name || "عبوة", pack_size_order: 0, base_unit_name: "عبوة", units: base ? [{ ...base, name: "عبوة", factor: 1, stock_kind: "loose", allows_fractional: false, is_base: true }] : [] };
     });
+    typeDrafts.value = usesVariants.value ? [...keyByName].map(([typeName, key]) => ({ key, name: typeName })) : [];
   } else {
-    if (typeof d.key !== "number") return;
-    const unit = additionalUnits.value[d.key];
-    if (!unit) return;
-    unit.name = d.name.trim();
-    unit.factor = 1;
-    unit.usage = d.usage;
-    unit.can_purchase = d.can_purchase;
-    unit.can_sell = d.can_sell;
-    unit.selling_price = d.selling_price ?? null;
-    unit.allows_fractional = d.allows_fractional === true;
-    unit.low_stock_threshold = normThr;
-    if (!isEditMode.value) unit.purchase_price = d.purchase_price ?? null;
+    if (usesVariants.value && typeDrafts.value.some(type => variants.value.filter(product => product.variant_key === type.key).length > 1)) { modeError.value = "لكل نوع أكثر من حجم عبوة. أزل الأحجام الزائدة قبل العودة للمخزون القابل للتحويل."; return; }
+    variants.value = visibleTypes.value.flatMap(type => type.products.slice(0, 1).map(product => ({ ...copy(product), inventory_mode: "convertible", variant_key: null, pack_size_name: null, pack_size_order: undefined, variant_name: usesVariants.value ? type.name : "أساسي", name: usesVariants.value ? type.name : name.value })));
+    typeDrafts.value = [];
   }
-  unitModalOpen.value = false;
-}
-function setUnitUsage(unit: EditableProductUnit, usage: unknown): void {
-  if (usage !== "purchase" && usage !== "sell" && usage !== "both") return;
-  unit.usage = usage;
-  unit.can_purchase = usage !== "sell";
-  unit.can_sell = usage !== "purchase";
-}
-function setPrimaryUnit(unit: ProductUnit): void {
-  baseUnitSnapshot.value = { ...unit };
-  productForm.value.base_unit_id = unit.id;
-  productForm.value.base_unit_name = unit.name;
-  baseSalePrice.value = unit.selling_price;
-  basePurchasePrice.value = unit.purchase_price ?? null;
-  baseThreshold.value = unit.low_stock_threshold ?? null;
-  baseAllowsFractional.value = unit.allows_fractional === true;
-  baseUsage.value = unit.can_purchase === false ? "sell" : unit.can_sell === false ? "purchase" : "both";
-  baseHistory.value = unit.purchase_price_history ?? null;
-}
-function removeUnit(index: number | "base"): void {
-  if (!additionalUnits.value.length) return;
-  if (index === "base") {
-    const next = additionalUnits.value.shift();
-    if (next) setPrimaryUnit(next);
-    return;
-  }
-  additionalUnits.value.splice(index, 1);
+  inventoryMode.value = value; editorKey.value++;
 }
 
-// Shortage thresholds live on the units themselves (each in its unit's own
-// denomination); the legacy product-level threshold is no longer edited here.
-function validate(): boolean {
-  const e: typeof errors.value = {};
-  const nameRes = requiredRule(productForm.value.name?.trim());
-  if (nameRes !== true) e.name = nameRes;
-  if (!productForm.value.base_unit_name?.trim())
-    e.base_unit_name = "اسم وحدة المخزون الأساسية مطلوب.";
-  const unitIds = new Set<string>();
-  for (const [index, unit] of additionalUnits.value.entries()) {
-    const badPurchase =
-      unit.purchase_price !== null &&
-      unit.purchase_price !== undefined &&
-      (!Number.isFinite(Number(unit.purchase_price)) ||
-        Number(unit.purchase_price) < 0);
-    const rawThr: unknown = unit.low_stock_threshold;
-    const badThreshold =
-      rawThr !== null &&
-      rawThr !== undefined &&
-      rawThr !== "" &&
-      (!Number.isFinite(Number(rawThr)) || Number(rawThr) < 0);
-    if (
-      !unit.name.trim() ||
-      !Number.isFinite(Number(unit.factor)) ||
-      Number(unit.factor) !== 1 ||
-      unitIds.has(unit.id) ||
-      badPurchase ||
-      badThreshold ||
-      (unit.selling_price !== null &&
-        unit.selling_price !== undefined &&
-        (!Number.isFinite(Number(unit.selling_price)) ||
-          Number(unit.selling_price) < 0))
-    ) {
-      e.units = `راجع بيانات الوحدة رقم ${index + 1}، وتأكد من إدخال سعر بيعها إذا كانت للبيع.`;
-      break;
-    }
-    unitIds.add(unit.id);
-  }
-  errors.value = e;
-  return Object.keys(e).length === 0;
-}
-
-async function saveProduct() {
-  const duplicate = productsStore.list.find(
-    (prod) => prod.name?.trim() === productForm.value.name?.trim(),
-  );
-  if (duplicate && !productForm.value?.id) {
-    notify("تمت إضافة منتج بنفس الإسم من قبل", "error");
+function changeVariantMode(value: boolean): void {
+  if (!value && typeCount.value > 1) return;
+  if (inventoryMode.value === "convertible") {
+    if (value && defaultEditor.value) { const draft = defaultEditor.value.getDraft(); if (draft && (variants.value.length || draft.units?.some(unit => unit.name !== "وحدة" || unit.selling_price != null))) variants.value = [{ ...draft, variant_name: draft.variant_name === "أساسي" ? "" : draft.variant_name }]; }
+    usesVariants.value = value;
+    if (value && variants.value.length === 1 && !variants.value[0]?.variant_name) editVariant(0);
     return;
   }
-  if (!validate()) return;
+  if (value) {
+    usesVariants.value = true;
+    if (variants.value.length) { const key = newTypeKey(); typeDrafts.value = [{ key, name: "" }]; variants.value = variants.value.map(product => ({ ...product, variant_key: key, variant_name: "" })); editType(key); }
+  } else {
+    variants.value = variants.value.map(product => ({ ...product, variant_key: "default", variant_name: "أساسي", variant_order: 0 }));
+    typeDrafts.value = []; usesVariants.value = false;
+  }
+}
+
+function editVariant(index?: number): void { if (!requireName()) return; variantIndex.value = index ?? null; variantDraft.value = index === undefined ? variants.value[0] ? cloneVariantSettings(variants.value[0]) : undefined : copy(variants.value[index]!); variantOpen.value = true; }
+function acceptVariant(product: Product): void { const duplicate = variants.value.some((variant, index) => index !== variantIndex.value && variant.variant_name?.trim().toLocaleLowerCase() === product.variant_name?.trim().toLocaleLowerCase()); if (duplicate) { error.value = "اسم النوع مكرر. عدّل الاسم قبل إضافته."; return; } if (variantIndex.value === null) variants.value.push(copy(product)); else variants.value[variantIndex.value] = copy(product); error.value = ""; }
+function editType(key?: string): void { if (!requireName()) return; const existing = typeDrafts.value.find(type => type.key === key); typeEditingKey.value = existing?.key || null; typeName.value = existing?.name || ""; typeError.value = ""; typeOpen.value = true; }
+function acceptType(): void {
+  const value = typeName.value.trim();
+  if (!value) { typeError.value = "اسم النوع مطلوب."; return; }
+  if (typeDrafts.value.some(type => type.key !== typeEditingKey.value && type.name.toLocaleLowerCase() === value.toLocaleLowerCase())) { typeError.value = "اسم النوع مكرر داخل المنتج."; return; }
+  if (typeEditingKey.value) { typeDrafts.value = typeDrafts.value.map(type => type.key === typeEditingKey.value ? { ...type, name: value } : type); variants.value = variants.value.map(product => product.variant_key === typeEditingKey.value ? { ...product, variant_name: value } : product); }
+  else { const key = newTypeKey(); const first = visibleTypes.value[0]; typeDrafts.value.push({ key, name: value }); if (first?.products.length) variants.value.push(...first.products.map((source, index) => ({ ...cloneVariantSettings(source), id: undefined, updated_at: null, inventory_mode: "independent" as const, variant_key: key, variant_name: value, variant_order: typeDrafts.value.length - 1, pack_size_name: source.pack_size_name, pack_size_order: index }))); }
+  typeOpen.value = false;
+}
+function removeType(key: string): void { variants.value = variants.value.filter(product => product.variant_key !== key); typeDrafts.value = typeDrafts.value.filter(type => type.key !== key); }
+function editPack(typeKey: string, index?: number): void { if (!requireName()) return; packTypeKey.value = typeKey; packIndex.value = index ?? null; const source = index === undefined ? variants.value.find(product => product.variant_key === typeKey) || variants.value[0] : variants.value[index]; packDraft.value = index === undefined ? source ? { ...cloneVariantSettings(source), id: undefined, updated_at: null, pack_size_name: null } : undefined : copy(source!); packOpen.value = true; }
+function packNamesFor(typeKey: string, excluded: number | null): string[] { return variants.value.filter((product, index) => product.variant_key === typeKey && index !== excluded).map(product => product.pack_size_name || ""); }
+function acceptPack(product: Product): void {
+  const type = usesVariants.value ? typeDrafts.value.find(entry => entry.key === packTypeKey.value) : { key: "default", name: "أساسي" };
+  if (!type) { error.value = "النوع لم يعد موجودًا."; return; }
+  const duplicate = variants.value.some((entry, index) => index !== packIndex.value && entry.variant_key === type.key && entry.pack_size_name?.trim().toLocaleLowerCase() === product.pack_size_name?.trim().toLocaleLowerCase());
+  if (duplicate) { error.value = "اسم حجم العبوة مكرر داخل النوع."; return; }
+  const next = { ...copy(product), inventory_mode: "independent" as const, variant_key: type.key, variant_name: type.name, uses_variants: usesVariants.value };
+  if (packIndex.value === null) variants.value.push(next); else variants.value[packIndex.value] = next;
+  error.value = "";
+}
+function requireName(): boolean { if (name.value.trim()) return true; nameError.value = "اكتب اسم المنتج أولًا."; return false; }
+
+async function save(): Promise<void> {
+  if (saving.value || variantOpen.value || packOpen.value || typeOpen.value) return;
+  nameError.value = name.value.trim() ? "" : "اسم المنتج مطلوب."; error.value = "";
+  if (nameError.value) return;
+  if (inventoryMode.value === "convertible" && !usesVariants.value) { const draft = defaultEditor.value?.getDraft(); if (!draft) return; variants.value = [{ ...draft, variant_name: "أساسي", inventory_mode: "convertible" }]; }
+  if (inventoryMode.value === "convertible" && (!variants.value.length || variants.value.some(variant => !variant.variant_name?.trim()))) { error.value = "أضف نوعًا واحدًا على الأقل وحدّد اسمه ووحداته."; return; }
+  if (inventoryMode.value === "independent") {
+    if (usesVariants.value && (!typeDrafts.value.length || typeDrafts.value.some(type => !type.name.trim() || !variants.value.some(product => product.variant_key === type.key)))) { error.value = "أضف حجم عبوة واحدًا على الأقل لكل نوع."; return; }
+    if (!variants.value.length || variants.value.some(product => !product.pack_size_name?.trim())) { error.value = "أضف حجم عبوة واحدًا على الأقل وحدّد بياناته."; return; }
+    const typeOrder = new Map((usesVariants.value ? typeDrafts.value : [{ key: "default", name: "أساسي" }]).map((type, index) => [type.key, index]));
+    variants.value = variants.value.map(product => { const products = variants.value.filter(entry => entry.variant_key === product.variant_key); return { ...product, variant_order: typeOrder.get(product.variant_key || "default") ?? 0, pack_size_order: products.indexOf(product) }; });
+  }
   saving.value = true;
-  submitError.value = "";
-  try {
-    let id = productForm.value?.id;
-    const baseId = productForm.value.base_unit_id || "base";
-    productForm.value.price = null;
-    productForm.value.cost_price = null;
-    // Shortage thresholds are stored per unit, each in its unit's own
-    // denomination. The legacy product-level fields are never written.
-    const units: ProductUnit[] = [
-      {
-        ...baseUnitSnapshot.value,
-        id: baseId,
-        name: productForm.value.base_unit_name?.trim() || "وحدة",
-        factor: 1,
-        selling_price: baseSalePrice.value,
-        purchase_price: basePurchasePrice.value,
-        low_stock_threshold: baseThreshold.value ?? null,
-        is_base: true,
-        can_purchase: baseUsage.value !== "sell",
-        can_sell: baseUsage.value !== "purchase",
-        allows_fractional: baseAllowsFractional.value,
-        stock_quantity: baseUnitSnapshot.value?.stock_quantity ?? 0,
-        average_cost: baseUnitSnapshot.value?.average_cost ?? basePurchasePrice.value ?? 0,
-      },
-      ...additionalUnits.value.map(({ usage: _usage, ...unit }) => ({
-        ...unit,
-        name: unit.name.trim(),
-        factor: Number(unit.factor),
-        selling_price:
-          unit.selling_price === null ? null : Number(unit.selling_price),
-        purchase_price:
-          unit.purchase_price === null || unit.purchase_price === undefined
-            ? null
-            : Number(unit.purchase_price),
-        low_stock_threshold:
-          unit.low_stock_threshold === null ||
-          unit.low_stock_threshold === undefined ||
-          (unit.low_stock_threshold as unknown) === ""
-            ? null
-            : Number(unit.low_stock_threshold),
-        is_base: false,
-        stock_quantity: Number(unit.stock_quantity ?? 0),
-        average_cost: Number(unit.average_cost ?? unit.purchase_price ?? 0),
-      })),
-    ];
-    // Strip the legacy product-level threshold (old docs keep theirs; new
-    // writes only carry per-unit thresholds).
-    const {
-      low_stock_threshold: _legacyThreshold,
-      low_stock_unit_id: _legacyUnit,
-      base_unit_name: _legacyBaseName,
-      base_unit_id: _legacyBaseId,
-      ...cleanData
-    } = productForm.value;
-    void _legacyThreshold;
-    void _legacyUnit;
-    void _legacyBaseName;
-    void _legacyBaseId;
-    if (productForm.value?.id) {
-      // Edit mode never writes cost_price (§7: system-managed).
-      const { cost_price: _locked, ...editData } = cleanData;
-      void _locked;
-      await productsStore.updateProduct(productForm.value.id, {
-        ...editData,
-        units,
-      });
-    } else {
-      const created = (await productsStore.addProduct({
-        ...cleanData,
-        units,
-      })) as { id?: string } | null;
-      id = created?.id;
-    }
-    await props.refresher();
-    emit(
-      "done",
-      productsStore.list.find((prod) => prod.id === id),
-    );
-    productForm.value = emptyForm();
-    baseSalePrice.value = null;
-    basePurchasePrice.value = null;
-    baseThreshold.value = null;
-    baseAllowsFractional.value = false;
-    baseUsage.value = "both";
-    baseHistory.value = null;
-    baseUnitSnapshot.value = null;
-    additionalUnits.value = [];
-    closeDialog();
-  } catch (err) {
-    submitError.value = String(err);
-    notify(String(err), "error");
-  } finally {
-    saving.value = false;
-  }
+  try { await store.saveProductFamily({ family_id: props.edit?.family_id || undefined, family_name: name.value.trim(), uses_variants: usesVariants.value, inventory_mode: inventoryMode.value, variants: variants.value }); await props.refresher(); emit("done"); open.value = false; }
+  catch (cause) { error.value = cause instanceof Error ? cause.message : "تعذر حفظ المنتج. بياناتك محفوظة في النموذج؛ حاول مرة أخرى."; }
+  finally { saving.value = false; }
 }
-watch(
-  () => props.edit,
-  () => {
-    const edit = props.edit as
-      | (Product & { count?: number | null })
-      | undefined;
-    const { count: _legacyCount, ...editable } = edit ?? {};
-    void _legacyCount;
-    productForm.value = edit
-      ? ({
-          base_unit_name: "وحدة",
-          ...editable,
-        } as Product)
-      : emptyForm();
-    const editUnits = props.edit?.units ?? [];
-    const baseEntry =
-      editUnits.find((unit) => unit.is_base) ??
-      editUnits.find((unit) => unit.id === props.edit?.base_unit_id) ?? editUnits[0];
-    baseSalePrice.value = baseEntry?.selling_price ?? props.edit?.price ?? null;
-    basePurchasePrice.value =
-      baseEntry?.purchase_price ?? props.edit?.cost_price ?? null;
-    // Per-unit thresholds hydrate as stored (each in its unit's own
-    // denomination); units without one simply show no alert.
-    baseThreshold.value = baseEntry?.low_stock_threshold ?? null;
-    baseAllowsFractional.value = baseEntry?.allows_fractional === true;
-    baseUsage.value =
-      baseEntry?.can_purchase === false
-        ? "sell"
-        : baseEntry?.can_sell === false
-          ? "purchase"
-          : "both";
-    baseHistory.value = baseEntry?.purchase_price_history ?? null;
-    baseUnitSnapshot.value = null;
-    if (baseEntry) setPrimaryUnit(baseEntry);
-    additionalUnits.value =
-      props.edit?.units
-        ?.filter(
-          (unit) => unit.id !== baseEntry?.id,
-        )
-        .map((unit) => {
-          const canPurchase = unit.can_purchase !== false;
-          const canSell = unit.can_sell !== false;
-          const legacySalePrice =
-            (unit.selling_price === null || unit.selling_price === undefined) &&
-            unit.can_sell === undefined
-              ? (props.edit?.price ?? null)
-              : unit.selling_price;
-          return {
-            ...unit,
-            selling_price: legacySalePrice,
-            purchase_price: unit.purchase_price ?? null,
-            low_stock_threshold: unit.low_stock_threshold ?? null,
-            can_purchase: canPurchase,
-            can_sell: canSell,
-            usage:
-              canPurchase && canSell
-                ? "both"
-                : canPurchase
-                  ? "purchase"
-                  : "sell",
-          };
-        }) ?? [];
-    if (!props.edit) {
-      baseSalePrice.value = null;
-      basePurchasePrice.value = null;
-      baseThreshold.value = null;
-      baseAllowsFractional.value = false;
-      baseUsage.value = "both";
-    }
-  },
-  { immediate: true },
-);
 </script>

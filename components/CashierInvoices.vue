@@ -113,21 +113,13 @@
               >
                 <td class="p-2">
                   {{ item.customer_name
-                  }}<UBadge
-                    v-if="
-                      item.return_status === 'full' ||
-                      item.return_status === 'partial'
-                    "
+                  }}<UBadge v-if="item.status === 'cancelled'" color="error" variant="soft" size="xs" class="ms-1">ملغاة</UBadge><UBadge
+                    v-if="item.return_status === 'full' || item.return_status === 'partial'"
                     color="warning"
                     variant="soft"
                     size="xs"
                     class="ms-1"
-                    >{{
-                      item.return_status === "full"
-                        ? "مرتجع كامل"
-                        : "مرتجع جزئي"
-                    }}
-                    · {{ formatePrice(item.return_total) }} ج</UBadge
+                    >{{ item.return_status === "full" ? "مرتجع كامل" : "مرتجع جزئي" }} · {{ formatePrice(item.return_total) }} ج</UBadge
                   >
                 </td>
                 <td class="p-2" dir="ltr">{{ item.customer_phone ?? "—" }}</td>
@@ -177,7 +169,7 @@
                         :loading="copyingId === item.id"
                         @click="copyInvoice(item.id)"
                     /></UTooltip>
-                    <UTooltip v-if="!item.credit_used" text="تعديل الفاتورة"
+                    <UTooltip v-if="item.status !== 'cancelled' && !item.credit_used" text="تعديل الفاتورة"
                       ><UButton
                         size="xs"
                         icon="i-lucide-pencil"
@@ -197,7 +189,7 @@
                         :loading="viewingId === item.id"
                         @click="viewInvoice(item.id)"
                     /></UTooltip>
-                    <UTooltip text="إنشاء مرتجع"
+                    <UTooltip v-if="item.status !== 'cancelled'" text="إنشاء مرتجع"
                       ><UButton
                         size="xs"
                         icon="i-lucide-undo-2"
@@ -207,7 +199,7 @@
                         :loading="returnLoading && returnTarget?.id === item.id"
                         @click="openReturn(item)"
                     /></UTooltip>
-                    <UTooltip text="حذف"
+                    <UTooltip v-if="item.status !== 'cancelled'" text="إلغاء الفاتورة"
                       ><UButton
                         size="xs"
                         icon="i-lucide-trash-2"
@@ -228,7 +220,8 @@
               <div>
                 <div class="font-bold">
                   {{ item.customer_name
-                  }}<UBadge
+                  }}<UBadge v-if="item.status === 'cancelled'" color="error" variant="soft" size="xs" class="ms-1">ملغاة</UBadge>
+                  <UBadge
                     v-if="
                       item.return_status === 'full' ||
                       item.return_status === 'partial'
@@ -272,7 +265,7 @@
                   :loading="copyingId === item.id"
                   @click="copyInvoice(item.id)"
                 /><UButton
-                  v-if="!item.credit_used"
+                  v-if="item.status !== 'cancelled' && !item.credit_used"
                   size="xs"
                   icon="i-lucide-pencil"
                   color="success"
@@ -289,6 +282,7 @@
                   :loading="viewingId === item.id"
                   @click="viewInvoice(item.id)"
                 /><UButton
+                  v-if="item.status !== 'cancelled'"
                   size="xs"
                   icon="i-lucide-undo-2"
                   color="warning"
@@ -297,6 +291,7 @@
                   :loading="returnLoading && returnTarget?.id === item.id"
                   @click="openReturn(item)"
                 /><UButton
+                  v-if="item.status !== 'cancelled'"
                   size="xs"
                   icon="i-lucide-trash-2"
                   color="error"
@@ -388,7 +383,7 @@
               <div
                 v-for="row in returnRows"
                 :key="row.key"
-                class="grid items-center gap-2 rounded-xl border p-3 sm:grid-cols-[minmax(0,1fr)_9rem_7rem]"
+                class="grid items-center gap-2 rounded-xl border p-3 sm:grid-cols-[minmax(0,1fr)_8rem_12rem_7rem]"
               >
                 <div class="min-w-0">
                   <strong>{{
@@ -404,9 +399,13 @@
                     v-model="row.qty"
                     :min="0"
                     :max="row.maxQty"
-                    :step="0.01"
+                    :step="row.allows_fractional ? 0.0001 : 1"
                     class="w-full"
                 /></UFormField>
+                <UFormField label="سيعود إلى المخزون كـ">
+                  <USelect :model-value="returnComponentKey(row)" :items="returnComponentOptions(row)" value-key="value" label-key="label" class="w-full" @update:model-value="(key) => setReturnComponent(row, String(key))" />
+                  <p v-if="returnComponentError(row)" class="mt-1 text-xs text-red-600">{{ returnComponentError(row) }}</p>
+                </UFormField>
                 <div class="text-sm">
                   <span class="block text-xs text-gray-500">قيمة المرتجع</span
                   ><strong
@@ -497,7 +496,9 @@
               :loading="returnBusy"
               :disabled="
                 returnLoading ||
+                returnBusy ||
                 !returnRows.some((row) => row.qty > 0) ||
+                returnRows.some((row) => row.qty > row.maxQty || returnComponentError(row)) ||
                 returnCashRefund > returnSettlement
               "
               @click="submitReturn"
@@ -514,18 +515,18 @@
       </UiAppDialog>
       <UiAppDialog v-model:open="deleteOpen" title="هل أنت متأكد؟">
         <p class="mb-4 text-sm">
-          أنت على وشك حذف فاتورة {{ deleteTarget?.customer_name }}.
+          سيتم إلغاء فاتورة {{ deleteTarget?.customer_name }} وعكس أثرها على المخزون والخزنة.
         </p>
         <UAlert
           color="warning"
           variant="soft"
-          title="الفواتير التي أثّرت على المخزون أو الخزنة لا يمكن حذفها؛ استخدم المرتجع."
+          title="لن يتم الإلغاء إذا كان على الفاتورة مرتجع أو تسوية دين أو تعذر عكس الرصيد الحالي."
           class="mb-3"
         />
         <template #footer
           ><div class="flex w-full gap-2">
             <UButton color="error" :loading="deleting" @click="deleteConfirmed"
-              >حذف</UButton
+              >إلغاء الفاتورة</UButton
             ><UButton
               color="neutral"
               variant="soft"
@@ -543,6 +544,7 @@
 <script setup lang="ts">
 import type { Invoice, InvoiceDate } from "~/types";
 import type { InvoiceReturn } from "~/types/finance";
+import type { ReturnRow as InvoiceReturnRow } from "~/composables/useInvoiceReturns";
 import { netCollectedOf } from "~/composables/invoiceStats";
 
 interface CashierInvoiceSummary {
@@ -559,6 +561,7 @@ interface CashierInvoiceSummary {
   return_total: number;
   cash_refund_total: number;
   credit_used: number;
+  status?: "paid" | "partial" | "unpaid" | "cancelled" | null;
 }
 
 const { formatePrice, formatDate, formatInvoiceLineName } = useHelpers();
@@ -566,6 +569,7 @@ const activeTab = ref<"sales" | "returns">("sales");
 const { round2 } = useFinance();
 const { notify } = useAppToast();
 const invoices = useInvoicesStore();
+const returnsApi = useInvoiceReturns();
 const customers = useCustomersStore();
 const route = useRoute();
 const customerFilter = computed(() => ({
@@ -598,14 +602,7 @@ const viewReturnsLoading = ref(false);
 const viewReturnsError = ref("");
 const viewReturnsExpected = ref(false);
 const invoiceOpen = ref(false);
-interface ReturnRow {
-  key: string;
-  product_name: string;
-  unit_name: string;
-  unit_price: number;
-  maxQty: number;
-  qty: number;
-}
+interface ReturnRow extends InvoiceReturnRow {}
 const returnTarget = ref<CashierInvoiceSummary | null>(null);
 const returnRows = ref<ReturnRow[]>([]);
 const returnRemaining = ref(0);
@@ -664,6 +661,7 @@ const deleteOpen = computed({
   },
 });
 const deleting = ref(false);
+let pendingCancelRequest: { invoiceId: string; requestId: string } | null = null;
 let loadSequence = 0;
 
 async function loadPage(): Promise<void> {
@@ -785,17 +783,7 @@ async function openReturn(item: CashierInvoiceSummary): Promise<void> {
   returnRequestId.value = crypto.randomUUID();
   returnLoading.value = true;
   try {
-    const preview = await callStaff<
-      { id: string },
-      {
-        remaining: number;
-        ratio: number;
-        creditUsed: number;
-        creditRestored: number;
-        creditBalance: number;
-        rows: Omit<ReturnRow, "qty">[];
-      }
-    >("getStaffReturnPreview", { id: item.id });
+    const preview = await returnsApi.previewReturn(item.id);
     returnRemaining.value = preview.remaining;
     returnRatio.value = preview.ratio;
     returnCreditBalance.value = preview.creditBalance;
@@ -803,7 +791,7 @@ async function openReturn(item: CashierInvoiceSummary): Promise<void> {
     returnCreditRestoredBefore.value = preview.creditRestored;
     returnRows.value = preview.rows
       .filter((row) => row.maxQty > 0)
-      .map((row) => ({ ...row, qty: 0 }));
+      .map((row) => ({ ...row, qty: 0, return_bucket: "loose", return_unit_id: null }));
   } catch {
     returnError.value =
       "تعذر إعداد المرتجع. قد يحتاج سجل الفاتورة القديمة إلى مراجعة المسؤول.";
@@ -812,14 +800,39 @@ async function openReturn(item: CashierInvoiceSummary): Promise<void> {
   }
 }
 
+function returnComponentOptions(row: ReturnRow): { label: string; value: string }[] {
+  return [
+    { label: `${row.inventory_mode === "independent" ? "عبوات مفردة كاملة" : "كمية مفتوحة"} · ${row.loose_unit_name}`, value: "loose" },
+    ...row.return_units.map((unit) => ({ label: `عبوة مغلقة · ${unit.name}`, value: `package:${unit.id}` })),
+  ];
+}
+
+function returnComponentKey(row: ReturnRow): string {
+  return row.return_bucket === "package" && row.return_unit_id ? `package:${row.return_unit_id}` : "loose";
+}
+
+function setReturnComponent(row: ReturnRow, value: string): void {
+  row.return_bucket = value.startsWith("package:") ? "package" : "loose";
+  row.return_unit_id = row.return_bucket === "package" ? value.slice("package:".length) : null;
+}
+
+function returnComponentError(row: ReturnRow): string {
+  if (row.qty <= 0 || row.return_bucket !== "package") return "";
+  const pack = row.return_units.find((unit) => unit.id === row.return_unit_id);
+  if (!pack) return "العبوة المغلقة المختارة غير موجودة.";
+  const quantity = row.qty * row.unit_factor / pack.factor;
+  return Math.abs(quantity - Math.round(quantity)) > 1e-9 ? `الكمية لا تكوّن عددًا صحيحًا من ${pack.name}. أعدها ككمية مفتوحة أو غيّر الكمية.` : "";
+}
+
 async function submitReturn(): Promise<void> {
   if (!returnTarget.value || returnBusy.value) return;
   const items = returnRows.value
     .filter((row) => row.qty > 0)
-    .map((row) => ({ rowKey: row.key, quantity: row.qty }));
+    .map((row) => ({ line_id: row.line_id, quantity: row.qty, return_bucket: row.return_bucket, return_unit_id: row.return_unit_id }));
   if (
     !items.length ||
-    items.some((item) => !Number.isFinite(item.quantity) || item.quantity <= 0)
+    items.some((item) => !Number.isFinite(item.quantity) || item.quantity <= 0) ||
+    returnRows.value.some((row) => row.qty > row.maxQty || returnComponentError(row))
   ) {
     returnError.value = "حدد كمية صالحة للإرجاع.";
     return;
@@ -869,14 +882,16 @@ async function deleteConfirmed(): Promise<void> {
   deleting.value = true;
   error.value = "";
   try {
-    await callStaff("deleteStaffInvoice", { id: deleteTarget.value.id });
+    const id = deleteTarget.value.id;
+    if (pendingCancelRequest?.invoiceId !== id) pendingCancelRequest = { invoiceId: id, requestId: crypto.randomUUID() };
+    await callStaff("deleteStaffInvoice", { id, requestId: pendingCancelRequest.requestId });
+    pendingCancelRequest = null;
     deleteTarget.value = null;
-    notify("تم حذف الفاتورة.", "success");
+    notify("تم إلغاء الفاتورة.", "success");
     await loadPage();
   } catch {
-    deleteTarget.value = null;
     error.value =
-      "لا يمكن حذف فاتورة لها حركات مخزنية أو نقدية. استخدم المرتجع بدلاً من الحذف.";
+      "تعذر إلغاء الفاتورة. قد تحتوي على مرتجع أو تسوية دين أو تغير في المخزون؛ راجعها ثم حاول مرة أخرى.";
   } finally {
     deleting.value = false;
   }

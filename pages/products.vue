@@ -133,184 +133,66 @@
       "
     />
     <template v-else>
-      <!-- Desktop table -->
       <div class="hidden overflow-x-auto md:block">
         <table class="w-full text-sm">
-          <thead>
-            <tr class="border-b border-gray-200 text-gray-500">
-              <th v-if="isAdmin" class="w-10 p-2"></th>
-              <th class="p-2 text-start font-medium">الاسم</th>
-              <th class="p-2 text-start font-medium">الكمية المتاحة</th>
-              <th class="p-2 text-start font-medium">أسعار البيع</th>
-              <th v-if="isAdmin" class="p-2 text-start font-medium">الأدوات</th>
-            </tr>
-          </thead>
+          <thead><tr class="border-b text-gray-500">
+            <th v-if="isAdmin" class="w-10 p-3"></th>
+            <th class="p-3 text-start">اسم المنتج</th><th class="p-3 text-start">الكمية المتاحة</th><th class="p-3 text-start">الأسعار</th><th v-if="isAdmin" class="p-3 text-start">الإجراءات</th>
+          </tr></thead>
           <tbody>
-            <tr
-              v-for="p in paginateArray"
-              :key="p.id"
-              class="border-b border-gray-100 last:border-0 hover:bg-gray-50"
-              :class="p.id && isSelected({ id: p.id }) ? 'bg-emerald-50' : ''"
-              @click="isAdmin && p.id && toggleSelect({ id: p.id })"
-            >
-              <td v-if="isAdmin" class="p-2" @click.stop>
-                <UCheckbox
-                  :model-value="p.id ? isSelected({ id: p.id }) : false"
-                  @update:model-value="p.id && toggleSelect({ id: p.id })"
-                />
-              </td>
-              <td class="p-2 font-medium">{{ p.name }}</td>
-              <td
-                class="p-2 font-semibold"
-                :class="p.stock === null ? 'text-gray-400' : ''"
-              >
-                {{ p.stock_label }}
-              </td>
-              <td class="p-2">
-                <div class="flex flex-wrap gap-1">
-                  <UBadge
-                    v-for="unit in p.selling_units"
-                    :key="unit.id"
-                    color="neutral"
-                    variant="soft"
-                    >{{ unit.name }}: {{ unit.price }}</UBadge
-                  >
-                </div>
-              </td>
-              <td v-if="isAdmin" class="p-2" @click.stop>
-                <div class="flex gap-2">
-                  <UButton
-                    icon="i-lucide-pencil"
-                    color="success"
-                    variant="soft"
-                    size="xs"
-                    aria-label="تعديل"
-                    @click="editProduct({ id: p.id })"
-                    class="flex items-center justify-center"
-                  />
-                  <UTooltip text="شراء / إضافة مخزون">
-                    <UButton
-                      icon="i-lucide-package-plus"
-                      color="info"
-                      variant="soft"
-                      size="xs"
-                      aria-label="شراء مخزون"
-                      @click="openPurchase(p.id)"
-                      class="flex items-center justify-center"
-                  /></UTooltip>
-                  <UTooltip text="تعديل مخزون يدوي">
-                    <UButton
-                      icon="i-lucide-clipboard-list"
-                      color="neutral"
-                      variant="soft"
-                      size="xs"
-                      aria-label="تعديل المخزون"
-                      @click="openAdjust(p.id)"
-                      class="flex items-center justify-center"
-                  /></UTooltip>
-                  <UButton
-                  icon="i-lucide-archive"
-                  color="warning"
-                    variant="soft"
-                    size="xs"
-                  aria-label="أرشفة"
-                    @click="confirmDelete = p"
-                    class="flex items-center justify-center"
-                  />
-                </div>
-              </td>
+            <tr v-for="p in paginateArray" :key="p.id" class="border-b border-gray-100">
+              <td v-if="isAdmin" class="p-3"><UCheckbox :model-value="groupSelected(p.variants)" @update:model-value="toggleGroup(p.variants)" /></td>
+              <td class="p-3 font-semibold">{{ p.name }}</td>
+              <td class="p-3"><span v-if="!p.complex">{{ stockQuantityLabel(p.variants[0]!) }}</span><UButton v-else variant="soft" color="neutral" icon="i-lucide-boxes" @click="showDetails(p.id, 'quantities')">عرض الكميات</UButton></td>
+              <td class="p-3"><span v-if="!p.complex">{{ simplePrice(p.variants[0]!) }}</span><UButton v-else variant="soft" color="neutral" icon="i-lucide-tags" @click="showDetails(p.id, 'prices')">عرض الأسعار</UButton></td>
+              <td v-if="isAdmin" class="p-3"><div class="flex flex-wrap gap-2">
+                <UButton size="sm" variant="soft" @click="editProduct({ id: p.variants[0]?.id })">تعديل</UButton>
+                <UButton size="sm" variant="soft" color="info" @click="chooseVariant(p.id, 'purchase')">شراء</UButton>
+                <UButton size="sm" variant="soft" color="neutral" @click="chooseVariant(p.id, 'adjust')">جرد</UButton>
+                <UButton size="sm" variant="soft" color="warning" @click="confirmDelete = { id: p.variants[0]?.id, name: p.name, ids: p.variants.flatMap(v => v.id ? [v.id] : []) }">أرشفة</UButton>
+              </div></td>
             </tr>
           </tbody>
         </table>
-        <UEmpty
-          v-if="!paginateArray.length"
-          icon="i-lucide-layout-grid"
-          title="لا توجد منتجات حتى الأن"
-        />
       </div>
-      <!-- Mobile cards -->
-      <div class="grid gap-2 md:hidden">
-        <UCard
-          v-for="p in paginateArray"
-          :key="p.id"
-          variant="outline"
-          :class="p.id && isSelected({ id: p.id }) ? 'border-emerald-500!' : ''"
-          @click="isAdmin && p.id && toggleSelect({ id: p.id })"
-        >
-          <div class="flex items-center justify-between gap-2">
-            <div class="flex min-w-0 items-center gap-2">
-              <UCheckbox
-                v-if="isAdmin"
-                :model-value="p.id ? isSelected({ id: p.id }) : false"
-                @click.stop
-                @update:model-value="p.id && toggleSelect({ id: p.id })"
-              />
-              <div class="min-w-0">
-                <div class="truncate font-bold">{{ p.name }}</div>
-                <div
-                  class="text-xs"
-                  :class="p.stock === null ? 'text-gray-400' : 'text-gray-500'"
-                >
-                  {{ p.stock_label }}
-                </div>
-                <div class="flex flex-wrap gap-1">
-                  <UBadge
-                    v-for="unit in p.selling_units"
-                    :key="unit.id"
-                    color="neutral"
-                    variant="soft"
-                    >{{ unit.name }}: {{ unit.price }}</UBadge
-                  >
-                </div>
-              </div>
-            </div>
-            <div v-if="isAdmin" class="flex shrink-0 gap-1.5" @click.stop>
-              <UButton
-                icon="i-lucide-pencil"
-                color="success"
-                variant="soft"
-                size="xs"
-                aria-label="تعديل"
-                @click="editProduct({ id: p.id })"
-                class="flex items-center justify-center"
-              />
-              <UButton
-                icon="i-lucide-package-plus"
-                color="info"
-                variant="soft"
-                size="xs"
-                aria-label="شراء مخزون"
-                @click="openPurchase(p.id)"
-                class="flex items-center justify-center"
-              />
-              <UButton
-                icon="i-lucide-clipboard-list"
-                color="neutral"
-                variant="soft"
-                size="xs"
-                aria-label="تعديل المخزون"
-                @click="openAdjust(p.id)"
-                class="flex items-center justify-center"
-              />
-              <UButton
-                icon="i-lucide-archive"
-                color="warning"
-                variant="soft"
-                size="xs"
-                aria-label="أرشفة"
-                @click="confirmDelete = p"
-                class="flex items-center justify-center"
-              />
-            </div>
+      <div class="space-y-3 md:hidden">
+        <UCard v-for="p in paginateArray" :key="p.id">
+          <div class="flex items-center gap-2"><UCheckbox v-if="isAdmin" :model-value="groupSelected(p.variants)" @update:model-value="toggleGroup(p.variants)" /><h3 class="font-bold">{{ p.name }}</h3></div>
+          <div class="mt-3 flex flex-wrap gap-2">
+            <span v-if="!p.complex" class="text-sm">{{ stockQuantityLabel(p.variants[0]!) }} · سعر البيع {{ simplePrice(p.variants[0]!) }}</span>
+            <UButton v-if="p.complex" color="neutral" variant="soft" @click="showDetails(p.id, 'quantities')">عرض الكميات</UButton>
+            <UButton v-if="p.complex" color="neutral" variant="soft" @click="showDetails(p.id, 'prices')">عرض الأسعار</UButton>
+            <template v-if="isAdmin">
+              <UButton variant="soft" @click="editProduct({ id: p.variants[0]?.id })">تعديل</UButton>
+              <UButton color="info" variant="soft" @click="chooseVariant(p.id, 'purchase')">شراء</UButton>
+              <UButton color="neutral" variant="soft" @click="chooseVariant(p.id, 'adjust')">جرد</UButton>
+              <UButton color="warning" variant="soft" @click="confirmDelete = { id: p.variants[0]?.id, name: p.name, ids: p.variants.flatMap(v => v.id ? [v.id] : []) }">أرشفة</UButton>
+            </template>
           </div>
         </UCard>
-        <UEmpty
-          v-if="!paginateArray.length"
-          icon="i-lucide-layout-grid"
-          title="لا توجد منتجات حتى الأن"
-        />
       </div>
+      <UEmpty v-if="!paginateArray.length" title="لا توجد منتجات" />
     </template>
+    <UiAppDialog v-model:open="detailsOpen" :title="`${detailMode === 'prices' ? 'عرض الأسعار' : 'عرض الكميات'} · ${detailGroup?.name || ''}`" width="sm:max-w-[740px]">
+      <div class="space-y-4">
+        <p v-if="detailMode === 'quantities'" class="text-sm text-gray-500">{{ detailGroup?.variants[0]?.inventory_mode === 'independent' ? 'كل حجم عبوة له رصيد مستقل، والكرتونة تخص الحجم الموضح فقط.' : 'الأعداد بدائل لنفس المخزون ولا تُجمع. الكمية المفردة تشمل فتح العبوات، والعبوات المعروضة هي المغلقة فقط.' }}</p>
+        <section v-for="type in detailTypes" :key="type.key" class="space-y-3 rounded-xl border border-gray-200 p-3">
+          <h3 v-if="detailGroup?.variants[0]?.uses_variants !== false" class="font-bold">{{ type.name }}</h3>
+          <div v-for="variant in type.products" :key="variant.id" class="space-y-2 rounded-lg border border-gray-100 p-3">
+            <h4 v-if="variant.inventory_mode === 'independent'" class="font-semibold">{{ variant.pack_size_name }}</h4>
+            <p v-if="detailMode === 'quantities'" class="text-sm text-gray-500">المخزون الفعلي: {{ stockQuantityLabel(variant) }}</p>
+            <div v-for="unit in unitsForProduct(variant).filter(unit => !unit.archived)" :key="unit.id" class="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 py-2">
+              <span class="font-semibold">{{ unit.name }}</span>
+              <div v-if="detailMode === 'prices'" class="text-sm"><p>سعر البيع: {{ unit.selling_price == null ? 'غير محدد' : `${formatePrice(unit.selling_price)} ج` }}</p><p v-if="isAdmin" class="text-gray-500">تكلفة التسعير: {{ unitReferenceCost(variant, unit) == null ? 'غير متاح' : `${formatePrice(unitReferenceCost(variant, unit))} ج` }}</p><p v-if="isAdmin" class="text-gray-500">متوسط المخزون: {{ unitAverageCost(variant, unit) == null ? 'غير متاح' : `${formatePrice(unitAverageCost(variant, unit))} ج` }}</p></div>
+              <span v-else>متاح {{ unitStockDisplay(variant, unit) }} {{ unit.name }}</span>
+            </div>
+          </div>
+        </section>
+      </div>
+    </UiAppDialog>
+    <UiAppDialog v-model:open="variantChoiceOpen" :title="`اختر النوع وحجم العبوة · ${actionGroup?.name || ''}`">
+      <div class="space-y-3"><section v-for="type in actionTypes" :key="type.key" class="space-y-2"><h3 v-if="actionGroup?.variants[0]?.uses_variants !== false" class="font-semibold">{{ type.name }}</h3><div class="flex flex-col gap-2"><UButton v-for="variant in type.products" :key="variant.id" color="neutral" variant="soft" @click="runVariantAction(variant.id)">{{ variant.inventory_mode === 'independent' ? variant.pack_size_name : productSkuLabel(variant) }}</UButton></div></section></div>
+    </UiAppDialog>
     <div class="mt-3 flex items-center justify-between gap-2">
       <USelect
         v-model="currentPerPage"
@@ -320,7 +202,7 @@
       />
       <UPagination
         v-model:page="currentPage"
-        :total="prodsList.length"
+        :total="familyRows.length"
         :items-per-page="currentPerPage"
         :sibling-count="1"
         size="sm"
@@ -418,8 +300,8 @@
         >
           <UInputNumber
             v-model="purchaseQty"
-            :min="1"
-            :step="1"
+            :min="purchaseUnit?.allows_fractional ? 0.0001 : 1"
+            :step="purchaseUnit?.allows_fractional ? 0.0001 : 1"
             size="lg"
             class="w-full"
           />
@@ -437,23 +319,29 @@
             class="w-full"
           />
         </UFormField>
+        <p class="text-xs text-gray-500">تُحدّث أسعار الوحدات تلقائيًا بنفس نسبة هامش الربح مع تكلفة آخر شراء. يمكنك تعديل سعر الوحدة المختارة يدويًا.</p>
         <div
-          v-if="costCardShown"
+          v-if="purchaseInputsReady"
           class="space-y-2 rounded-xl border border-blue-200 bg-blue-50/60 p-3"
         >
           <UFormField
             label="متوسط التكلفة الجديد"
             :hint="`سعر التكلفة القديم: ${formatePrice(purchaseOldUnitAvg)} ج`"
-            :error="purchaseAvgError || undefined"
           >
             <UInputNumber
-              v-model="purchaseAvg"
+              :model-value="suggestedAvgUnit"
               :min="0"
-              :step="0.01"
+              :step="0.0001"
               size="lg"
               class="w-full"
+              disabled
             />
           </UFormField>
+          <div class="space-y-1 text-xs">
+            <p class="font-semibold">أسعار البيع بعد الشراء</p>
+            <p v-for="unit in automaticPrices.filter(unit => !unit.archived && unit.can_sell !== false)" :key="unit.id">{{ unit.name }}: {{ unit.selling_price == null ? 'يلزم تحديد السعر يدويًا' : `${formatePrice(unit.selling_price)} ج` }}</p>
+          </div>
+          <UCheckbox v-if="purchaseUnitSellable" v-model="purchasePriceEnabled" label="تعديل سعر بيع هذه الوحدة يدويًا" />
           <UFormField
             v-if="priceFieldShown"
             label="سعر البيع الجديد"
@@ -596,16 +484,10 @@
           variant="soft"
           title="هذا التعديل سيغيّر كمية المخزون فقط ولن يؤثر على رصيد الخزنة."
         />
-        <UFormField label="الوحدة" required>
-          <USelect
-            v-model="adjustUnitId"
-            :items="adjustUnitOptions"
-            value-key="value"
-            label-key="label"
-            class="w-full"
-          />
+        <UFormField label="مكوّن المخزون المراد جرده" required>
+          <USelect v-model="adjustComponentKey" :items="adjustComponentOptions" value-key="value" label-key="label" class="w-full" />
         </UFormField>
-        <UFormField label="الكمية الحالية">
+        <UFormField label="الرصيد الحالي لهذا المكوّن">
           <UInput
             :model-value="adjustCountText"
             readonly
@@ -614,18 +496,20 @@
           />
         </UFormField>
         <UFormField
-          label="الكمية الجديدة"
+          label="الرصيد الفعلي الجديد لهذا المكوّن"
+          hint="سيستبدل رصيد هذا المكوّن فقط؛ بقية العبوات والكمية المفتوحة لن تتغير."
           required
           :error="adjustNewError || undefined"
         >
           <UInputNumber
             v-model="adjustNew"
             :min="0"
-            :step="adjustUnit?.allows_fractional ? 0.0001 : 1"
+            :step="adjustBucket === 'package' ? 1 : 0.0001"
             size="lg"
             class="w-full"
           />
         </UFormField>
+        <UAlert v-if="adjustNew !== undefined" color="info" variant="soft" :title="`بعد الحفظ: ${adjustComponentLabel} ${adjustNew} (كان ${adjustCountText})`" />
         <UFormField label="سبب التعديل" required>
           <UInput
             v-model="adjustReason"
@@ -665,13 +549,14 @@
 </template>
 
 <script setup lang="ts">
+import { repriceUnits, unitReferenceCost } from "~/functions/shared/unitPricing.mjs";
+import { groupProductVariants, groupProductsByVariant, productSkuLabel } from "~/utils/productVariants";
 import type { Invoice, Product } from "~/types";
 import type { ProductUnit } from "~/types";
 import type { Supplier } from "~/types/finance";
 import type { PriceDecision } from "~/composables/finance";
 import { useSuppliersStore } from "~/stores/suppliers";
 import { toDateSafe } from "~/types";
-
 definePageMeta({ title: "المنتجات" });
 const searchText = ref<string>("");
 const { formatePrice } = useHelpers();
@@ -679,15 +564,13 @@ const {
   round2,
   round4,
   toNum,
-  proposedSellingPrice,
-  sellableUnitsForProduct,
+  unitStockDisplay,
+  unitAverageCost,
   unitSellingPrice,
   purchasableUnitsForProduct,
   unitsForProduct,
   convertUnitPrice,
   unitPurchasePrice,
-  purchaseLineBaseQuantity,
-  purchaseLineBaseCost,
   purchasePreviewAverage,
   stockQuantityLabel,
 } = useFinance();
@@ -711,7 +594,7 @@ const purchaseQty = ref<number | undefined>(undefined);
 const purchaseCost = ref<number | undefined>(undefined);
 const purchaseUnitId = ref("");
 const purchaseUnits = computed<ProductUnit[]>(() => {
-  const product = prodsList.value.find((item) => item.id === purchaseId.value);
+  const product = productsStore.list.find((item) => item.id === purchaseId.value);
   return product ? purchasableUnitsForProduct(product) : [];
 });
 const purchaseUnit = computed(
@@ -724,10 +607,9 @@ function selectPurchaseUnit(unit?: ProductUnit): void {
   const currentUnit = purchaseUnits.value.find(
     (candidate) => candidate.id === purchaseUnitId.value,
   );
-  const currentFactor =
-    Number(currentUnit?.factor) > 0 ? Number(currentUnit?.factor) : 1;
+  const currentFactor = Number(currentUnit?.factor);
   purchaseUnitId.value = unit.id;
-  const product = prodsList.value.find((item) => item.id === purchaseId.value);
+  const product = productsStore.list.find((item) => item.id === purchaseId.value);
   // سعر الشراء يتبع الوحدة المختارة نفسها (آخر سعر شراء مسجل عليها)，
   // وليس تحويلاً من المتوسط الحالي.
   const unitLastCost = product ? unitPurchasePrice(product, unit) : null;
@@ -735,18 +617,13 @@ function selectPurchaseUnit(unit?: ProductUnit): void {
     purchaseCost.value = unitLastCost;
     return;
   }
-  purchaseCost.value = convertUnitPrice(
-    purchaseCost.value ?? purchaseCurrentCost.value,
-    currentFactor,
-    unit.factor,
-  );
+  purchaseCost.value = currentFactor > 0
+    ? convertUnitPrice(purchaseCost.value ?? purchaseCurrentCost.value, currentFactor, unit.factor)
+    : undefined;
 }
 const purchasePrice = ref<number | undefined>(undefined);
 const purchasePriceTouched = ref(false);
-// Editable middle average, in the selected purchase unit's terms (the saved
-// average stays in base terms). Synced from the suggestion while qty/cost/
-// unit change; free for the user to override afterwards.
-const purchaseAvg = ref<number | undefined>(undefined);
+const purchasePriceEnabled = ref(false);
 function setPurchasePrice(value: number | undefined): void {
   purchasePriceTouched.value = true;
   purchasePrice.value = value;
@@ -785,23 +662,17 @@ const purchaseSupplierRef = ref("");
 const purchaseKey = ref("");
 const purchaseNote = ref("");
 const purchaseName = computed(
-  () => prodsList.value.find((p) => p.id === purchaseId.value)?.name ?? "",
+  () => productsStore.list.find((p) => p.id === purchaseId.value)?.name ?? "",
 );
 const purchaseCount = computed(
   () =>
-    prodsList.value.find((p) => p.id === purchaseId.value)?.stock_quantity ??
+    productsStore.list.find((p) => p.id === purchaseId.value)?.stock_quantity ??
     null,
 );
-const purchaseCountText = computed(() =>
-  stockQuantityLabel(
-    prodsList.value.find((p) => p.id === purchaseId.value) ?? {
-      name: "",
-      price: null,
-      cost_price: null,
-    },
-    purchaseCount.value,
-  ),
-);
+const purchaseCountText = computed(() => {
+  const product = productsStore.list.find((p) => p.id === purchaseId.value);
+  return product ? stockQuantityLabel(product, purchaseCount.value) : "—";
+});
 // Shortages dialog state (dialog content lands in S4).
 const shortagesOpen = ref(false);
 const importOpen = ref(false);
@@ -822,59 +693,63 @@ const prodsList = computed<Product[]>(() => {
     prod.name?.toLowerCase().includes(q),
   );
 });
-const paginateArray = computed(() => {
-  const startIndex = (currentPage.value - 1) * currentPerPage.value;
-  return [...prodsList.value]
-    .sort(
-      (a, b) =>
-        (toDateSafe(b.date)?.getTime() ?? 0) -
-        (toDateSafe(a.date)?.getTime() ?? 0),
-    )
-    .slice(startIndex, startIndex + currentPerPage.value)
-    .map((prod) => {
-      const sellingUnits = sellableUnitsForProduct(prod).map((unit) => ({
-        id: unit.id,
-        name: unit.name,
-        price:
-          unit.selling_price == null &&
-          !unit.is_base &&
-          unit.id !== prod.base_unit_id
-            ? "غير محدد"
-            : unitSellingPrice(prod, unit) == null
-              ? "غير محدد"
-              : `${formatePrice(unitSellingPrice(prod, unit))} ج`,
-      }));
-      return {
-        id: prod.id,
-        select: false,
-        name: prod.name,
-        selling_units: sellingUnits,
-        stock: prod.stock_quantity ?? null,
-        stock_label: stockQuantityLabel(prod),
-      };
-    });
+const familyRows = computed(() => {
+  const query = searchText.value?.trim().toLocaleLowerCase();
+  return groupProductVariants([...productsStore.list].sort((a, b) => (toDateSafe(b.date)?.getTime() ?? 0) - (toDateSafe(a.date)?.getTime() ?? 0)))
+    .filter((group) => !query || group.name.toLocaleLowerCase().includes(query) || group.variants.some((variant) => variant.variant_name?.toLocaleLowerCase().includes(query) || variant.pack_size_name?.toLocaleLowerCase().includes(query)))
+    .map((group) => ({ ...group, complex: group.variants.length > 1 || group.variants.some((variant) => unitsForProduct(variant).filter((unit) => !unit.archived).length > 1) }));
 });
-function isSelected(item: { id?: string }): boolean {
-  return !!item.id && selectProducts.value.includes(item.id);
+function simplePrice(product: Product): string {
+  const unit = unitsForProduct(product).find((unit) => !unit.archived);
+  return unit?.selling_price == null ? "غير محدد" : `${formatePrice(unit.selling_price)} ج`;
 }
-function toggleSelect(item: { id?: string }): void {
-  if (!item.id) return;
-  const index = selectProducts.value.indexOf(item.id);
-  if (index > -1) selectProducts.value.splice(index, 1);
-  else selectProducts.value.push(item.id);
+const paginateArray = computed(() => familyRows.value.slice((currentPage.value - 1) * currentPerPage.value, currentPage.value * currentPerPage.value));
+const detailsOpen = ref(false);
+const detailMode = ref<"prices" | "quantities">("prices");
+const detailId = ref("");
+const detailGroup = computed(() => familyRows.value.find((group) => group.id === detailId.value));
+const detailTypes = computed(() => groupProductsByVariant(detailGroup.value?.variants || []));
+function showDetails(id: string, mode: "prices" | "quantities"): void {
+  detailId.value = id;
+  detailMode.value = mode;
+  detailsOpen.value = true;
+}
+const variantChoiceOpen = ref(false);
+const actionId = ref("");
+const variantAction = ref<"purchase" | "adjust">("purchase");
+const actionGroup = computed(() => familyRows.value.find((group) => group.id === actionId.value));
+const actionTypes = computed(() => groupProductsByVariant(actionGroup.value?.variants || []));
+function chooseVariant(id: string, action: "purchase" | "adjust"): void {
+  actionId.value = id;
+  variantAction.value = action;
+  if (actionGroup.value?.variants.length === 1) runVariantAction(actionGroup.value.variants[0]?.id);
+  else variantChoiceOpen.value = true;
+}
+function runVariantAction(id?: string): void {
+  variantChoiceOpen.value = false;
+  if (variantAction.value === "purchase") openPurchase(id);
+  else openAdjust(id);
+}
+function groupSelected(variants: Product[]): boolean {
+  return variants.every((variant) => variant.id && selectProducts.value.includes(variant.id));
+}
+function toggleGroup(variants: Product[]): void {
+  const selected = groupSelected(variants);
+  const ids = new Set(variants.flatMap((variant) => variant.id ? [variant.id] : []));
+  selectProducts.value = selected ? selectProducts.value.filter((id) => !ids.has(id)) : [...new Set([...selectProducts.value, ...ids])];
 }
 /** Select every product matching the current search (across all pages). */
 function selectAllFiltered(): void {
-  selectProducts.value = prodsList.value
+  selectProducts.value = familyRows.value.flatMap((group) => group.variants)
     .map((p) => p.id)
     .filter((id): id is string => !!id);
 }
 const bulkSelectedProducts = computed(() => {
   const selected = new Set(selectProducts.value);
-  return prodsList.value.filter((p) => p.id && selected.has(p.id));
+  return productsStore.list.filter((p) => p.id && selected.has(p.id));
 });
 function editProduct(product: { id?: string }): void {
-  const prod = prodsList.value.find((el) => el.id === product.id);
+  const prod = productsStore.list.find((el) => el.id === product.id);
   if (prod) productForm.value = { ...prod };
   productFormState.value = true;
 }
@@ -889,8 +764,10 @@ const stockSubmitError = ref("");
 const purchaseQtyError = computed(() => {
   if (purchaseQty.value === undefined || purchaseQty.value === null) return "";
   if (!(purchaseQty.value > 0)) return "الكمية يجب أن تكون أكبر من صفر.";
-  if (!Number.isInteger(purchaseQty.value))
-    return "الكمية يجب أن تكون رقمًا صحيحًا.";
+  if (Math.abs(round4(purchaseQty.value) - purchaseQty.value) > 1e-9)
+    return "الكمية تقبل أربع منازل عشرية كحد أقصى.";
+  if (purchaseUnit.value?.allows_fractional !== true && !Number.isInteger(purchaseQty.value))
+    return "هذه الوحدة لا تقبل كميات كسرية.";
   return "";
 });
 const purchaseCostError = computed(() => {
@@ -899,7 +776,7 @@ const purchaseCostError = computed(() => {
   return purchaseCost.value >= 0 ? "" : "سعر التكلفة غير صالح.";
 });
 const purchasePriceError = computed(() => {
-  if (purchasePrice.value === undefined || purchasePrice.value === null)
+  if (!priceFieldShown.value || purchasePrice.value === undefined || purchasePrice.value === null)
     return "";
   return purchasePrice.value >= 0 ? "" : "سعر البيع غير صالح.";
 });
@@ -921,8 +798,8 @@ const adjustNewError = computed(() => {
   if (!Number.isFinite(adjustNew.value) || adjustNew.value < 0) return "الكمية الجديدة غير صالحة.";
   if (Math.abs(round4(adjustNew.value) - adjustNew.value) > 1e-9)
     return "الكمية تقبل أربع منازل عشرية كحد أقصى.";
-  if (adjustUnit.value?.allows_fractional !== true && !Number.isInteger(adjustNew.value))
-    return "الكمية يجب أن تكون رقمًا صحيحًا.";
+  if (adjustBucket.value === "package" && !Number.isInteger(adjustNew.value))
+    return "عدد العبوات المغلقة يجب أن يكون رقمًا صحيحًا.";
   return "";
 });
 const purchaseTotal = computed(() =>
@@ -937,34 +814,34 @@ function setPurchasePaid(value: number | undefined): void {
   purchasePaid.value = value;
 }
 // Live pricing-policy preview: SAME canonical helpers as the transaction.
+// All money on this card is in the SELECTED unit's terms; stock/average math
+// is always in base terms (qty × factor, cost ÷ factor).
 const purchaseProduct = computed(() =>
-  prodsList.value.find((p) => p.id === purchaseId.value),
+  productsStore.list.find((p) => p.id === purchaseId.value),
 );
 const purchaseCurrentCost = computed(() =>
-  toNum(purchaseUnit.value?.average_cost),
+  toNum(purchaseProduct.value?.cost_price),
 );
+const purchaseFactor = computed(() => {
+  const f = Number(purchaseUnit.value?.factor);
+  return Number.isFinite(f) && f > 0 ? f : 0;
+});
 const purchaseBaseQty = computed(() =>
-  purchaseQty.value ?? 0,
+  purchaseFactor.value > 0 ? round4(toNum(purchaseQty.value ?? 0) * purchaseFactor.value) : 0,
 );
 const purchaseBaseCost = computed(() =>
-  purchaseCost.value ?? 0,
+  purchaseFactor.value > 0 ? toNum(purchaseCost.value ?? 0) / purchaseFactor.value : 0,
 );
 const purchasePreviewAvg = computed(() =>
   round4(
     purchasePreviewAverage(
-      purchaseUnit.value?.stock_quantity,
+      purchaseProduct.value?.stock_quantity,
       purchaseCurrentCost.value,
       purchaseBaseQty.value,
       purchaseBaseCost.value,
     ),
   ),
 );
-// Factor of the selected purchase unit (all card money is shown in its terms).
-const purchaseFactor = computed(() => 1);
-const purchaseHasHistory = computed(
-  () => toNum(purchaseUnit.value?.stock_quantity) > 0,
-);
-const purchaseHasRecordedAvg = computed(() => purchaseCurrentCost.value > 0);
 const purchaseInputsReady = computed(
   () => purchaseQty.value !== undefined && purchaseCost.value !== undefined,
 );
@@ -986,114 +863,66 @@ const purchaseOldUnitAvg = computed(() =>
 // exists; a plain midpoint when only a recorded average exists (no quantity
 // to weight with); otherwise the entered cost itself.
 const suggestedAvgBase = computed(() => {
-  if (!purchaseInputsReady.value) return purchasePreviewAvg.value;
-  if (purchaseHasHistory.value) return purchasePreviewAvg.value;
-  if (
-    purchaseHasRecordedAvg.value &&
-    Math.abs(purchaseBaseCost.value - purchaseCurrentCost.value) > 1e-9
-  )
-    return round4((purchaseCurrentCost.value + purchaseBaseCost.value) / 2);
   return purchasePreviewAvg.value;
 });
 const suggestedAvgUnit = computed(() =>
   round4(suggestedAvgBase.value * purchaseFactor.value),
 );
-// True when the entered cost actually moves the average.
-const blendingCase = computed(
-  () =>
-    purchaseInputsReady.value &&
-    Math.abs(purchaseBaseCost.value - purchaseCurrentCost.value) > 1e-9 &&
-    (purchaseHasHistory.value || purchaseHasRecordedAvg.value),
-);
-// Effective average the save will use (user-edited when blending, else the
-// system value). The selling-price suggestion preserves the selected unit's
-// own margin over THIS value — up or down.
-const effectiveAvgUnit = computed(() =>
-  blendingCase.value &&
-  purchaseAvg.value !== undefined &&
-  purchaseAvg.value !== null
-    ? toNum(purchaseAvg.value)
-    : suggestedAvgUnit.value,
-);
+const automaticPrices = computed(() => {
+  const product = purchaseProduct.value;
+  if (!product || !purchaseInputsReady.value || purchaseCostError.value || purchaseQtyError.value || purchaseFactor.value <= 0) return [];
+  return repriceUnits(product, purchaseBaseCost.value);
+});
 const effectiveProposal = computed(() => {
-  if (purchaseUnitOldPrice.value === null)
-    return { rate: null, proposed: null };
-  return proposedSellingPrice(
-    purchaseOldUnitAvg.value,
-    purchaseUnitOldPrice.value,
-    effectiveAvgUnit.value,
-  );
+  const unit = purchaseUnit.value;
+  const price = automaticPrices.value.find((entry) => entry.id === unit?.id);
+  return { rate: price?.profit_margin ?? null, proposed: price?.selling_price ?? null };
 });
-const priceOnlyCase = computed(
-  () =>
-    purchaseInputsReady.value &&
-    !blendingCase.value &&
-    purchaseUnitSellable.value &&
-    suggestedAvgUnit.value - (purchaseUnitOldPrice.value ?? 0) > 1e-9,
-);
-const costCardShown = computed(() => blendingCase.value || priceOnlyCase.value);
 const priceFieldShown = computed(
-  () => costCardShown.value && purchaseUnitSellable.value,
+  () => purchaseUnitSellable.value && purchasePriceEnabled.value,
 );
-// Default selling price for the selected unit: new average + old margin;
-// never-priced unit starts from the average itself; otherwise keep old price.
-function defaultUnitPrice(avgUnit: number): number | undefined {
-  const old = purchaseUnitOldPrice.value;
-  if (old === null) return round2(avgUnit);
-  const { rate, proposed } = proposedSellingPrice(
-    purchaseOldUnitAvg.value,
-    old,
-    avgUnit,
-  );
-  return rate !== null && proposed !== null ? proposed : old;
-}
-const purchaseAvgError = computed(() => {
-  if (!costCardShown.value) return "";
-  if (purchaseAvg.value === undefined || purchaseAvg.value === null) return "";
-  return purchaseAvg.value >= 0 ? "" : "متوسط التكلفة غير صالح.";
-});
-
-// Suggestion sync: while qty/cost/unit/product change, refill both editable
-// fields from the system suggestion; manual edits persist until then.
 function syncPurchaseSuggestions(): void {
-  purchaseAvg.value = purchaseInputsReady.value
-    ? suggestedAvgUnit.value
+  if (!purchasePriceTouched.value) purchasePrice.value = purchasePriceEnabled.value && purchaseUnitSellable.value
+    ? effectiveProposal.value.proposed ?? undefined
     : undefined;
-  purchasePriceTouched.value = false;
-  purchasePrice.value =
-    costCardShown.value && purchaseUnitSellable.value
-      ? defaultUnitPrice(suggestedAvgUnit.value)
-      : undefined;
 }
 watch([purchaseQty, purchaseCost, purchaseUnitId, purchaseId], () => {
   syncPurchaseSuggestions();
 });
-// Editing the average re-derives the price suggestion (unless the user already
-// typed a price manually).
-watch(purchaseAvg, () => {
-  if (purchasePriceTouched.value) return;
-  if (!priceFieldShown.value) return;
-  purchasePrice.value = defaultUnitPrice(effectiveAvgUnit.value);
+watch(purchasePriceEnabled, (enabled) => {
+  purchasePriceTouched.value = false;
+  purchasePrice.value = enabled && purchaseUnitSellable.value
+    ? effectiveProposal.value.proposed ?? undefined
+    : undefined;
 });
 const adjustOpen = ref(false);
 const adjustId = ref<string | null>(null);
-const adjustUnitId = ref("");
+const adjustComponentKey = ref("loose");
 const adjustNew = ref<number | undefined>(undefined);
 const adjustReason = ref("");
-const adjustProduct = computed(() => prodsList.value.find((p) => p.id === adjustId.value));
-const adjustUnits = computed(() => adjustProduct.value ? unitsForProduct(adjustProduct.value) : []);
-const adjustUnitOptions = computed(() => adjustUnits.value.map((unit) => ({ label: unit.name, value: unit.id })));
-const adjustUnit = computed(() => adjustUnits.value.find((unit) => unit.id === adjustUnitId.value));
+const adjustProduct = computed(() => productsStore.list.find((p) => p.id === adjustId.value));
+const adjustPackageUnits = computed(() => adjustProduct.value ? unitsForProduct(adjustProduct.value).filter((unit) => unit.stock_kind === "package" && !unit.archived) : []);
+const adjustComponentOptions = computed(() => [
+  { label: `${adjustProduct.value?.inventory_mode === "independent" ? "عبوات مفردة" : "كمية مفتوحة"} · ${adjustProduct.value?.base_unit_name || "الوحدة الأساسية"}`, value: "loose" },
+  ...adjustPackageUnits.value.map((unit) => ({ label: `عبوات مغلقة · ${unit.name}`, value: `package:${unit.id}` })),
+]);
+const adjustBucket = computed(() => adjustComponentKey.value === "loose" ? "loose" : "package");
+const adjustUnitId = computed(() => adjustComponentKey.value.startsWith("package:") ? adjustComponentKey.value.slice("package:".length) : null);
+const adjustComponentLabel = computed(() => adjustComponentOptions.value.find((option) => option.value === adjustComponentKey.value)?.label || "مكوّن المخزون");
 const adjustName = computed(
   () => adjustProduct.value?.name ?? "",
 );
-const adjustCount = computed(
-  () => adjustUnit.value?.stock_quantity ?? adjustProduct.value?.stock_quantity ?? null,
-);
-const adjustCountText = computed(() => adjustCount.value === null ? "غير مُدخل" : `${round4(adjustCount.value)} ${adjustUnit.value?.name ?? "وحدة"}`);
+const adjustCount = computed(() => {
+  const inventory = adjustProduct.value?.inventory;
+  if (!inventory) return null;
+  return adjustBucket.value === "loose"
+    ? round4(toNum(inventory.loose_base_quantity))
+    : toNum(inventory.closed_packages[adjustUnitId.value || ""]);
+});
+const adjustCountText = computed(() => adjustCount.value === null ? "غير مُدخل" : `${adjustCount.value} · ${adjustComponentLabel.value}`);
 function openPurchase(id?: string): void {
   if (!id) return;
-  const p = prodsList.value.find((x) => x.id === id);
+  const p = productsStore.list.find((x) => x.id === id);
   purchaseId.value = id;
   purchaseQty.value = undefined;
   const purchaseOptions = p ? purchasableUnitsForProduct(p) : [];
@@ -1104,7 +933,7 @@ function openPurchase(id?: string): void {
     p?.cost_price ??
     undefined;
   purchaseUnitId.value = baseUnit?.id ?? "";
-  purchaseAvg.value = undefined;
+  purchasePriceEnabled.value = false;
   purchasePrice.value = undefined;
   purchasePriceTouched.value = false;
   purchasePaid.value = undefined;
@@ -1124,8 +953,7 @@ function openPurchase(id?: string): void {
 function openAdjust(id?: string): void {
   if (!id) return;
   adjustId.value = id;
-  const product = prodsList.value.find((item) => item.id === id);
-  adjustUnitId.value = product ? unitsForProduct(product)[0]?.id ?? "" : "";
+  adjustComponentKey.value = "loose";
   adjustNew.value = undefined;
   adjustReason.value = "";
   stockSubmitError.value = "";
@@ -1137,7 +965,6 @@ async function doPurchase(): Promise<void> {
   if (
     purchaseQtyError.value ||
     purchaseCostError.value ||
-    purchaseAvgError.value ||
     purchasePriceError.value ||
     purchasePaidError.value
   )
@@ -1146,47 +973,27 @@ async function doPurchase(): Promise<void> {
     stockSubmitError.value = "أدخل الكمية وسعر التكلفة أولاً.";
     return;
   }
-  // Single visible average (selected-unit terms) + the snapshot it rests on;
-  // the transaction re-checks the snapshot before saving the approved value,
-  // and touches ONLY the purchased unit's selling price.
-  const card = costCardShown.value;
-  const showPrice = priceFieldShown.value;
+  if (!purchaseUnit.value || !(Number(purchaseUnit.value.factor) > 0)) {
+    stockSubmitError.value = "وحدة الشراء أو معاملها غير صالح.";
+    return;
+  }
   const basis = {
-    stock: round2(toNum(purchaseUnit.value?.stock_quantity)),
-    cost: round4(toNum(purchaseCurrentCost.value)),
+    stock: round4(toNum(purchaseProduct.value?.stock_quantity)),
+    cost: purchaseProduct.value?.cost_price == null ? 0 : round4(toNum(purchaseCurrentCost.value)),
   };
   let pricing: PriceDecision;
-  if (!card) {
-    pricing = { mode: "keep" };
-  } else {
-    if (purchaseAvg.value === undefined) {
-      stockSubmitError.value = "أدخل متوسط التكلفة الجديد أولاً.";
-      return;
-    }
+  if (priceFieldShown.value) {
     const proposal = effectiveProposal.value;
-    if (showPrice && purchasePrice.value === undefined) {
+    if (purchasePrice.value === undefined) {
       stockSubmitError.value =
         proposal.proposed === null
           ? "أدخل سعر البيع يدويًا (لا يوجد هامش سابق)."
           : "أدخل سعر البيع الجديد أولاً.";
       return;
     }
-    const avgBase = round4(toNum(purchaseAvg.value) / purchaseFactor.value);
-    pricing = showPrice
-      ? {
-          mode: "custom" as const,
-          price: purchasePrice.value ?? 0,
-          approvedProposed: proposal.proposed,
-          approvedAverage: avgBase,
-          averageBasis: basis,
-          singleUnit: true,
-        }
-      : {
-          mode: "keep",
-          approvedAverage: avgBase,
-          averageBasis: basis,
-          singleUnit: true,
-        };
+    pricing = { mode: "custom", price: purchasePrice.value, approvedProposed: proposal.proposed, averageBasis: basis };
+  } else {
+    pricing = { mode: "auto", averageBasis: basis };
   }
   if (purchasePaid.value !== undefined && purchasePaid.value !== null) {
     const t = round2(
@@ -1205,7 +1012,7 @@ async function doPurchase(): Promise<void> {
       unit_cost: purchaseCost.value ?? 0,
       unit_id: purchaseUnit.value?.id,
       unit_name: purchaseUnit.value?.name,
-      unit_factor: purchaseUnit.value?.factor ?? 1,
+      unit_factor: purchaseUnit.value.factor,
       pricing,
       paidNow: purchasePaid.value ?? undefined,
       supplier_id: purchaseSupplier.value?.id ?? null,
@@ -1244,8 +1051,8 @@ async function doPurchase(): Promise<void> {
 async function doAdjust(): Promise<void> {
   stockSubmitError.value = "";
   if (!adjustId.value) return;
-  if (!adjustUnitId.value) {
-    stockSubmitError.value = "حدد الوحدة أولًا.";
+  if (adjustBucket.value === "package" && !adjustUnitId.value) {
+    stockSubmitError.value = "حدد العبوة المغلقة أولًا.";
     return;
   }
   if (adjustNewError.value) return;
@@ -1257,8 +1064,9 @@ async function doAdjust(): Promise<void> {
   try {
     const res = await inventory.adjustStock({
       product_id: adjustId.value,
+      bucket: adjustBucket.value,
       unit_id: adjustUnitId.value,
-      new_stock_quantity: adjustNew.value ?? -1,
+      new_quantity: adjustNew.value ?? -1,
       note: adjustReason.value,
     });
     if (!res.ok) {
@@ -1301,6 +1109,7 @@ async function bulkArchiveConfirmed(): Promise<void> {
   await runBulkArchive();
 }
 interface ProductRow {
+  ids?: string[];
   id?: string;
   name: string;
 }
@@ -1312,7 +1121,7 @@ const deleteOpen = computed({
   },
 });
 const deleteTarget = computed(() =>
-  prodsList.value.find((p) => p.id === confirmDelete.value?.id),
+  productsStore.list.find((p) => p.id === confirmDelete.value?.id),
 );
 async function loadProds(): Promise<void> {
   loading.value = true;
@@ -1343,9 +1152,9 @@ async function archiveConfirmed(): Promise<void> {
   if (!id) return;
   deleting.value = true;
   try {
-    const res = await productsStore.archiveProduct(id);
+    const res = await productsStore.archiveProduct(id, confirmDelete.value?.ids || [id]);
     if (!res.ok) {
-      stockSubmitError.value = res.error;
+      notifyToast(res.error, "error");
       return;
     }
     notifyToast("تمت أرشفة المنتج مع حفظ سجله المحاسبي.", "success");
@@ -1357,12 +1166,13 @@ async function archiveConfirmed(): Promise<void> {
 }
 function createInvoiceFromSelectedProducts(): void {
   const products = selectProducts.value.flatMap((id) => {
-    const product = prodsList.value.find((prod) => prod.id === id);
+    const product = productsStore.list.find((prod) => prod.id === id);
     if (!product) return [];
+    const base = (product.units ?? []).find((u) => u.is_base) ?? (product.units ?? [])[0];
     return [
       {
         product_name: product.name,
-        product_price: Number(product.price ?? 0),
+        product_price: Number(base?.selling_price ?? 0),
         product_cost_price: Number(product.cost_price ?? 0),
         product_quantity: 1,
         total: 0,

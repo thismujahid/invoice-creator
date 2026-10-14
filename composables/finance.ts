@@ -1,4 +1,5 @@
 import type { Invoice, InvoiceProductLine, Product, ProductUnit } from "~/types";
+import { baseQuantityFor, inventoryTotal, inventoryLabel, lowStockComponents, movingAverage } from "../functions/shared/inventoryCore.mjs";
 
 /** Round to 2 decimals (money). Single source — use everywhere. */
 export function round2(n: unknown): number {
@@ -94,86 +95,103 @@ export function grossProfitOf(
 }
 
 export function unitsForProduct(product: Product): ProductUnit[] {
-  const configured = Array.isArray(product.units) ? product.units.filter((u) => u && String(u.id ?? "").trim() && String(u.name ?? "").trim()) : [];
-  if (configured.length) return configured;
-  const id = product.base_unit_id || "legacy-base";
-  return [{ id, name: product.base_unit_name || "وحدة", factor: 1, selling_price: product.price, purchase_price: product.cost_price, is_base: true }];
+  return Array.isArray(product.units)
+    ? product.units.filter((unit) => unit && String(unit.id || "").trim() && String(unit.name || "").trim() && Number(unit.factor) > 0 && (unit.stock_kind === "loose" || unit.stock_kind === "package"))
+    : [];
 }
 
-export function purchasableUnitsForProduct(product: Product): ProductUnit[] {
-  return unitsForProduct(product).filter((unit) => unit.can_purchase !== false && (unit.purchase_price === undefined ? true : toNum(unit.purchase_price) > 0));
+/** Base unit of a product (is_base, else base_unit_id, else first). */
+export function baseUnitOf(product: Product): ProductUnit {
+  const units = unitsForProduct(product);
+  const base = units.find((unit) => unit.is_base) ?? units.find((unit) => unit.id === product.base_unit_id);
+  if (!base) throw new Error("PRODUCT_BASE_UNIT_MISSING");
+  return base;
 }
 
-export function sellableUnitsForProduct(product: Product): ProductUnit[] {
-  return unitsForProduct(product).filter((unit) => unit.can_sell !== false && (unit.selling_price === undefined || (unit.selling_price === null && unit.can_sell === undefined) ? true : toNum(unit.selling_price) > 0));
+export function findUnit(product: Product, unitId?: string | null): ProductUnit | undefined {
+  if (!unitId) return undefined;
+  return unitsForProduct(product).find((u) => u.id === unitId);
 }
 
-export function unitSellingPrice(product: Product, unit: ProductUnit): number | null {
-  // Unit-level price is authoritative; product.price remains as the legacy
-  // mirror for base units created before per-unit pricing.
-  if (unit.selling_price !== null && unit.selling_price !== undefined) return toNum(unit.selling_price);
-  if (unit.is_base || unit.id === product.base_unit_id) {
-    return product.price === null || product.price === undefined ? null : toNum(product.price);
-  }
-  return unit.can_sell === undefined && product.price != null ? toNum(product.price) : null;
+/** Factor validation: finite, > 0. Base must be exactly 1. */
+export function isValidFactor(factor: unknown): boolean {
+  const f = Number(factor);
+  return Number.isFinite(f) && f > 0;
 }
 
-/** Last purchase unit-cost for THIS unit (reference value, own denomination).
- *  Falls back to the product-level cost mirror for base units of legacy docs. */
-export function unitPurchasePrice(product: Product, unit: ProductUnit): number | null {
-  if (unit.purchase_price !== null && unit.purchase_price !== undefined) return toNum(unit.purchase_price);
-  if (unit.is_base || unit.id === product.base_unit_id) {
-    return product.cost_price === null || product.cost_price === undefined ? null : toNum(product.cost_price);
-  }
+export function validateUnitFactor(unit: Pick<ProductUnit, "factor" | "is_base">): string | null {
+  const f = Number(unit.factor);
+  if (!Number.isFinite(f) || f <= 0) return "معامل التحويل يجب أن يكون رقمًا موجبًا.";
+  if (unit.is_base && f !== 1) return "معامل الوحدة الأساسية يجب أن يساوي 1.";
   return null;
 }
 
+export function purchasableUnitsForProduct(product: Product): ProductUnit[] {
+  return unitsForProduct(product).filter((unit) => unit.can_purchase !== false && unit.archived !== true);
+}
+
+export function sellableUnitsForProduct(product: Product): ProductUnit[] {
+  return unitsForProduct(product).filter((unit) => unit.can_sell !== false && unit.archived !== true && unit.selling_price !== null && unit.selling_price !== undefined && toNum(unit.selling_price) > 0);
+}
+
+export function unitSellingPrice(_product: Product, unit: ProductUnit): number | null {
+  if (unit.selling_price === null || unit.selling_price === undefined) return null;
+  return toNum(unit.selling_price);
+}
+
+/** Last purchase price in the unit's own denomination (reference only). */
+export function unitPurchasePrice(_product: Product, unit: ProductUnit): number | null {
+  if (unit.purchase_price === null || unit.purchase_price === undefined) return null;
+  return toNum(unit.purchase_price);
+}
+
 /** Derived moving-average cost in the unit's own denomination
- *  (base average × factor). Computed on demand — never stored, so per-unit
- *  figures can never drift out of sync with the base average. */
+ *  (base average × factor). Computed on demand — never stored. */
 export function unitAverageCost(product: Product, unit: ProductUnit): number | null {
-  if (unit.average_cost !== null && unit.average_cost !== undefined) return round4(toNum(unit.average_cost));
   if (product.cost_price === null || product.cost_price === undefined) return null;
   const factor = Number(unit.factor);
   if (!Number.isFinite(factor) || factor <= 0) return null;
   return round4(toNum(product.cost_price) * factor);
 }
 
-/** Display stock in the unit's own quantity (single base-unit balance
- *  divided by factor). The ledger stays in base units. */
 export function unitStockDisplay(product: Product, unit: ProductUnit): number {
-  if (unit.stock_quantity !== null && unit.stock_quantity !== undefined) return round4(toNum(unit.stock_quantity));
+  if (!product.inventory) return Number.NaN;
+  if (unit.stock_kind === "package") return toNum(product.inventory?.closed_packages?.[unit.id]);
   const factor = Number(unit.factor);
-  const safe = Number.isFinite(factor) && factor > 0 ? factor : 1;
-  return toNum(product.stock_quantity) / safe;
+  if (!Number.isFinite(factor) || factor <= 0) return 0;
+  const quantity = inventoryTotal(product.inventory, unitsForProduct(product)) / factor;
+  return unit.allows_fractional === true
+    ? Math.floor((quantity + 1e-9) * 10000) / 10000
+    : Math.floor(quantity + 1e-9);
 }
 
+/** Canonical stock breakdown, e.g. 63 KG with carton×20 → "3 كرتونة و3 كجم".
+ *  Whole larger units first, remainder in base. No double counting. */
 export function stockQuantityLabel(product: Product, quantity?: number | null | undefined): string {
-  const independent = unitsForProduct(product).some((unit) => unit.stock_quantity !== null && unit.stock_quantity !== undefined);
-  if (independent && quantity === undefined) {
-    const parts = unitsForProduct(product)
-      .filter((unit) => Math.abs(unitStockDisplay(product, unit)) > 1e-9)
-      .map((unit) => `${round4(unitStockDisplay(product, unit))} ${unit.name || "وحدة"}`);
-    return parts.length ? parts.join(" و ") : "لا يوجد مخزون";
-  }
   const displayed = quantity === undefined ? product.stock_quantity : quantity;
   if (displayed === null || displayed === undefined) return "غير مُدخل";
   if (!Number.isFinite(displayed)) return "—";
+  if (quantity === undefined && !product.inventory) return "غير مُدخل";
+  const inventory = quantity === undefined
+    ? product.inventory!
+    : { loose_base_quantity: round4(toNum(quantity)), closed_packages: {} };
+  return inventoryLabel(inventory, product as never);
+}
+
+/** Machine-readable decomposition of canonical stock into whole larger
+ *  units + base remainder. Pure — used by displays and tests. */
+export function decomposeStock(product: Product, quantity?: number | null | undefined): { unit: ProductUnit; qty: number }[] {
   const units = unitsForProduct(product);
-  const base = units.find((unit) => unit.is_base || unit.id === product.base_unit_id) ?? units[0];
-  const baseName = base?.name || product.base_unit_name || "وحدة";
-  if (displayed < 0) return `${displayed} ${baseName}`;
-  let remaining = round4(displayed);
-  const parts: string[] = [];
-  const larger = units.filter((unit) => unit.id !== base?.id && Number.isFinite(Number(unit.factor)) && Number(unit.factor) > 1).sort((a, b) => b.factor - a.factor);
-  for (const unit of larger) {
-    const whole = Math.floor((remaining + 1e-9) / unit.factor);
-    if (!whole) continue;
-    parts.push(`${whole} ${unit.name}`);
-    remaining = round4(remaining - whole * unit.factor);
-  }
-  if (remaining > 0 || !parts.length) parts.push(`${remaining} ${baseName}`);
-  return parts.join(" و");
+  const base = baseUnitOf(product);
+  if (quantity === undefined && !product.inventory) return [];
+  const inventory = quantity === undefined
+    ? product.inventory!
+    : { loose_base_quantity: round4(toNum(quantity)), closed_packages: {} };
+  const out = units.filter((unit) => unit.stock_kind === "package" && toNum(inventory.closed_packages[unit.id]) > 0)
+    .sort((a, b) => b.factor - a.factor)
+    .map((unit) => ({ unit, qty: toNum(inventory.closed_packages[unit.id]) }));
+  if (inventory.loose_base_quantity > 0 || out.length === 0) out.push({ unit: base, qty: round4(toNum(inventory.loose_base_quantity)) });
+  return out;
 }
 
 export function convertUnitPrice(unitCost: unknown, fromFactor: unknown, toFactor: unknown): number {
@@ -185,12 +203,14 @@ export function convertUnitPrice(unitCost: unknown, fromFactor: unknown, toFacto
 
 export function lineUnitFactor(line: Pick<InvoiceProductLine, "unit_factor">): number {
   const factor = Number(line.unit_factor);
-  return Number.isFinite(factor) && factor > 0 ? factor : 1;
+  if (!Number.isFinite(factor) || factor <= 0) throw new Error("INVOICE_UNIT_FACTOR_INVALID");
+  return factor;
 }
 
 export function lineBaseQuantity(line: Pick<InvoiceProductLine, "product_quantity" | "unit_factor" | "base_quantity">): number {
   const snapshot = Number(line.base_quantity);
-  return round2(Number.isFinite(snapshot) && snapshot >= 0 ? snapshot : toNum(line.product_quantity) * lineUnitFactor(line));
+  if (!Number.isFinite(snapshot) || snapshot < 0) throw new Error("INVOICE_BASE_QUANTITY_MISSING");
+  return round4(snapshot);
 }
 
 /** Canonical unit conversion (base ↔ selected unit).
@@ -198,14 +218,29 @@ export function lineBaseQuantity(line: Pick<InvoiceProductLine, "product_quantit
  *  Stock and average cost are always stored in BASE terms. */
 export function toBaseQuantity(quantityInUnit: unknown, factor: unknown): number {
   const factorNum = Number(factor);
-  const safe = Number.isFinite(factorNum) && factorNum > 0 ? factorNum : 1;
-  return round2(toNum(quantityInUnit) * safe);
+  if (!Number.isFinite(factorNum) || factorNum <= 0) throw new Error("معامل التحويل غير صالح.");
+  try { return baseQuantityFor(Number(quantityInUnit), factorNum); }
+  catch (error) {
+    if (error instanceof Error && error.message === "BASE_QUANTITY_PRECISION_INVALID") throw new Error("الكمية بعد التحويل يجب أن تكون قابلة للتمثيل حتى أربع منازل عشرية.");
+    throw new Error("الكمية أو معامل التحويل غير صالح.");
+  }
 }
 
 export function toUnitQuantity(baseQuantity: unknown, factor: unknown): number {
   const factorNum = Number(factor);
-  const safe = Number.isFinite(factorNum) && factorNum > 0 ? factorNum : 1;
-  return toNum(baseQuantity) / safe;
+  if (!Number.isFinite(factorNum) || factorNum <= 0) throw new Error("معامل التحويل غير صالح.");
+  return round4(toNum(baseQuantity) / factorNum);
+}
+
+/** Validate a quantity in a unit's denomination: finite, > 0 (or >= 0 when
+ *  allowZero), at most 4 decimals, integer when the unit forbids fractions. */
+export function validateUnitQuantity(unit: Pick<ProductUnit, "allows_fractional">, quantity: unknown, opts?: { allowZero?: boolean }): string | null {
+  const q = Number(quantity);
+  if (!Number.isFinite(q)) return "الكمية غير صالحة.";
+  if (opts?.allowZero ? q < 0 : q <= 0) return "الكمية يجب أن تكون أكبر من صفر.";
+  if (Math.abs(round4(q) - q) > 1e-9) return "الكمية تقبل أربع منازل عشرية كحد أقصى.";
+  if (unit.allows_fractional !== true && !Number.isInteger(q)) return "هذه الوحدة لا تقبل كميات كسرية.";
+  return null;
 }
 
 /** Canonical average cost of ONE BASE UNIT (Product.cost_price semantics). */
@@ -341,45 +376,33 @@ export function purchaseLineBaseQuantity(quantity: unknown, factor: unknown): nu
 
 export function purchaseLineBaseCost(unitCost: unknown, factor: unknown): number {
   const factorNum = Number(factor);
-  const safe = Number.isFinite(factorNum) && factorNum > 0 ? factorNum : 1;
-  return toNum(unitCost) / safe;
+  if (!Number.isFinite(factorNum) || factorNum <= 0) throw new Error("معامل التحويل غير صالح.");
+  return toNum(unitCost) / factorNum;
 }
 
 export function purchasePreviewAverage(currentStock: unknown, currentAvg: unknown, addedBaseQty: unknown, addedBaseCost: unknown): number {
-  return movingAverageCost(currentStock, currentAvg, addedBaseQty, addedBaseCost);
+  return movingAverage(toNum(currentStock), toNum(currentAvg), toNum(addedBaseQty), toNum(addedBaseQty) * toNum(addedBaseCost)) ?? toNum(currentAvg);
 }
 
-export function purchaseImportPreview(unit: ProductUnit, quantity: number, unitCost: number, sellingPrice: number | null): { average: number; sellingPrice: number | null; pricing: PriceDecision } {
-  const average = round4(purchasePreviewAverage(unit.stock_quantity, unit.average_cost, quantity, unitCost));
-  const oldPrice = unit.selling_price == null ? null : toNum(unit.selling_price);
-  const rate = orderMarginRate(toNum(unit.average_cost), oldPrice, toNum(unit.purchase_price));
-  const proposed = rate === null ? null : round2(average * (1 + rate));
-  const price = sellingPrice ?? (oldPrice !== null && oldPrice > 0 ? proposed ?? Math.max(oldPrice, average) : oldPrice);
+/** Canonical purchase preview for ONE line in its selected unit:
+ *  converts to base terms, then blends with the canonical stock/average. */
+export function previewBasePurchase(
+  currentStockBase: unknown,
+  currentAvgBase: unknown,
+  quantityInUnit: unknown,
+  unitCost: unknown,
+  factor: unknown,
+): { baseQty: number; baseCost: number; newAvg: number; lineTotal: number } {
+  const f = Number(factor);
+  if (!Number.isFinite(f) || f <= 0) throw new Error("معامل التحويل غير صالح.");
+  const baseQty = round4(toNum(quantityInUnit) * f);
+  const baseCost = toNum(unitCost) / f;
   return {
-    average,
-    sellingPrice: price,
-    pricing: price !== null && unit.can_sell !== false
-      ? { mode: "custom", price: round2(price), averageBasis: { stock: round4(toNum(unit.stock_quantity)), cost: round4(toNum(unit.average_cost)) } }
-      : { mode: "keep", averageBasis: { stock: round4(toNum(unit.stock_quantity)), cost: round4(toNum(unit.average_cost)) } },
+    baseQty,
+    baseCost,
+    newAvg: round4(movingAverage(toNum(currentStockBase), currentAvgBase == null ? null : toNum(currentAvgBase), baseQty, baseQty * baseCost) ?? toNum(currentAvgBase)),
+    lineTotal: round2(toNum(quantityInUnit) * toNum(unitCost)),
   };
-}
-
-export function applyUnitPurchase(unit: ProductUnit, quantity: number, unitCost: number, pricing: PriceDecision): ProductUnit {
-  if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(unitCost) || unitCost < 0) throw new Error("كمية أو تكلفة الشراء غير صالحة.");
-  if (unit.can_purchase === false) throw new Error("هذه الوحدة لا تقبل الشراء.");
-  if (unit.allows_fractional !== true && !Number.isInteger(quantity)) throw new Error("هذه الوحدة لا تقبل كميات كسرية.");
-  const next: ProductUnit = {
-    ...unit,
-    stock_quantity: round4(toNum(unit.stock_quantity) + quantity),
-    average_cost: round4(purchasePreviewAverage(unit.stock_quantity, unit.average_cost, quantity, unitCost)),
-    purchase_price: round4(unitCost),
-  };
-  if (pricing.mode !== "keep" && unit.can_sell !== false) {
-    const price = pricing.price ?? (pricing.mode === "proposed" ? pricing.approvedProposed : undefined);
-    if (price == null || !Number.isFinite(price) || price < 0) throw new Error("سعر البيع غير صالح.");
-    next.selling_price = round2(price);
-  }
-  return next;
 }
 
 /** Aggregate multi-unit purchase lines of one product into base terms so the
@@ -391,7 +414,7 @@ export function aggregatePurchaseByProduct(
   const sorted = [...lines].sort((a, b) => String(a.product_id).localeCompare(String(b.product_id)));
   for (const line of sorted) {
     const entry = map.get(line.product_id) ?? { baseQty: 0, totalCost: 0, baseCost: 0 };
-    entry.baseQty = round2(entry.baseQty + toNum(line.baseQty));
+    entry.baseQty = round4(entry.baseQty + toNum(line.baseQty));
     entry.totalCost = entry.totalCost + toNum(line.lineTotal);
     map.set(line.product_id, entry);
   }
@@ -405,13 +428,14 @@ export function aggregatePurchaseByProduct(
  *  change. Each unit preserves its own previous margin:
  *  oldUnitAvg = oldBaseAvg × factor, newUnitAvg = newBaseAvg × factor. */
 export function purchaseUnitProposals(
-  product: Pick<Product, "cost_price" | "price" | "units" | "base_unit_id">,
+  product: Pick<Product, "cost_price" | "units" | "base_unit_id">,
   newBaseAvg: unknown,
 ): { unitId: string; unitName: string; factor: number; oldAvg: number | null; oldPrice: number | null; newAvg: number | null; rate: number | null; proposed: number | null }[] {
   const units = unitsForProduct(product as Product).filter((u) => u.can_sell !== false);
   const newAvg = toNum(newBaseAvg);
   return units.map((unit) => {
-    const factor = Number(unit.factor) > 0 ? Number(unit.factor) : 1;
+    const factor = Number(unit.factor);
+    if (!Number.isFinite(factor) || factor <= 0) throw new Error("PRODUCT_UNIT_FACTOR_INVALID");
     const oldAvg = product.cost_price === null || product.cost_price === undefined ? null : round4(toNum(product.cost_price) * factor);
     const oldPrice = unitSellingPrice(product as Product, unit);
     const newUnitAvg = round4(newAvg * factor);
@@ -423,23 +447,24 @@ export function purchaseUnitProposals(
   });
 }
 
-/** Excel formula for the editable "new average cost" cell of a purchase-order
- *  row. Strictly per-row: blending ONLY this row's quantity/cost with the
- *  baked stock, else midpoint (or the cost itself when nothing was ever
- *  recorded). Rows never reference each other — editing one row changes only
- *  its own cells. Multi-row same-product files therefore show per-row
- *  estimates; the import approves ONE aggregate average computed from all
- *  rows' quantities/costs (never the per-row values). Pure string builder —
- *  testable without Excel. */
+/** Excel formula for the editable "new average cost (base)" cell of a
+ *  purchase-order row. Columns: C = order qty (preferred unit), D = unit cost
+ *  (preferred unit). Baked constants: stockBase (base stock), oldBase (base
+ *  avg), factor (preferred unit factor). newAvgBase =
+ *  (stockBase*oldBase + C*D) / (stockBase + C*factor); empty qty keeps old;
+ *  empty stock takes the row's base cost (D/factor). Pure string builder. */
 export function shortageAvgFormula(args: {
   ownRow: number;
-  oldUnitAvg: number;
-  costRef: number;
-  stockUnit: number;
+  oldBaseAvg: number;
+  stockBase: number;
+  factor: number;
 }): string {
-  const { ownRow, oldUnitAvg, stockUnit } = args;
-  const weighted = `(${stockUnit}*${oldUnitAvg}+C${ownRow}*D${ownRow})/(${stockUnit}+C${ownRow})`;
-  return `IF(OR(C${ownRow}="",C${ownRow}=0),${oldUnitAvg},ROUND(IF(${stockUnit}<=0,D${ownRow},${weighted}),4))`;
+  const { ownRow, oldBaseAvg, stockBase, factor } = args;
+  const f = Number(factor);
+  if (!Number.isFinite(f) || f <= 0) throw new Error("PRODUCT_UNIT_FACTOR_INVALID");
+  const weighted = `(${stockBase}*${oldBaseAvg}+C${ownRow}*D${ownRow})/(${stockBase}+C${ownRow}*${f})`;
+  const rowBaseCost = `(D${ownRow}/${f})`;
+  return `IF(OR(C${ownRow}="",C${ownRow}=0),${oldBaseAvg},ROUND(IF(${stockBase}<=0,${rowBaseCost},${weighted}),4))`;
 }
 
 /** Margin rate implied by recorded prices for a purchase-order unit row:
@@ -477,7 +502,8 @@ export function manualPriceBaseOf(
   const oldUnitPrice = unit ? unitSellingPrice(full, unit) : null;
   if (oldUnitPrice !== null && Math.abs(toNum(row.priceOverride) - oldUnitPrice) <= 0.005) return null;
   if (siblingCount > 1 && oldUnitPrice !== null) {
-    const factor = Number(row.unitFactor) > 0 ? Number(row.unitFactor) : 1;
+    const factor = Number(unit?.factor ?? row.unitFactor);
+    if (!Number.isFinite(factor) || factor <= 0) return null;
     const oldUnitAvg = round4(toNum(full.cost_price) * factor);
     const lastCost = unit ? unitPurchasePrice(full, unit) : null;
     const costRefLike = lastCost ?? oldUnitAvg;
@@ -601,9 +627,9 @@ export function applyStockGroup(
   }
   let a = avg;
   if (costQty > 0) {
-    a = round4(s > 0
+    a = s > 0
       ? movingAverageCost(s, a ?? 0, costQty, costVal / costQty)
-      : costVal / costQty);
+      : costVal / costQty;
   }
   s = round4(s + costQty + plainQty);
   return { stock: s, avg: a };
@@ -655,14 +681,9 @@ export function proposedSellingPrice(
 export interface AverageOverride {
   approvedAverage?: number | null;
   averageBasis?: { stock: number; cost: number } | null;
-  /** When true, `price`/`approvedProposed` are denominated in the purchased
-   *  line's unit and only THAT unit's selling price may change — every other
-   *  unit keeps its price (quick-buy dialog). Absent = legacy behavior where
-   *  the base price moves and all sellable units follow their own margins. */
-  singleUnit?: boolean;
 }
 export type PriceDecision =
-  | ({ mode: "keep" } & AverageOverride)
+  | ({ mode: "auto" | "keep" } & AverageOverride)
   | ({ mode: "proposed"; approvedProposed: number; price?: number } & AverageOverride)
   | ({ mode: "custom"; price: number; approvedProposed?: number | null } & AverageOverride);
 
@@ -754,13 +775,13 @@ export interface EditStockChanges {
 function lineCostGroups(line: InvoiceProductLine): { base_quantity: number; unit_cost: number }[] {
   if (Array.isArray(line.cost_groups) && line.cost_groups.length) {
     return line.cost_groups
-      .map((group) => ({ base_quantity: round2(toNum(group.base_quantity)), unit_cost: round4(toNum(group.unit_cost)) }))
+      .map((group) => ({ base_quantity: round4(toNum(group.base_quantity)), unit_cost: toNum(group.unit_cost) }))
       .filter((group) => group.base_quantity > 0);
   }
   const quantity = lineBaseQuantity(line);
   return quantity > 0 ? [{
     base_quantity: quantity,
-    unit_cost: round4(toNum(line.base_cost_snapshot ?? line.product_cost_price)),
+    unit_cost: toNum(line.base_cost_snapshot ?? line.product_cost_price),
   }] : [];
 }
 
@@ -785,7 +806,7 @@ export function invoiceEditStockChanges(
       oldIndex = candidates[0]?.index;
     }
     const totalBaseQuantity = lineBaseQuantity(line);
-    const currentCost = round4(toNum(currentCostByProduct.get(line.product_id ?? "")));
+    const currentCost = toNum(currentCostByProduct.get(line.product_id ?? ""));
     if (oldIndex === undefined || !line.product_id) {
       return {
         ...line,
@@ -804,12 +825,12 @@ export function invoiceEditStockChanges(
     for (const group of lineCostGroups(oldLine)) {
       if (keep <= 1e-9) break;
       const quantity = Math.min(keep, group.base_quantity);
-      if (quantity > 0) retained.push({ base_quantity: round2(quantity), unit_cost: group.unit_cost });
-      keep = round2(keep - quantity);
+      if (quantity > 0) retained.push({ base_quantity: round4(quantity), unit_cost: group.unit_cost });
+      keep = round4(keep - quantity);
     }
-    if (keep > 1e-9) retained.push({ base_quantity: round2(keep), unit_cost: currentCost });
+    if (keep > 1e-9) retained.push({ base_quantity: round4(keep), unit_cost: currentCost });
     const costTotal = retained.reduce((sum, group) => sum + group.base_quantity * group.unit_cost, 0);
-    const averageCost = totalBaseQuantity > 0 ? round4(costTotal / totalBaseQuantity) : currentCost;
+    const averageCost = totalBaseQuantity > 0 ? costTotal / totalBaseQuantity : currentCost;
     return {
       ...line,
       line_id: oldLine.line_id || line.line_id || `edit-${requestedIndex}`,
@@ -834,10 +855,10 @@ export function invoiceEditStockChanges(
         if (Math.abs(keep.unit_cost - group.unit_cost) > 1e-9) continue;
         const take = Math.min(group.base_quantity - retained, keep.base_quantity);
         retained += take;
-        keep.base_quantity = round2(keep.base_quantity - take);
+        keep.base_quantity = round4(keep.base_quantity - take);
         if (retained >= group.base_quantity - 1e-9) break;
       }
-      const restore = round2(group.base_quantity - retained);
+      const restore = round4(group.base_quantity - retained);
       if (restore > 0) restoredGroups.push({ base_quantity: restore, unit_cost: group.unit_cost });
     }
     for (const group of restoredGroups.reverse()) {
@@ -860,8 +881,8 @@ export function invoiceEditStockChanges(
     if (!line.product_id) continue;
     const oldIndex = oldIndexByNew.get(newIndex);
     const oldQuantity = oldIndex === undefined ? 0 : lineBaseQuantity(oldLines[oldIndex]!);
-    const addedQuantity = Math.max(0, round2(lineBaseQuantity(line) - oldQuantity));
-    if (addedQuantity > 0) addedByProduct.set(line.product_id, round2((addedByProduct.get(line.product_id) ?? 0) + addedQuantity));
+    const addedQuantity = Math.max(0, round4(lineBaseQuantity(line) - oldQuantity));
+    if (addedQuantity > 0) addedByProduct.set(line.product_id, round4((addedByProduct.get(line.product_id) ?? 0) + addedQuantity));
   }
   const takes: StockDelta[] = [];
   for (const [productId, quantity] of addedByProduct) {
@@ -907,16 +928,16 @@ export function restoreGroupsForEdit(
   const oldTotal = new Map<string, number>();
   for (const l of oldLines) {
     if (!l.product_id) continue;
-    oldTotal.set(l.product_id, round2((oldTotal.get(l.product_id) ?? 0) + lineBaseQuantity(l)));
+    oldTotal.set(l.product_id, round4((oldTotal.get(l.product_id) ?? 0) + lineBaseQuantity(l)));
   }
   const newTotal = new Map<string, number>();
   for (const l of newLines) {
     if (!l.product_id) continue;
-    newTotal.set(l.product_id, round2((newTotal.get(l.product_id) ?? 0) + lineBaseQuantity(l)));
+    newTotal.set(l.product_id, round4((newTotal.get(l.product_id) ?? 0) + lineBaseQuantity(l)));
   }
   const out: RestoreGroup[] = [];
   for (const [pid, oldQty] of oldTotal) {
-    let need = round2(oldQty - (newTotal.get(pid) ?? 0));
+    let need = round4(oldQty - (newTotal.get(pid) ?? 0));
     if (!(need > 0)) continue;
     for (const l of oldLines) {
       if (need <= 0) break;
@@ -927,13 +948,13 @@ export function restoreGroupsForEdit(
       out.push({
         product_id: pid,
         product_name: l.product_name,
-        qty: round2(take),
-        unit_cost: round4(toNum(l.product_cost_price)),
+        qty: round4(take),
+        unit_cost: toNum(l.product_cost_price),
         unit_id: l.unit_id,
         unit_name: l.unit_name,
         unit_factor: lineUnitFactor(l),
       });
-      need = round2(need - take);
+      need = round4(need - take);
     }
   }
   return out;
@@ -960,7 +981,7 @@ export function stockDeltaForEdit(
   const ids = new Set([...o.keys(), ...n.keys()]);
   const out: StockDelta[] = [];
   for (const id of ids) {
-    const delta = round2((o.get(id)?.qty ?? 0) - (n.get(id)?.qty ?? 0));
+    const delta = round4((o.get(id)?.qty ?? 0) - (n.get(id)?.qty ?? 0));
     if (delta !== 0) {
       const ref = n.get(id) ?? o.get(id)!;
       out.push({ product_id: id, product_name: ref.name, delta, unit_cost: ref.cost });
@@ -977,12 +998,13 @@ export function loanStatusOf(paid: unknown, remaining: unknown): "open" | "parti
   return "open";
 }
 
-/** Inventory aggregates for the cashbox dashboard.
- *  Uses stock_quantity ONLY — legacy `count` means pieces-per-package.
- *  - costValue: reliable accounting value (base qty × base average cost).
- *  - saleValue: EXPECTED sales at BASE-unit price only (forecast, not realized).
- *    Products with multiple sale units may realize different prices. */
-export function inventoryAggregates(products: Pick<Product, "stock_quantity" | "price" | "cost_price" | "units">[]): {
+/** Inventory aggregates for the cashbox dashboard — canonical base model.
+ *  - costValue: Σ base stock × base average cost (reliable accounting value).
+ *  - saleValue: Σ base stock × base-equivalent selling price (forecast).
+ *    Base-equivalent price = base unit price when sellable, else first
+ *    sellable unit's price ÷ factor. Products with multiple sale units may
+ *    realize different prices — this is an expectation, not realized sales. */
+export function inventoryAggregates(products: Pick<Product, "stock_quantity" | "cost_price" | "units">[]): {
   costValue: number;
   saleValue: number;
   expectedProfit: number;
@@ -991,46 +1013,48 @@ export function inventoryAggregates(products: Pick<Product, "stock_quantity" | "
   let sale = 0;
   let saleCost = 0;
   for (const p of products) {
-    const units = unitsForProduct(p as Product);
-    const independent = units.some((unit) => unit.stock_quantity !== null && unit.stock_quantity !== undefined);
-    if (independent) {
-      for (const unit of units) {
-        const quantity = unitStockDisplay(p as Product, unit);
-        cost += quantity * toNum(unit.average_cost);
-        if (unit.can_sell !== false && toNum(unit.selling_price) > 0) {
-          sale += quantity * toNum(unit.selling_price);
-          saleCost += quantity * toNum(unit.average_cost);
-        }
-      }
-      continue;
+    const full = p as Product;
+    const stock = toNum(full.stock_quantity);
+    const avg = toNum(full.cost_price);
+    cost += stock * avg;
+    const basePrice = baseEquivalentSellingPrice(full);
+    if (basePrice !== null && basePrice > 0) {
+      sale += stock * basePrice;
+      saleCost += stock * avg;
     }
-    const c = toNum(p.stock_quantity);
-    cost += c * toNum(p.cost_price);
-    sale += c * toNum(p.price);
-    if (toNum(p.price) > 0) saleCost += c * toNum(p.cost_price);
   }
   cost = round2(cost);
   sale = round2(sale);
   return { costValue: cost, saleValue: sale, expectedProfit: round2(sale - saleCost) };
 }
 
+/** Base-equivalent selling price: base unit price if sellable, else first
+ *  sellable unit's price converted to base terms (price ÷ factor). */
+export function baseEquivalentSellingPrice(product: Product): number | null {
+  const units = unitsForProduct(product);
+  const base = baseUnitOf(product);
+  if (base && base.can_sell !== false && base.selling_price !== null && base.selling_price !== undefined && toNum(base.selling_price) > 0) {
+    return toNum(base.selling_price);
+  }
+  for (const u of units) {
+    if (u.can_sell === false) continue;
+    if (u.selling_price === null || u.selling_price === undefined || !(toNum(u.selling_price) > 0)) continue;
+    const f = Number(u.factor);
+    if (!Number.isFinite(f) || f <= 0) continue;
+    return toNum(u.selling_price) / f;
+  }
+  return null;
+}
+
 export function inventoryDataIssues(products: Product[]): { valuation: number; forecast: number } {
   let valuation = 0;
   let forecast = 0;
   for (const product of products) {
-    const units = Array.isArray(product.units) ? product.units : [];
-    if (!units.length) {
-      if (product.stock_quantity == null || (toNum(product.stock_quantity) !== 0 && product.cost_price == null)) valuation++;
-      if (product.is_active !== false && toNum(product.stock_quantity) > 0 && (product.price == null || product.cost_price == null)) forecast++;
-      continue;
-    }
-    for (const unit of units) {
-      const quantity = unit.stock_quantity;
-      const missingStock = quantity == null || !Number.isFinite(Number(quantity));
-      const missingCost = unit.average_cost == null || !Number.isFinite(Number(unit.average_cost));
-      if (missingStock || (toNum(quantity) !== 0 && missingCost)) valuation++;
-      if (product.is_active !== false && toNum(quantity) > 0 && unit.can_sell !== false && (unit.selling_price == null || (toNum(unit.selling_price) > 0 && missingCost))) forecast++;
-    }
+    const stock = product.stock_quantity;
+    const missingStock = stock === null || stock === undefined || !Number.isFinite(Number(stock));
+    const missingCost = product.cost_price === null || product.cost_price === undefined || !Number.isFinite(Number(product.cost_price));
+    if (missingStock || (toNum(stock) !== 0 && missingCost)) valuation++;
+    if (product.is_active !== false && toNum(stock) > 0 && (baseEquivalentSellingPrice(product) === null || missingCost)) forecast++;
   }
   return { valuation, forecast };
 }
@@ -1040,48 +1064,18 @@ export function normalizePhone(phone: unknown): string {
   return String(phone ?? "").replace(/\D/g, "");
 }
 
-/** Low-stock threshold with default 5 for legacy products (S3). */
-export function lowStockThresholdOf(p: Pick<Product, "low_stock_threshold">): number {
-  const v = (p as { low_stock_threshold?: unknown }).low_stock_threshold;
-  if (v === null || v === undefined || v === "") return 5;
-  const n = Number(v);
-  return Number.isFinite(n) && n >= 0 ? n : 5;
+/** Loose-stock threshold in base-unit terms. Zero disables this component's alert. */
+export function lowStockThresholdOf(product: Pick<Product, "inventory_alerts">): number {
+  const value = Number(product.inventory_alerts?.loose?.reorder_point ?? 0);
+  return Number.isFinite(value) && value >= 0 ? value : 0;
 }
 
-/** Per-unit low-stock threshold in the unit's OWN denomination.
- *  null = no threshold configured for this unit (never triggers). */
-export function unitLowThresholdOf(unit: Pick<ProductUnit, "low_stock_threshold">): number | null {
-  const v = (unit as { low_stock_threshold?: unknown }).low_stock_threshold;
-  if (v === null || v === undefined || v === "") return null;
-  const n = Number(v);
-  return Number.isFinite(n) && n >= 0 ? n : null;
-}
-
-/** True when at least one configured unit defines its own threshold.
- *  Unit-level thresholds then replace the legacy product-level threshold. */
-export function productHasUnitThresholds(product: Pick<Product, "units">): boolean {
-  return unitsForProduct(product as Product).some((unit) => unitLowThresholdOf(unit) !== null);
-}
-
-/** True when the on-hand stock (expressed in this unit's denomination)
- *  is below the unit's own threshold. Units without a threshold never fire. */
-export function isUnitLowStock(product: Pick<Product, "stock_quantity" | "units" | "base_unit_id" | "base_unit_name" | "price" | "cost_price">, unit: ProductUnit): boolean {
-  const threshold = unitLowThresholdOf(unit);
-  if (threshold === null) return false;
-  return unitStockDisplay(product as Product, unit) - threshold < -1e-9;
-}
-
-/** Every unit currently below its own threshold (detail rows for the
- *  shortage dialog and the per-unit purchase-order export). */
-export function lowStockUnitsOf(product: Product): ProductUnit[] {
-  return unitsForProduct(product).filter((unit) => isUnitLowStock(product, unit));
-}
-
-/** Human display of one unit's threshold in its own denomination. */
-export function unitThresholdDisplayOf(unit: Pick<ProductUnit, "name" | "low_stock_threshold">): string {
-  const threshold = unitLowThresholdOf(unit);
-  if (threshold === null) return "—";
-  return `${String(round4(threshold))} ${(unit as ProductUnit).name || "وحدة"}`;
+/** Loose-stock target level in base-unit terms. */
+export function targetStockLevelOf(product: Pick<Product, "inventory_alerts">): number | null {
+  const value = product.inventory_alerts?.loose?.target_level;
+  if (value === null || value === undefined) return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 ? numeric : null;
 }
 
 /** Cap for the per-unit purchase-price history log. */
@@ -1116,118 +1110,80 @@ export function prependPurchasePriceHistory(existing: unknown, price: number, at
     .join(",");
 }
 
-/** True when the product has any ENABLED shortage threshold (strictly above
- *  zero). A zero threshold means "no alert" — the product never joins the
- *  shortage list, even at zero/negative stock. Units without a threshold
- *  never count; products with no unit thresholds at all fall back to the
- *  legacy product-level threshold (default 5), preserving legacy behavior. */
-export function hasShortageAlert(product: Pick<Product, "low_stock_threshold" | "units">): boolean {
-  if (productHasUnitThresholds(product as Product)) {
-    return unitsForProduct(product as Product).some((unit) => {
-      const threshold = unitLowThresholdOf(unit);
-      return threshold !== null && threshold > 0;
-    });
-  }
-  return lowStockThresholdOf(product) > 0;
+/** True when at least one component has an enabled shortage rule. */
+export function hasShortageAlert(product: Pick<Product, "inventory_alerts">): boolean {
+  const value = product as Product;
+  const loose = lowStockThresholdOf(value) > 0;
+  const packages = Object.values(value.inventory_alerts?.packages || {}).some((rule) => toNum(rule.reorder_point) > 0);
+  return loose || packages;
 }
 
-/** One (product, unit) shortage pair — the row unit of the shortage dialog,
- *  its Excel export, and the shortage button count. */
+/** One shortage row per physical inventory component. */
 export interface ShortageUnit {
   product: Product;
   unit: ProductUnit;
+  bucket: "loose" | "package";
+  key: string;
+  current: number;
+  reorder_point: number;
+  target_level: number | null;
 }
 
-/** Purchasable units driving the shortage dialog and its Excel export:
- *  unit-mode keeps only enabled thresholds (> 0, zero/null never appear);
- *  legacy products (no unit thresholds at all) keep every purchasable unit. */
+/** Units with an active component alert. */
 export function shortageDisplayUnitsOf(product: Product): ProductUnit[] {
-  const purchasable = purchasableUnitsForProduct(product);
-  const fallback = purchasable.length
-    ? purchasable
-    : unitsForProduct(product).slice(0, 1);
-  if (!fallback.length) return [];
-  if (productHasUnitThresholds(product)) {
-    const enabled = fallback.filter((u) => {
-      const threshold = unitLowThresholdOf(u);
-      return threshold !== null && threshold > 0;
-    });
-    if (enabled.length) return enabled;
-    return unitsForProduct(product).filter((u) => {
-      const threshold = unitLowThresholdOf(u);
-      return threshold !== null && threshold > 0;
-    });
-  }
-  return fallback;
+  const rows = lowStockComponents(product as never);
+  return rows.map((row) => row.bucket === "package"
+    ? unitsForProduct(product).find((unit) => unit.id === row.unit_id)!
+    : baseUnitOf(product));
 }
 
-/** Every shortage (product, unit) row — THE single source for the dialog
- *  table, its Excel export, and the shortage count, so all three always
- *  agree (counts are per unit, not per product). */
+/** Every low-stock product — THE single source for the dialog table, its
+ *  Excel export, and the shortage count, so all three always agree.
+ *  Counts are per product, never duplicated per unit. */
 export function shortageUnitRowsOf(products: Product[]): ShortageUnit[] {
   return products
-    .filter(
-      (p) =>
-        (p as { is_active?: unknown }).is_active !== false &&
-        hasShortageAlert(p) &&
-        (isNegativeStock(p) || isOutOfStock(p) || isLowStock(p)),
-    )
-    .sort(
-      (a, b) =>
-        toNum(a.stock_quantity) - toNum(b.stock_quantity) ||
-        a.name.localeCompare(b.name),
-    )
-    .flatMap((p) => shortageDisplayUnitsOf(p)
-      .filter((unit) => productHasUnitThresholds(p)
-        ? isUnitLowStock(p, unit)
-        : unitStockDisplay(p, unit) < lowStockThresholdOf(p) / (Number(unit.factor) > 0 ? Number(unit.factor) : 1) - 1e-9)
-      .map((unit) => ({ product: p, unit })));
+    .filter((product) => product.is_active !== false)
+    .flatMap((product) => lowStockComponents(product as never).flatMap((component) => {
+      const unit = component.bucket === "package"
+        ? unitsForProduct(product).find((entry) => entry.id === component.unit_id)
+        : baseUnitOf(product);
+      if (!unit) return [];
+      return [{
+        product,
+        unit,
+        bucket: component.bucket,
+        key: `${product.id || product.name}:${component.bucket}:${component.unit_id || "loose"}`,
+        current: component.current,
+        reorder_point: component.reorder_point,
+        target_level: component.target_level,
+      }];
+    }))
+    .sort((a, b) => a.current - b.current || a.product.name.localeCompare(b.product.name) || a.unit.name.localeCompare(b.unit.name));
 }
 
-/** Unified shortage rule (S3): stock < threshold. Never uses `count`.
- *  Prefers per-unit thresholds when any unit defines one; otherwise falls
- *  back to the legacy product-level threshold. */
-export function isLowStock(p: Pick<Product, "stock_quantity" | "low_stock_threshold" | "is_active" | "units">): boolean {
+/** A product is low when at least one physical component is below its own point. */
+export function isLowStock(p: Pick<Product, "inventory" | "inventory_alerts" | "units" | "is_active">): boolean {
   if ((p as { is_active?: unknown }).is_active === false) return false;
-  const product = p as Product;
-  if (productHasUnitThresholds(product)) {
-    return unitsForProduct(product).some((unit) => isUnitLowStock(product, unit));
-  }
-  return toNum(p.stock_quantity) - lowStockThresholdOf(p) < -1e-9;
+  return lowStockComponents(p as never).length > 0;
 }
 
 export function isOutOfStock(p: Pick<Product, "stock_quantity" | "is_active">): boolean {
   if ((p as { is_active?: unknown }).is_active === false) return false;
-  const product = p as Product;
-  const units = unitsForProduct(product);
-  if (units.some((unit) => unit.stock_quantity !== null && unit.stock_quantity !== undefined)) {
-    return units.every((unit) => unitStockDisplay(product, unit) <= 0);
-  }
-  return toNum(p.stock_quantity) <= 0;
+  if (p.stock_quantity === null || p.stock_quantity === undefined || !Number.isFinite(Number(p.stock_quantity))) return false;
+  return toNum((p as Product).stock_quantity) <= 0;
 }
 
 export function isNegativeStock(p: Pick<Product, "stock_quantity" | "is_active">): boolean {
   if ((p as { is_active?: unknown }).is_active === false) return false;
-  const product = p as Product;
-  const units = unitsForProduct(product);
-  if (units.some((unit) => unit.stock_quantity !== null && unit.stock_quantity !== undefined)) {
-    return units.some((unit) => unitStockDisplay(product, unit) < -1e-9);
-  }
-  return toNum(p.stock_quantity) < -1e-9;
+  if (p.stock_quantity === null || p.stock_quantity === undefined || !Number.isFinite(Number(p.stock_quantity))) return false;
+  return toNum((p as Product).stock_quantity) < -1e-9;
 }
 
-/** Human display of the threshold in its chosen unit's denomination
- *  (e.g. "1 علبة" instead of the raw base-unit number). Math stays base. */
-export function thresholdDisplayOf(p: Pick<Product, "low_stock_threshold" | "low_stock_unit_id" | "base_unit_name" | "units">): string {
+/** Human display of the reorder point in base-unit terms. Math stays base. */
+export function thresholdDisplayOf(p: Pick<Product, "inventory_alerts" | "base_unit_name" | "units">): string {
   const base = lowStockThresholdOf(p);
-  const units = unitsForProduct(p as Product);
-  const chosen = p.low_stock_unit_id ? units.find((u) => u.id === p.low_stock_unit_id) : undefined;
-  const unit = chosen ?? units.find((u) => u.is_base) ?? units[0];
-  if (!unit) return String(base);
-  const factor = Number(unit.factor);
-  const value = Number.isFinite(factor) && factor > 0 ? base / factor : base;
-  const name = unit.name || (p as Product).base_unit_name || "وحدة";
-  return `${String(round4(value))} ${name}`;
+  const unit = unitsForProduct(p as Product).find((entry) => entry.is_base) ?? unitsForProduct(p as Product)[0];
+  return `${String(round4(base))} ${unit?.name || p.base_unit_name || "وحدة"}`;
 }
 
 /** Normalize a customer name: strip diacritics, collapse whitespace, trim. */
@@ -1261,13 +1217,13 @@ export const useFinance = () => ({
   MAX_PURCHASE_ITEMS,
   estimatePurchaseOps,
   inventoryAggregates,
+  baseEquivalentSellingPrice,
   inventoryDataIssues,
   normalizePhone,
   normalizeName,
   lowStockThresholdOf,
+  targetStockLevelOf,
   thresholdDisplayOf,
-  unitLowThresholdOf,
-  productHasUnitThresholds,
   hasShortageAlert,
   shortageDisplayUnitsOf,
   shortageUnitRowsOf,
@@ -1275,9 +1231,6 @@ export const useFinance = () => ({
   manualPriceBaseOf,
   orderMarginRate,
   siblingRowConflict,
-  isUnitLowStock,
-  lowStockUnitsOf,
-  unitThresholdDisplayOf,
   MAX_PURCHASE_PRICE_HISTORY,
   parsePurchasePriceHistory,
   prependPurchasePriceHistory,
@@ -1313,10 +1266,15 @@ export const useFinance = () => ({
   purchaseLineBaseQuantity,
   purchaseLineBaseCost,
   purchasePreviewAverage,
-  purchaseImportPreview,
-  applyUnitPurchase,
+  previewBasePurchase,
   aggregatePurchaseByProduct,
   purchaseUnitProposals,
+  baseUnitOf,
+  findUnit,
+  isValidFactor,
+  validateUnitFactor,
+  validateUnitQuantity,
+  decomposeStock,
   requiresCashForSale,
   requiresCashForEdit,
   requiresCashForRefund,

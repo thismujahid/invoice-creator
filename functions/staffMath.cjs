@@ -10,22 +10,47 @@ function invoiceRevision(invoice) {
   })).digest("hex");
 }
 
-function safeProduct(id, data) {
-  const configured = Array.isArray(data.units) && data.units.length ? data.units : [{ id: data.base_unit_id || "legacy-base", name: data.base_unit_name || "وحدة", factor: 1, selling_price: data.price ?? null, is_base: true }];
-  const units = configured.filter((unit) => Number(unit.factor) > 0).map((unit) => ({
+function safeProduct(id, data, inventoryTotal) {
+  const configured = Array.isArray(data.units) ? data.units : [];
+  const units = configured.filter((unit) => Number(unit.factor) > 0 && (unit.stock_kind === "loose" || unit.stock_kind === "package")).map((unit) => ({
     id: unit.id,
     name: unit.name,
     factor: Number(unit.factor),
-    selling_price: unit.selling_price ?? ((unit.is_base || unit.id === data.base_unit_id) ? data.price ?? null : null),
+    stock_kind: unit.stock_kind,
+    selling_price: unit.selling_price ?? null,
+    purchase_price: unit.purchase_price ?? null,
     is_base: unit.is_base === true,
     can_sell: unit.can_sell !== false,
-    stock_quantity: unit.stock_quantity ?? null,
+    can_purchase: unit.can_purchase !== false,
     allows_fractional: unit.allows_fractional === true,
-    low_stock_threshold: unit.low_stock_threshold ?? null,
+    archived: unit.archived === true,
   }));
+  const inventory = data.inventory && typeof data.inventory === "object" ? data.inventory : null;
+  let stockQuantity = null;
+  if (inventory) {
+    try { stockQuantity = inventoryTotal(inventory, units); }
+    catch { stockQuantity = null; }
+  }
   return {
-    id, name: data.name, price: data.price ?? null, stock_quantity: data.stock_quantity ?? null,
-    low_stock_threshold: data.low_stock_threshold ?? 5, base_unit_id: data.base_unit_id ?? null,
+    id, uses_variants: data.uses_variants !== false,
+    inventory_mode: data.inventory_mode === "independent" ? "independent" : "convertible",
+    name: data.inventory_mode === "independent"
+      ? data.uses_variants === false
+        ? [data.family_name || data.name, data.pack_size_name].filter(Boolean).join(" — ")
+        : [data.family_name, data.variant_name || data.name, data.pack_size_name].filter(Boolean).join(" — ")
+      : data.uses_variants === false ? data.family_name || data.name : data.family_name && data.variant_name ? `${data.family_name} — ${data.variant_name}` : data.name,
+    family_id: data.family_id ?? null,
+    family_name: data.family_name ?? null,
+    variant_name: data.variant_name ?? data.name,
+    variant_key: data.variant_key ?? null,
+    pack_size_name: data.pack_size_name ?? null,
+    variant_order: Number.isInteger(data.variant_order) ? data.variant_order : 0,
+    pack_size_order: Number.isInteger(data.pack_size_order) ? data.pack_size_order : 0,
+    inventory,
+    stock_quantity: stockQuantity,
+    cost_price: null,
+    inventory_alerts: data.inventory_alerts ?? { loose: { reorder_point: 0, target_level: null }, packages: {} },
+    base_unit_id: data.base_unit_id ?? null,
     base_unit_name: data.base_unit_name ?? null, is_active: data.is_active !== false, units,
   };
 }

@@ -51,7 +51,8 @@
           :title="parseError"
         />
         <template v-if="rows.length">
-          <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <UAlert color="info" variant="soft" title="تُحدّث أسعار البيع تلقائيًا بنفس نسبة ربح كل وحدة. عند تكرار النوع في الملف، يُستخدم آخر سطر له كأساس لتكلفة التسعير." />
+          <div class="grid grid-cols-2 gap-2 sm:grid-cols-3">
             <UCard variant="outline"
               ><div class="text-lg font-bold">{{ rows.length }}</div>
               <div class="text-xs text-gray-500">صفوف الملف</div></UCard
@@ -59,12 +60,6 @@
             <UCard variant="outline"
               ><div class="text-lg font-bold">{{ matchedCount }}</div>
               <div class="text-xs text-gray-500">منتجات موجودة</div></UCard
-            >
-            <UCard variant="outline"
-              ><div class="text-lg font-bold">{{ newCount }}</div>
-              <div class="text-xs text-gray-500">
-                منتجات جديدة مختارة
-              </div></UCard
             >
             <UCard variant="outline"
               ><div
@@ -103,20 +98,12 @@
                   </div>
                   <UBadge
                     :color="
-                      row.product
-                        ? 'success'
-                        : row.createNew
-                          ? 'info'
-                          : 'warning'
+                      row.product ? 'success' : 'warning'
                     "
                     variant="soft"
                   >
                     {{
-                      row.product
-                        ? "منتج موجود"
-                        : row.createNew
-                          ? "إنشاء منتج جديد"
-                          : "يحتاج قرارًا"
+                      row.product ? "صنف مطابق" : "يحتاج مطابقة"
                     }}
                   </UBadge>
                 </div>
@@ -138,32 +125,19 @@
                       "
                     />
                   </UFormField>
-                  <UCheckbox
-                    v-model="row.createNew"
-                    label="إنشاء منتج جديد بهذا الاسم"
-                  />
                   <p class="mt-1 text-xs text-amber-800">
-                    لم يُعثر على المعرّف؛ لن تتم مطابقة الاسم تلقائيًا. سيُنشأ
-                    منتج جديد بمعرّف Firestore جديد.
+                    لم يُعثر على معرّف الصنف. اختر صنفًا موجودًا يدويًا؛ لن يُفترض صنف أو معامل وحدة تلقائيًا.
                   </p>
-                  <UFormField
-                    v-if="row.createNew"
-                    label="اسم المنتج الجديد"
-                    required
-                    class="mt-2"
-                  >
-                    <UInput v-model="row.name" class="w-full" />
-                  </UFormField>
                 </div>
                 <div class="grid grid-cols-2 gap-2">
-                  <UFormField :label="`الكمية (${row.product ? row.unitName : row.baseUnitName})`"
+                  <UFormField :label="`الكمية (${row.unitName || row.requestedUnitName || 'الوحدة'})`"
                     ><UInputNumber
                       v-model="row.quantity"
                       :min="0.0001"
-                      :step="selectedUnit(row)?.allows_fractional || row.allowsFractional ? 0.01 : 1"
+                      :step="selectedUnit(row)?.allows_fractional ? 0.0001 : 1"
                       class="w-full"
                   /></UFormField>
-                  <UFormField :label="`تكلفة ${row.product ? row.unitName : row.baseUnitName}`"
+                  <UFormField :label="`تكلفة ${row.unitName || row.requestedUnitName || 'الوحدة'}`"
                     ><UInputNumber
                       v-model="row.unitCost"
                       :min="0"
@@ -172,7 +146,7 @@
                   /></UFormField>
                 </div>
                 <UFormField
-                  v-if="row.product && unitChoices(row).length > 1"
+                  v-if="row.product && (unitChoices(row).length > 1 || !selectedUnit(row))"
                   label="وحدة الكمية والتكلفة"
                   ><USelectMenu
                     :model-value="selectedUnit(row)"
@@ -183,33 +157,7 @@
                     class="w-full"
                     @update:model-value="(unit) => pickUnit(row, unit)"
                 /></UFormField>
-                <template v-if="row.createNew">
-                  <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    <UFormField label="سعر البيع للمنتج الجديد" required
-                      ><UInputNumber
-                        v-model="row.newPrice"
-                        :min="0.01"
-                        :step="0.01"
-                        class="w-full"
-                    /></UFormField>
-                    <UFormField
-                      label="مؤشر النقص لهذه الوحدة"
-                      hint="الافتراضي 5"
-                      ><UInputNumber
-                        v-model="row.threshold"
-                        :min="0"
-                        :step="1"
-                        class="w-full"
-                    /></UFormField>
-                    <UFormField label="اسم الوحدة" required
-                      ><UInput
-                        v-model="row.baseUnitName"
-                        placeholder="مثال: قطعة أو جرام"
-                        class="w-full"
-                    /></UFormField>
-                  </div>
-                  <UCheckbox v-model="row.allowsFractional" label="تقبل الكسور" />
-                </template>
+                <p v-if="row.product" class="text-xs text-gray-500">متوسط التكلفة المتوقع للصنف بعد دمج كل وحدات الشراء في الملف: {{ previewAverageLabel(row.product) }}</p>
                 <ul
                   v-if="rowErrors(row).length"
                   class="list-inside list-disc text-xs text-red-700"
@@ -238,7 +186,7 @@
             >
               <span
                 >{{ row.name }} · {{ row.quantity ?? "—" }}
-                {{ row.product ? row.unitName : row.baseUnitName }} ×
+                {{ row.unitName || row.requestedUnitName }} ×
                 {{ formatePrice(row.unitCost) }} ج</span>
               <span
                 :class="
@@ -463,15 +411,11 @@ interface ImportRow {
   quantity: number | null;
   unitCost: number | null;
   product?: Product;
-  createNew: boolean;
-  newPrice: number | null;
-  threshold: number | null;
-  allowsFractional: boolean;
-  baseUnitName: string;
   unitId?: string;
   unitName?: string;
   unitFactor: number;
   requestedUnitName: string;
+  requestedUnitId: string;
   unitIssue: string;
 }
 interface ImportResult {
@@ -490,7 +434,9 @@ const {
   round2,
   round4,
   toNum,
+  purchaseLineBaseQuantity,
   purchasableUnitsForProduct,
+  purchasePreviewAverage,
   MAX_PURCHASE_ITEMS: maxItems,
 } = useFinance();
 const formatePrice = useHelpers().formatePrice;
@@ -584,9 +530,6 @@ function rowDuplicateKey(row: ImportRow): string {
 const matchedCount = computed(
   () => rows.value.filter((row) => !!row.product).length,
 );
-const newCount = computed(
-  () => rows.value.filter((row) => !row.product && row.createNew).length,
-);
 const errorCount = computed(
   () => rows.value.filter((row) => rowErrors(row).length > 0).length,
 );
@@ -623,12 +566,13 @@ function splitDisplayName(rawName: string): {
 
 interface ExtraColumns {
   unit: number;
+  unitId: number;
 }
 
 function makeRow(
   raw: unknown[],
   rowNumber: number,
-  extra: ExtraColumns = { unit: -1 },
+  extra: ExtraColumns = { unit: -1, unitId: -1 },
 ): ImportRow {
   const productId = String(raw[0] ?? "").trim();
   const { base: parsedName, parenUnit } = splitDisplayName(
@@ -638,12 +582,15 @@ function makeRow(
   const existing = productId ? productsById.value.get(productId) : undefined;
   const requestedUnitName =
     (extra.unit >= 0 ? String(raw[extra.unit] ?? "").trim() : "") || parenUnit;
+  const requestedUnitId = extra.unitId >= 0 ? String(raw[extra.unitId] ?? "").trim() : "";
   const choices = existing ? purchasableUnitsForProduct(existing) : [];
-  const base = choices[0];
-  const matches = requestedUnitName
+  const matches = requestedUnitId
+    ? choices.filter((unit) => unit.id === requestedUnitId)
+    : requestedUnitName
     ? choices.filter((unit) => unit.name.trim() === requestedUnitName)
     : [];
-  const selected = requestedUnitName ? matches[0] : base;
+  const selected = matches.length === 1 ? matches[0] : undefined;
+  const factor = selected && Number(selected.factor) > 0 ? Number(selected.factor) : 0;
   return {
     rowNumber,
     productId,
@@ -651,21 +598,18 @@ function makeRow(
     quantity: numericCell(raw[2]),
     unitCost: numericCell(raw[3]),
     product: existing,
-    createNew: false,
-    newPrice: null,
-    threshold: 5,
-    allowsFractional: false,
-
-    baseUnitName: !existing && requestedUnitName ? requestedUnitName : "وحدة",
-    unitId: selected?.id ?? (existing ? "" : "unit"),
+    unitId: selected?.id,
     unitName:
       selected?.name ??
-      (requestedUnitName || existing?.base_unit_name || "وحدة"),
-    unitFactor: 1,
+      requestedUnitName,
+    unitFactor: factor,
     requestedUnitName,
+    requestedUnitId,
     unitIssue:
-      existing && !choices.length ? "لا توجد وحدات شراء متاحة لهذا المنتج." : existing && requestedUnitName && matches.length !== 1
-        ? "نوع الوحدة غير موجود أو مكرر لهذا المنتج؛ اختر وحدة شراء صحيحة."
+      existing && !choices.length ? "لا توجد وحدات شراء متاحة لهذا الصنف." : existing && (!requestedUnitId && !requestedUnitName)
+        ? "معرّف الوحدة أو اسم وحدة معروف مطلوب؛ لن يُفترض المعامل 1."
+        : existing && matches.length !== 1
+          ? "معرّف الوحدة أو اسمها غير معروف لهذا الصنف؛ اختر وحدة شراء صحيحة."
         : "",
   };
 }
@@ -678,30 +622,17 @@ function pickProduct(
   row.product = product;
   row.productId = product.id;
   row.name = product.name;
-  row.createNew = false;
-  const base = purchasableUnitsForProduct(product).find(
-    (unit) => unit.is_base,
-  ) ??
-    purchasableUnitsForProduct(product)[0] ?? {
-      id: product.base_unit_id || "legacy-base",
-      name: product.base_unit_name || "وحدة",
-      factor: 1,
-      selling_price: product.price,
-      is_base: true,
-    };
   const matches = row.requestedUnitName
     ? purchasableUnitsForProduct(product).filter(
         (unit) => unit.name.trim() === row.requestedUnitName,
       )
     : [];
-  const selected = matches.length === 1 ? matches[0]! : base;
-  row.unitId = selected.id;
-  row.unitName = selected.name;
-  row.unitFactor = 1;
-  row.unitIssue =
-    row.requestedUnitName && matches.length !== 1
-      ? "نوع الوحدة غير موجود أو مكرر لهذا المنتج؛ اختر وحدة شراء صحيحة."
-      : "";
+  const selected = (row.requestedUnitId ? purchasableUnitsForProduct(product).find((unit) => unit.id === row.requestedUnitId) : undefined) ?? (matches.length === 1 ? matches[0] : undefined);
+  row.unitId = selected?.id;
+  row.requestedUnitId = selected?.id ?? "";
+  row.unitName = selected?.name ?? row.requestedUnitName;
+  row.unitFactor = selected ? Number(selected.factor) : 0;
+  row.unitIssue = selected ? "" : "اختر وحدة شراء متاحة لهذا الصنف.";
 }
 
 function unitChoices(row: ImportRow): ProductUnit[] {
@@ -710,16 +641,14 @@ function unitChoices(row: ImportRow): ProductUnit[] {
   return purchasableUnitsForProduct(product);
 }
 function selectedUnit(row: ImportRow): ProductUnit | undefined {
-  return (
-    unitChoices(row).find((unit) => unit.id === row.unitId) ??
-    unitChoices(row)[0]
-  );
+  return unitChoices(row).find((unit) => unit.id === row.unitId);
 }
 function pickUnit(row: ImportRow, unit?: ProductUnit): void {
   if (!unit) return;
   row.unitId = unit.id;
+  row.requestedUnitId = unit.id;
   row.unitName = unit.name;
-  row.unitFactor = 1;
+  row.unitFactor = Number(unit.factor);
   row.unitIssue = "";
 }
 
@@ -769,11 +698,12 @@ async function onFile(event: Event): Promise<void> {
     ) {
       throw new Error(`يجب أن تبدأ الأعمدة بـ: ${baseHeaders.join("، ")}.`);
     }
-    const extra: ExtraColumns = { unit: -1 };
+    const extra: ExtraColumns = { unit: -1, unitId: -1 };
     (data[0] ?? []).forEach((cell, index) => {
       if (index < 4) return;
       const title = String(cell ?? "").trim();
       if (title === "نوع الوحدة" && extra.unit < 0) extra.unit = index;
+      if (title === "معرّف وحدة الشراء" && extra.unitId < 0) extra.unitId = index;
     });
     const parsedRows = data
       .slice(1)
@@ -790,12 +720,6 @@ async function onFile(event: Event): Promise<void> {
         `الحد الأقصى للملف ${maxItems} أصناف حتى تُحفظ فاتورة المورد كاملة مرة واحدة.`,
       );
     rows.value = parsedRows;
-    // Unmatched rows default to new-product creation (the user unchecks +
-    // picks manually when it was just a mismatch); their missing fields
-    // surface in the compact review section.
-    for (const row of parsedRows) {
-      if (!row.product) row.createNew = true;
-    }
     const digest = await crypto.subtle.digest("SHA-256", buffer);
     fileHash.value = [...new Uint8Array(digest)]
       .map((value) => value.toString(16).padStart(2, "0"))
@@ -817,7 +741,8 @@ function currentProduct(row: ImportRow): Product | undefined {
 function rowErrors(row: ImportRow): string[] {
   const errors: string[] = [];
   if (row.unitIssue) errors.push(row.unitIssue);
-  if (row.product && !selectedUnit(row)) errors.push("اختر وحدة شراء متاحة.");
+  if (!row.product) errors.push("اختر صنفًا مخزنيًا موجودًا قبل تأكيد الشراء.");
+  if (row.product && (!selectedUnit(row) || !row.unitId || !(row.unitFactor > 0))) errors.push("اختر وحدة شراء متاحة ومعرّفها معروف.");
   if (
     rows.value.some(
       (other) =>
@@ -833,8 +758,14 @@ function rowErrors(row: ImportRow): string[] {
     )
   )
     errors.push("أدخل كمية موجبة وصالحة.");
-  else if (selectedUnit(row)?.allows_fractional !== true && !row.allowsFractional && !Number.isInteger(row.quantity))
+  else if (selectedUnit(row)?.allows_fractional !== true && !Number.isInteger(row.quantity))
     errors.push("الكمية يجب أن تكون رقمًا صحيحًا.");
+  else if (Math.abs(row.quantity - round4(row.quantity)) > 1e-9)
+    errors.push("الكمية تقبل أربع منازل عشرية كحد أقصى.");
+  else if (selectedUnit(row)) {
+    try { purchaseLineBaseQuantity(row.quantity, selectedUnit(row)!.factor); }
+    catch { errors.push("الكمية بعد التحويل يجب أن تكون موجبة وقابلة للتمثيل حتى أربع منازل عشرية."); }
+  }
   if (
     !(
       row.unitCost !== null &&
@@ -843,28 +774,24 @@ function rowErrors(row: ImportRow): string[] {
     )
   )
     errors.push("أدخل تكلفة وحدة غير سالبة وصالحة.");
-  if (!row.product && !row.createNew)
-    errors.push("اختر إنشاء منتج جديد بعد مراجعة الاسم.");
-  if (!row.name.trim()) errors.push("اسم المنتج مطلوب.");
-  if (!row.product && row.createNew) {
-    if (
-      !(
-        row.newPrice !== null &&
-        Number.isFinite(row.newPrice) &&
-        row.newPrice > 0
-      )
-    )
-      errors.push("سعر البيع للمنتج الجديد مطلوب.");
-    if (
-      row.threshold === null ||
-      !Number.isFinite(row.threshold) ||
-      row.threshold < 0
-    )
-      errors.push("مؤشر النقص يجب ألا يكون سالبًا.");
-    if (!row.baseUnitName.trim())
-      errors.push("اسم الوحدة مطلوب.");
-  }
   return errors;
+}
+
+function previewAverageLabel(product: Product): string {
+  const lines = rows.value.filter((row) => row.product?.id === product.id);
+  let addedQuantity = 0;
+  let addedValue = 0;
+  for (const row of lines) {
+    const unit = selectedUnit(row);
+    if (!unit || !(Number(unit.factor) > 0) || !(Number(row.quantity) > 0) || !Number.isFinite(Number(row.unitCost))) return "أكمل الكمية والتكلفة";
+    try { addedQuantity = round4(addedQuantity + purchaseLineBaseQuantity(Number(row.quantity), unit.factor)); }
+    catch { return "الكمية بعد التحويل غير صالحة"; }
+    addedValue += round2(Number(row.quantity) * Number(row.unitCost));
+  }
+  if (!(addedQuantity > 0)) return "—";
+  const currentQuantity = toNum(product.stock_quantity);
+  const average = purchasePreviewAverage(currentQuantity, product.cost_price, addedQuantity, addedValue / addedQuantity);
+  return `${round4(average)} ${product.base_unit_name || "للوحدة الأساسية"}`;
 }
 async function submit(): Promise<void> {
   submitError.value = "";
@@ -877,45 +804,27 @@ async function submit(): Promise<void> {
   stageSubtitle.value = "";
   try {
     const items = rows.value.map((row) => {
-      const pricing: PriceDecision = { mode: "keep" };
+      const product = row.product!;
+      const pricing: PriceDecision = { mode: "auto", averageBasis: { stock: round4(toNum(product.stock_quantity)), cost: round4(toNum(product.cost_price)) } };
+      const f = Number(row.unitFactor);
       return {
-        product_id: row.product?.id ?? null,
+        product_id: product.id,
         name: row.name,
         quantity: row.quantity ?? 0,
         unit_cost: row.unitCost ?? 0,
         pricing,
-        price: row.product ? undefined : row.newPrice,
-        threshold: row.product ? undefined : row.threshold,
-        unit_id: row.product ? row.unitId : "unit",
+        unit_id: row.unitId,
         unit_name: row.unitName,
-        unit_factor: 1,
-        units: row.product
-          ? undefined
-          : [
-              {
-                id: "unit",
-                name: row.baseUnitName,
-                factor: 1,
-                selling_price: row.newPrice,
-                purchase_price: row.unitCost,
-                can_purchase: true,
-                can_sell: true,
-                allows_fractional: row.allowsFractional,
-                low_stock_threshold: row.threshold ?? 5,
-              },
-            ],
+        unit_factor: f,
       };
     });
     if (items.length > maxItems) {
       submitError.value = `الحد الأقصى للفاتورة ${maxItems} أصناف. قلّل الصفوف ثم أعد رفع الملف.`;
       return;
     }
-    const newTotal = rows.value.filter((row) => !row.product).length;
-    const existingTotal = rows.value.length - newTotal;
     stageSteps.value = [
       "فحص المنتجات",
-      `إضافة الكميات للمنتجات الموجودة (${existingTotal})`,
-      ...(newTotal > 0 ? [`إنشاء المنتجات الجديدة (${newTotal})`] : []),
+      `إضافة الكميات للأصناف الموجودة (${rows.value.length})`,
       "حفظ فاتورة المورد",
       "تحديث الأرصدة",
     ];

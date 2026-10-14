@@ -2,7 +2,6 @@ import { collection, doc, getDoc, getDocs, limit, query, where } from "firebase/
 import { onSnapshot } from "firebase/firestore";
 import type { Customer } from "~/types";
 import type { Invoice } from "~/types";
-import type { Product, ProductUnit } from "~/types";
 import type { PurchaseInvoice, Supplier, SupplierAdvance } from "~/types/finance";
 import { ADMIN_EMAIL } from "~/constants/auth";
 import { deriveSupplierInvoiceStatus } from "~/types/finance";
@@ -42,9 +41,6 @@ function pushUnique(index: Map<string, string[]>, key: string, id: string): void
 /** One-time, idempotent, chunked migration tools (F22). No replay of cash. */
 export const useMigration = defineStore("migration", () => {
   const { auth, db, writeBatch, serverTimestamp } = useFirebase();
-  const authStore = useAuth();
-
-  const by = () => (authStore.currentUserKey as string) || null;
   async function readAll<T extends { id?: string }>(collectionName: string): Promise<T[]> {
     const snapshot = await getDocs(collection(db, collectionName));
     return snapshot.docs.map((item) => ({ id: item.id, ...(item.data() as object) }) as T);
@@ -209,66 +205,6 @@ export const useMigration = defineStore("migration", () => {
     }
     onProgress?.(writes.length, writes.length);
     return { invoices: invoiceTargets.length, customers: customerTargets.length };
-  }
-
-  /** Explicit opening-stock entry (R4): sets stock_quantity only for products
-   *  lacking it, plus one opening_stock audit record each. Idempotent. */
-  async function setOpeningStocks(
-    entries: { product_id: string; quantity: number; unit_cost?: number | null; low_stock_threshold?: number | null }[],
-    onProgress?: (done: number, total: number) => void,
-  ): Promise<{ total: number; set: number; skipped: number }> {
-    const valid = entries.filter((e) => e.product_id && Number.isFinite(e.quantity) && e.quantity >= 0);
-    const existing = await getDocs(
-      query(collection(db, "inventory_transactions"), where("type", "==", "opening_stock")),
-    );
-    const seeded = new Set(existing.docs.map((d) => String((d.data() as Record<string, unknown>).product_id || "")));
-    const products = await readAll<Product>("products");
-    const byId = new Map(products.map((p) => [p.id, p]));
-    const now = serverTimestamp();
-    let set = 0;
-    for (let i = 0; i < valid.length; i += CHUNK) {
-      const batch = writeBatch(db);
-      for (const e of valid.slice(i, i + CHUNK)) {
-        const p = byId.get(e.product_id);
-        if (!p) continue;
-        if (p.stock_quantity !== null && p.stock_quantity !== undefined) continue;
-        const threshold = e.low_stock_threshold ?? p.low_stock_threshold ?? 5;
-        if (!Number.isFinite(threshold) || threshold < 0) continue;
-        if (seeded.has(e.product_id)) continue;
-        const quantity = round2(toNum(e.quantity));
-        if (quantity > 0) {
-          const ref = doc(collection(db, "inventory_transactions"));
-          batch.update(doc(db, "products", e.product_id), {
-            stock_quantity: quantity,
-            low_stock_threshold: threshold,
-            last_inventory_transaction_id: ref.id,
-            last_inventory_transaction_ids: [ref.id],
-          });
-          batch.set(ref, {
-            type: "opening_stock",
-            product_id: e.product_id,
-            product_name: p.name,
-            quantity,
-            direction: "in",
-            unit_cost: e.unit_cost ?? toNum(p.cost_price),
-            note: "رصيد افتتاحي",
-            created_by: by(),
-            created_at: now,
-          });
-        } else {
-          batch.update(doc(db, "products", e.product_id), {
-            stock_quantity: 0,
-            low_stock_threshold: threshold,
-          });
-        }
-        seeded.add(e.product_id);
-        set += 1;
-      }
-      await batch.commit();
-      onProgress?.(Math.min(i + CHUNK, valid.length), valid.length);
-    }
-    onProgress?.(valid.length, valid.length);
-    return { total: valid.length, set, skipped: valid.length - set };
   }
 
   /** Rebuild every invoice debt summary from its source invoice. */
@@ -501,72 +437,6 @@ export const useMigration = defineStore("migration", () => {
     return { invoices: invoices.length, customers: customers.length, customerSummaries: docs.length, debtSummaries: debtSummariesToWrite.length, supplierInvoices: purchaseInvoices.length, suppliers: suppliers.length, dailyStats: dailyStats.size, monthlyStats: monthlyStats.size, returns: returnSnapshots.size, returnsTotal };
   }
 
-  /** Backfill per-unit pricing: ensures every product has a units[] array
-   *  with a base entry carrying selling_price (+purchase_price mirror).
-   *  Legacy docs without units get a synthesized base; existing additional
-   *  units keep purchase_price null until their first real purchase.
-   *  Idempotent: only writes when something is missing. */
-  async function backfillProductUnits(
-    onProgress?: (done: number, total: number) => void,
-  ): Promise<{ total: number; updated: number; skipped: number }> {
-    const products = await readAll<Product>("products");
-    const targets: { id: string; units: ProductUnit[]; patch: Record<string, unknown> }[] = [];
-    for (const p of products) {
-      if (!p.id) continue;
-      const baseId = p.base_unit_id || "base";
-      const baseName = (p.base_unit_name || "وحدة").trim() || "وحدة";
-      const configured = Array.isArray(p.units) ? p.units.filter((u) => u && Number.isFinite(Number(u.factor)) && Number(u.factor) > 0) : [];
-      const baseEntry = configured.find((u) => u.is_base) ?? configured.find((u) => u.id === baseId) ?? null;
-      const needBase =
-        !baseEntry ||
-        baseEntry.selling_price === null ||
-        baseEntry.selling_price === undefined ||
-        baseEntry.purchase_price === null ||
-        baseEntry.purchase_price === undefined;
-      if (configured.length && !needBase) continue;
-      const units: ProductUnit[] = [
-        {
-          id: baseEntry?.id || baseId,
-          name: (baseEntry?.name || baseName).trim() || "وحدة",
-          factor: 1,
-          selling_price: baseEntry?.selling_price ?? p.price ?? null,
-          purchase_price: baseEntry?.purchase_price ?? p.cost_price ?? null,
-          low_stock_threshold: baseEntry?.low_stock_threshold ?? null,
-          is_base: true,
-          can_purchase: baseEntry?.can_purchase ?? true,
-          can_sell: true,
-        },
-        ...configured
-          .filter((u) => u !== baseEntry && !u.is_base && u.id !== (baseEntry?.id || baseId))
-          .map((u) => ({
-            id: u.id,
-            name: (u.name || "").trim(),
-            factor: Number(u.factor),
-            selling_price: u.selling_price ?? null,
-            purchase_price: u.purchase_price ?? null,
-            low_stock_threshold: u.low_stock_threshold ?? null,
-            is_base: false,
-            can_purchase: u.can_purchase ?? true,
-            can_sell: u.can_sell ?? false,
-          })),
-      ];
-      const patch: Record<string, unknown> = { units };
-      if (!p.base_unit_id) patch.base_unit_id = baseId;
-      if (!p.base_unit_name) patch.base_unit_name = baseName;
-      targets.push({ id: p.id, units, patch });
-    }
-    for (let i = 0; i < targets.length; i += CHUNK) {
-      const batch = writeBatch(db);
-      for (const t of targets.slice(i, i + CHUNK)) {
-        batch.update(doc(db, "products", t.id), t.patch);
-      }
-      await batch.commit();
-      onProgress?.(Math.min(i + CHUNK, targets.length), targets.length);
-    }
-    onProgress?.(targets.length, targets.length);
-    return { total: products.length, updated: targets.length, skipped: products.length - targets.length };
-  }
-
   /** Explicit admin migration: intentionally scans purchase invoices once, then updates only missing or invalid status fields. */
   async function backfillSupplierInvoiceStatuses(
     onProgress?: (done: number, total: number) => void,
@@ -606,5 +476,5 @@ export const useMigration = defineStore("migration", () => {
     }
   }
 
-  return { backfillCustomerIds, repairCustomerLinks, normalizeCustomerPhones, backfillProductUnits, factoryReset, setOpeningStocks, backfillDebtSummaries, backfillPerformanceSummaries, backfillSupplierInvoiceStatuses };
+  return { backfillCustomerIds, repairCustomerLinks, normalizeCustomerPhones, factoryReset, backfillDebtSummaries, backfillPerformanceSummaries, backfillSupplierInvoiceStatuses };
 });

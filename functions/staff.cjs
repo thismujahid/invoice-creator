@@ -1,6 +1,7 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { getFirestore, FieldValue, FieldPath, Timestamp } = require("firebase-admin/firestore");
 const { safeProduct, safeInvoice, saleAmounts, invoiceRevision } = require("./staffMath.cjs");
+const inventoryCorePromise = import("./shared/inventoryCore.mjs");
 
 const db = getFirestore();
 const adminEmail = "mohamed.mojahead@gmail.com";
@@ -114,8 +115,9 @@ exports.getCashierCashSummary = onCall(async (request) => {
 
 exports.getCashierCatalog = onCall(async (request) => {
   if (await roleOf(request) !== "cashier") throw new HttpsError("permission-denied", "Cashier only.");
+  const { inventoryTotal } = await inventoryCorePromise;
   const snapshot = await db.collection("products").get();
-  return { items: snapshot.docs.map((doc) => safeProduct(doc.id, doc.data())) };
+  return { items: snapshot.docs.map((doc) => safeProduct(doc.id, doc.data(), inventoryTotal)) };
 });
 
 function cashierInvoiceTotal(invoice) {
@@ -130,14 +132,15 @@ function cashierInvoiceTotal(invoice) {
 
 function cashierInvoiceSummary(doc) {
   const invoice = doc.data();
-  const total = cashierInvoiceTotal(invoice);
+  const cancelled = invoice.status === "cancelled";
+  const total = cancelled ? 0 : cashierInvoiceTotal(invoice);
   const remaining = invoice.remaining != null && Number.isFinite(Number(invoice.remaining))
-    ? Math.max(0, money(invoice.remaining))
-    : invoice.paid_amount == null ? 0 : Math.max(0, money(total - Number(invoice.paid_amount)));
+    ? cancelled ? 0 : Math.max(0, money(invoice.remaining))
+    : invoice.paid_amount == null || cancelled ? 0 : Math.max(0, money(total - Number(invoice.paid_amount)));
   return {
     id: doc.id, customer_id: invoice.customer_id ?? null, customer_name: invoice.customer_name ?? "", customer_phone: invoice.customer_phone ?? null,
-    date: invoice.date ?? null, product_count: Array.isArray(invoice.products) ? invoice.products.length : 0,
-    total, paid: invoice.paid_amount == null ? money(total - remaining) : money(invoice.paid_amount), credit_used: money(invoice.credit_used || 0), remaining, return_status: invoice.return_status ?? null,
+    date: invoice.date ?? null, product_count: Array.isArray(invoice.products) ? invoice.products.length : 0, status: invoice.status ?? null,
+    total, paid: cancelled ? 0 : invoice.paid_amount == null ? money(total - remaining) : money(invoice.paid_amount), credit_used: cancelled ? 0 : money(invoice.credit_used || 0), remaining, return_status: invoice.return_status ?? null,
   };
 }
 
@@ -183,7 +186,7 @@ exports.getCashierInvoices = onCall(async (request) => {
 exports.getCashierInvoiceReturns = onCall(async (request) => {
   if (await roleOf(request) !== "cashier") throw new HttpsError("permission-denied", "Cashier only.");
   const present = (item) => {
-    const { original_unit_cost, ...safe } = item;
+    const { original_unit_cost, cost_allocations, ...safe } = item;
     return safe;
   };
   if (Array.isArray(request.data?.ids)) {
@@ -396,14 +399,12 @@ function cairoDateParts() {
 }
 
 function sellableUnit(product, id) {
-  const units = Array.isArray(product.units) && product.units.length
-    ? product.units
-    : [{ id: product.base_unit_id || "legacy-base", name: product.base_unit_name || "وحدة", factor: 1, selling_price: product.price, is_base: true }];
+  const units = Array.isArray(product.units) ? product.units : [];
   const unit = units.find((item) => item.id === id);
-  if (!unit || unit.can_sell === false || !validNumber(Number(unit.factor), 0.000001)) fail("The selected selling unit is unavailable.");
-  const price = unit.selling_price ?? ((unit.is_base || unit.id === product.base_unit_id) ? product.price : null);
+  if (!unit || unit.archived === true || unit.stock_kind !== "loose" && unit.stock_kind !== "package" || unit.can_sell === false || !validNumber(Number(unit.factor), 0.000001)) fail("The selected selling unit is unavailable.");
+  const price = unit.selling_price;
   if (!(Number(price) > 0)) fail("The selected selling unit is unavailable.");
-  return { ...unit, price };
+  return { ...unit, factor: Number(unit.factor), price };
 }
 
 async function customerSettlementItems(tx, customerId, customer) {
@@ -435,6 +436,7 @@ async function customerSettlementItems(tx, customerId, customer) {
 }
 
 exports.createStaffSale = onCall(async (request) => {
+  const { baseQuantityFor, normalizeInventory, sellInventory } = await inventoryCorePromise;
   const input = request.data;
   const customerId = cleanText(input?.customer_id, 128);
   const rawLines = input?.products;
@@ -472,36 +474,60 @@ exports.createStaffSale = onCall(async (request) => {
     const settledDebt = money(creditBalance - creditForDebt);
     if (money(creditUsed) - creditForDebt > 0.005) throw new HttpsError("failed-precondition", "Customer credit changed after debt settlement. Refresh it.");
     const products = new Map(productSnaps.map((snapshot) => [snapshot.id, snapshot]));
-    const needs = new Map();
+    const inventoryAfterByProduct = new Map();
     const lines = rawLines.map((raw, index) => {
       const id = cleanText(raw.product_id, 128);
       const snapshot = products.get(id);
       if (!snapshot?.exists || snapshot.data().is_active === false) fail("A product is unavailable.");
       const product = snapshot.data();
-      const unitId = cleanText(raw.unit_id, 128) || product.units?.[0]?.id || "legacy-base";
+      const unitId = cleanText(raw.unit_id, 128);
+      if (!unitId) fail("Choose a selling unit for each product type.");
       const unit = sellableUnit(product, unitId);
+      const factor = Number(unit.factor);
+      if (!Number.isFinite(factor) || factor <= 0) fail("The selected unit has an invalid conversion factor.");
+      if (product.cost_price === null || product.cost_price === undefined || !Number.isFinite(Number(product.cost_price)) || Number(product.cost_price) < 0) fail("متوسط تكلفة الصنف غير مسجل؛ أضف رصيدًا بفاتورة شراء أولًا.");
       const quantity = raw.product_quantity;
       if (!validNumber(quantity, 0.000001) || Math.abs(quantity - cost4(quantity)) > 1e-9) fail("Enter a valid quantity with at most four decimal places.");
       if (unit.allows_fractional !== true && Math.abs(quantity - Math.round(quantity)) > 1e-9) fail("This unit does not allow fractional quantities.");
       const requestedPrice = raw.product_price;
       if (!validNumber(requestedPrice)) fail("Enter a valid selling price.");
-      const stockKey = `${id}||${unit.id}`;
-      needs.set(stockKey, cost4((needs.get(stockKey) || 0) + quantity));
-      const unitCost = cost4(Number((unit.average_cost ?? product.cost_price) || 0));
+      let baseQty;
+      try { baseQty = baseQuantityFor(quantity, factor); }
+      catch { fail("الكمية بعد التحويل يجب أن تكون موجبة وقابلة للتمثيل حتى أربع منازل عشرية."); }
+      let stockResult;
+      try {
+        stockResult = sellInventory(inventoryAfterByProduct.get(id) || normalizeInventory(product.inventory), product, unit.id, quantity);
+      } catch (error) {
+        if (error.message === "STOCK_INSUFFICIENT") throw new HttpsError("failed-precondition", `Insufficient stock for ${product.inventory_mode === "independent" ? [product.family_name || product.name, product.uses_variants === false ? null : product.variant_name, product.pack_size_name].filter(Boolean).join(" — ") : product.uses_variants === false ? product.family_name || product.name : product.family_name ? `${product.family_name} — ${product.variant_name || product.name}` : product.name}.`);
+        if (error.message === "FRACTION_NOT_ALLOWED" || error.message === "PACKAGE_COUNT_MUST_BE_INTEGER") fail("This unit does not allow fractional quantities.");
+        throw error;
+      }
+      inventoryAfterByProduct.set(id, stockResult.inventory);
+      const unitCost = Number(product.cost_price);
       return {
-        line_id: `${saleRef.id}-${index}`, product_id: id, product_name: product.name,
-        unit_id: unit.id, unit_name: unit.name, unit_factor: 1,
-        product_quantity: quantity, base_quantity: quantity, product_price: requestedPrice,
+        line_id: `${saleRef.id}-${index}`, product_id: id,
+        family_id: product.family_id || null, family_name: product.family_name || null,
+        variant_name: product.variant_name || product.name, variant_key: product.variant_key || null,
+        pack_size_name: product.pack_size_name || null, inventory_mode: product.inventory_mode === "independent" ? "independent" : "convertible",
+        product_name: product.inventory_mode === "independent" ? [product.family_name || product.name, product.uses_variants === false ? null : product.variant_name, product.pack_size_name].filter(Boolean).join(" — ") : product.uses_variants === false ? product.family_name || product.name : product.family_name ? `${product.family_name} — ${product.variant_name || product.name}` : product.name,
+        unit_id: unit.id, unit_name: unit.name, unit_factor: factor, stock_kind: unit.stock_kind, allows_fractional: unit.allows_fractional === true,
+        product_quantity: quantity, base_quantity: baseQty, product_price: requestedPrice,
         product_cost_price: unitCost, base_cost_snapshot: unitCost,
-        cost_groups: [{ base_quantity: quantity, unit_cost: unitCost }],
+        cost_groups: [{ group_id: `${saleRef.id}-${index}:cost:0`, base_quantity: baseQty, unit_cost: unitCost }],
+        opened_packages: stockResult.opened,
+        component_deltas: stockResult.changes,
         option: cleanText(raw.option, 120), total: money(requestedPrice * quantity),
       };
     });
-    for (const [key, need] of needs) {
-      const [id, unitId] = key.split("||");
-      const product = products.get(id).data();
-      const unit = (product.units || []).find((entry) => entry.id === unitId);
-      if (!unit || need - Number(unit.stock_quantity || 0) > 1e-9) throw new HttpsError("failed-precondition", `Insufficient stock for ${product.name}.`);
+    const inventoryEffects = {};
+    for (const line of lines) {
+      const effect = inventoryEffects[line.product_id] || { loose_base_quantity: 0, closed_packages: {} };
+      effect.loose_base_quantity = cost4(effect.loose_base_quantity + line.component_deltas.loose_base_quantity);
+      for (const [unitId, change] of Object.entries(line.component_deltas.closed_packages)) {
+        effect.closed_packages[unitId] = (effect.closed_packages[unitId] || 0) + change;
+        if (!effect.closed_packages[unitId]) delete effect.closed_packages[unitId];
+      }
+      inventoryEffects[line.product_id] = effect;
     }
     const numeric = (key) => {
       const value = input[key] == null || input[key] === "" ? 0 : Number(input[key]);
@@ -529,6 +555,7 @@ exports.createStaffSale = onCall(async (request) => {
       customer_id: customerId, customer_name: name, customer_phone: phone,
       customer_name_norm: name.trim().toLocaleLowerCase(), customer_phone_digits: String(phone ?? "").replace(/\D/g, ""),
       products: lines, delivery_price: delivery, amount_of_animal_feeds: feeds,
+      inventory_effects: inventoryEffects,
       amount_of_mahros: mahros, discount, discount_percentage: input.discount_percentage === true,
       discount_for: cleanText(input.discount_for, 100) || null,
       paid_amount: settled, credit_used: money(creditUsed), remaining, inventory_applied: true, cashbox_applied: paid > 0,
@@ -618,17 +645,17 @@ exports.createStaffSale = onCall(async (request) => {
       movementsByProduct.set(line.product_id, idsForProduct);
       tx.create(movement, {
         type: "sale", product_id: line.product_id, product_name: line.product_name,
-        quantity: line.product_quantity, unit_id: line.unit_id, unit_name: line.unit_name,
-        unit_factor: 1, unit_quantity: line.product_quantity, base_quantity: line.product_quantity, direction: "out",
-        unit_cost: line.product_cost_price, invoice_id: saleRef.id, note: null,
+        quantity: line.base_quantity, unit_id: line.unit_id, unit_name: line.unit_name,
+        unit_factor: line.unit_factor, unit_quantity: line.product_quantity, base_quantity: line.base_quantity, direction: "out",
+        unit_cost: line.product_cost_price, invoice_id: saleRef.id, operation_id: opRef.id, note: null,
+        component_deltas: line.component_deltas, opened_packages: line.opened_packages,
         seq: index, created_by: request.auth.uid, created_at: now,
       });
     });
     for (const id of ids) {
       const product = products.get(id).data();
-      const units = product.units.map((unit) => ({ ...unit, stock_quantity: cost4(Number(unit.stock_quantity || 0) - (needs.get(`${id}||${unit.id}`) || 0)) }));
       const movementIds = movementsByProduct.get(id);
-      tx.update(db.doc(`products/${id}`), { units, last_inventory_transaction_id: movementIds.at(-1), last_inventory_transaction_ids: movementIds });
+      tx.update(db.doc(`products/${id}`), { inventory: inventoryAfterByProduct.get(id), last_inventory_transaction_id: movementIds.at(-1), last_inventory_transaction_ids: movementIds, updated_at: now });
     }
     if (paid > 0) {
       tx.update(db.doc("cashbox/current"), { balance: money(Number(cash.data().balance || 0) + paid), updated_at: now });
@@ -687,6 +714,7 @@ exports.payStaffDebts = onCall(async (request) => {
       if (!data.customer_id && (String(data.customer_name || "").trim() !== customerName.trim() || String(data.customer_phone ?? "").replace(/\D/g, "") !== phone || !phone)) {
         throw new HttpsError("permission-denied", "Legacy obligation ownership cannot be verified.");
       }
+      if (allocations[index].type === "invoice" && data.status === "cancelled") throw new HttpsError("failed-precondition", "لا يمكن تسوية فاتورة ملغاة.");
       const remaining = data.remaining == null ? Number(summarySnaps[index]?.data()?.remaining) : Number(data.remaining);
       if (!validNumber(remaining) || allocations[index].amount - remaining > 0.005) fail("Payment exceeds remaining balance.");
     }
@@ -762,3 +790,4 @@ exports.payStaffDebts = onCall(async (request) => {
 });
 
 Object.assign(exports, require("./staffInvoiceActions.cjs")({ db, authorize, roleOf, operationRef }));
+Object.assign(exports, require("./inventoryOperations.cjs")({ db, authorize, operationRef }));

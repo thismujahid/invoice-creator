@@ -192,6 +192,7 @@
             >
               <td class="p-2 font-medium">
                 {{ row.name }}
+                <UBadge v-if="row.invoice.status === 'cancelled'" color="error" variant="soft" size="xs" class="ms-1">ملغاة</UBadge>
                 <UBadge v-if="row.returnBadge" color="warning" variant="soft" size="xs" class="ms-1">{{ row.returnBadge }} · {{ formatePrice(row.returnTotal) }} ج</UBadge>
                 <UBadge v-if="row.hasPreviousBalance" color="info" variant="soft" size="xs" class="ms-1">يشمل رصيدًا سابقًا</UBadge>
               </td>
@@ -206,7 +207,7 @@
               <td class="p-2">
                 <div class="flex gap-1.5">
                   <UTooltip
-                    v-if="outstandingDebtOf(row.invoice) > 0"
+                    v-if="row.invoice.status !== 'cancelled' && outstandingDebtOf(row.invoice) > 0"
                     text="سداد الفاتورة بالكامل"
                     ><UButton
                       icon="i-lucide-hand-coins"
@@ -229,7 +230,7 @@
                       @click="copyInvoiceForEdit(row.invoice, true)"
                       class="flex items-center justify-center"
                   /></UTooltip>
-                  <UTooltip v-if="!row.invoice.credit_used" text="تعديل الفاتورة"
+                  <UTooltip v-if="row.invoice.status !== 'cancelled' && !row.invoice.credit_used" text="تعديل الفاتورة"
                     ><UButton
                       icon="i-lucide-pencil"
                       color="success"
@@ -249,7 +250,7 @@
                       @click="openView(row)"
                       class="flex items-center justify-center"
                     /></UTooltip>
-                  <UTooltip text="إنشاء مرتجع"
+                  <UTooltip v-if="row.invoice.status !== 'cancelled'" text="إنشاء مرتجع"
                     ><UButton
                       icon="i-lucide-undo-2"
                       color="warning"
@@ -259,7 +260,7 @@
                       @click="openReturn(row.invoice)"
                       class="flex items-center justify-center"
                     /></UTooltip>
-                  <UTooltip text="حذف"
+                  <UTooltip v-if="row.invoice.status !== 'cancelled'" text="إلغاء الفاتورة"
                     ><UButton
                       icon="i-lucide-trash-2"
                       color="error"
@@ -291,6 +292,7 @@
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0">
               <div class="truncate font-bold">{{ row.name }}</div>
+              <UBadge v-if="row.invoice.status === 'cancelled'" color="error" variant="soft" size="xs" class="mt-0.5">فاتورة ملغاة</UBadge>
               <UBadge v-if="row.returnBadge" color="warning" variant="soft" size="xs" class="mt-0.5">{{ row.returnBadge }} · {{ formatePrice(row.returnTotal) }} ج</UBadge>
               <UBadge v-if="row.hasPreviousBalance" color="info" variant="soft" size="xs" class="mt-0.5">{{ "يشمل رصيدًا سابقًا" }}</UBadge>
               <div class="text-xs text-gray-500" dir="ltr">{{ row.phone }}</div>
@@ -310,7 +312,7 @@
             </div>
             <div class="flex shrink-0 gap-1.5" @click.stop>
               <UButton
-                v-if="outstandingDebtOf(row.invoice) > 0"
+                v-if="row.invoice.status !== 'cancelled' && outstandingDebtOf(row.invoice) > 0"
                 icon="i-lucide-hand-coins"
                 color="success"
                 variant="soft"
@@ -329,7 +331,7 @@
                 class="flex items-center justify-center"
               />
               <UButton
-                v-if="!row.invoice.credit_used"
+                v-if="row.invoice.status !== 'cancelled' && !row.invoice.credit_used"
                 icon="i-lucide-pencil"
                 color="success"
                 variant="soft"
@@ -339,6 +341,7 @@
                 class="flex items-center justify-center"
               />
               <UButton
+                v-if="row.invoice.status !== 'cancelled'"
                 icon="i-lucide-undo-2"
                 color="warning"
                 variant="soft"
@@ -348,6 +351,7 @@
                 class="flex items-center justify-center"
               />
               <UButton
+                v-if="row.invoice.status !== 'cancelled'"
                 icon="i-lucide-trash-2"
                 color="error"
                 variant="soft"
@@ -391,10 +395,9 @@
         <UAlert v-if="viewReturnsError" color="error" variant="soft" class="mt-3" :title="viewReturnsError" />
       </div>
     </UiAppDialog>
-    <!-- Delete confirm -->
-    <UiAppDialog v-model:open="deleteOpen" title="هل أنت متأكد">
+    <UiAppDialog v-model:open="deleteOpen" title="تأكيد إلغاء الفاتورة">
       <p class="mb-4 text-gray-600">
-        أنت علي وشك حذف الفاتورة الخاصة بـ {{ confirmDelete?.name }}
+        سيتم إلغاء الفاتورة الخاصة بـ {{ confirmDelete?.name }} وعكس أثرها على المخزون والخزنة.
       </p>
       <template #footer>
         <div class="flex w-full flex-col gap-2">
@@ -403,7 +406,7 @@
             block
             :loading="deleting"
             @click="deleteConfirmed"
-            >حذف</UButton
+            >إلغاء الفاتورة</UButton
           >
           <UButton
             color="neutral"
@@ -419,15 +422,21 @@
     <!-- Create return -->
     <UiAppDialog v-model:open="returnOpen" title="إنشاء مرتجع" width="sm:max-w-3xl">
       <div v-if="returnInvoice" class="max-h-[70vh] space-y-4 overflow-y-auto" dir="rtl">
+        <USkeleton v-if="returnLoading" class="h-48 w-full" />
+        <template v-else>
         <div class="grid gap-2 rounded-xl bg-gray-50 p-3 text-sm sm:grid-cols-3">
           <div><span class="block text-xs text-gray-500">العميل</span><strong>{{ returnInvoice.customer_name }}</strong></div>
           <div><span class="block text-xs text-gray-500">الدين على الفاتورة</span><strong>{{ formatePrice(outstandingDebtOf(returnInvoice)) }} ج</strong></div>
           <div><span class="block text-xs text-gray-500">رصيد محفوظ للعميل</span><strong>{{ formatePrice(returnCreditBalance) }} ج</strong></div>
         </div>
         <div class="space-y-2"><h3 class="text-sm font-bold">الأصناف المراد إرجاعها</h3>
-        <div v-for="r in returnRows" :key="r.key" class="grid items-center gap-2 rounded-xl border border-gray-200 p-3 sm:grid-cols-[minmax(0,1fr)_9rem_7rem]">
+        <div v-for="r in returnRows" :key="r.key" class="grid items-center gap-2 rounded-xl border border-gray-200 p-3 sm:grid-cols-[minmax(0,1fr)_8rem_13rem_7rem]">
           <div class="min-w-0"><div class="font-semibold">{{ formatInvoiceLineName(r.product_name, r.unit_name) }}</div><div class="text-xs text-gray-500">المتاح {{ r.maxQty }} · سعر البيع {{ formatePrice(r.unit_price) }} ج</div></div>
-          <UFormField label="الكمية"><UInputNumber v-model="r.qty" :min="0" :max="r.maxQty" :step="1" size="lg" class="w-full" /></UFormField>
+          <UFormField label="الكمية"><UInputNumber v-model="r.qty" :min="0" :max="r.maxQty" :step="r.allows_fractional ? 0.0001 : 1" size="lg" class="w-full" /></UFormField>
+          <UFormField label="سيعود إلى المخزون كـ">
+            <USelect :model-value="returnComponentKey(r)" :items="returnComponentOptions(r)" value-key="value" label-key="label" class="w-full" @update:model-value="(key) => setReturnComponent(r, String(key))" />
+            <p v-if="returnComponentError(r)" class="mt-1 text-xs text-red-600">{{ returnComponentError(r) }}</p>
+          </UFormField>
           <div class="text-sm"><span class="block text-xs text-gray-500">قيمة المرتجع</span><strong>{{ formatePrice(previewRefund(r)) }} ج</strong></div>
         </div></div>
         <UEmpty v-if="!returnRows.length" icon="i-lucide-undo-2" title="لا توجد أصناف قابلة للإرجاع" />
@@ -440,10 +449,11 @@
         </div>
         <UFormField label="ملاحظة"><UInput v-model="returnNote" placeholder="اختياري" size="lg" class="w-full" /></UFormField>
         <p v-if="returnError" class="text-sm font-semibold text-red-600">{{ returnError }}</p>
+        </template>
       </div>
       <template #footer>
         <div class="flex w-full gap-2">
-          <UButton color="warning" class="min-h-11 flex-1" :loading="returnBusy" :disabled="!returnRows.some((row) => row.qty > 0) || returnCashRefund > returnPreviewSplit.settlement" icon="i-lucide-undo-2" @click="submitReturn">تأكيد المرتجع</UButton>
+          <UButton color="warning" class="min-h-11 flex-1" :loading="returnBusy" :disabled="returnLoading || returnBusy || !returnRows.some((row) => row.qty > 0 && !returnComponentError(row)) || returnRows.some((row) => row.qty > 0 && returnComponentError(row)) || returnCashRefund > returnPreviewSplit.settlement" icon="i-lucide-undo-2" @click="submitReturn">تأكيد المرتجع</UButton>
           <UButton color="neutral" variant="soft" class="min-h-11 flex-1" :disabled="returnBusy" @click="returnOpen = false">إلغاء</UButton>
         </div>
       </template>
@@ -675,7 +685,7 @@ function formatTimestamp(
   return `${formattedDate} ${formattedTime}`;
 }
 const { formatePrice, calcTotal, formatInvoiceLineName } = useHelpers();
-const { round2, lineRefundValue, netRatioOf, splitCustomerReturn, outstandingDebtOf, lineBaseQuantity, merchandiseProfitOf } = useFinance();
+const { round2, round4, netRatioOf, splitCustomerReturn, outstandingDebtOf, lineBaseQuantity, merchandiseProfitOf } = useFinance();
 const invoicesStore = useInvoicesStore();
 const customerStore = useCustomersStore();
 const returnsApi = useInvoiceReturns();
@@ -716,16 +726,17 @@ const sortedInvoices = computed<Invoice[]>(() =>
 );
 const paginateArray = computed(() => {
   return sortedInvoices.value.map((invoice) => {
-    const profitValue = round2(calcInvTotal(invoice) - (returnProfitAdjustments.value[invoice.id || ""] ?? 0));
+    const cancelled = invoice.status === "cancelled";
+    const profitValue = cancelled ? 0 : round2(calcInvTotal(invoice) - (returnProfitAdjustments.value[invoice.id || ""] ?? 0));
     return {
       id: invoice.id,
       name: invoice.customer_name,
       phone: invoice.customer_phone,
       products_count: invoice.products?.length || 0,
-      total: formatePrice(round2(calcTotal(invoice) - discountAmount(invoice) - (returnTotals.value[invoice.id || ""] ?? 0))),
+      total: formatePrice(cancelled ? 0 : round2(calcTotal(invoice) - discountAmount(invoice) - (returnTotals.value[invoice.id || ""] ?? 0))),
       originalTotal: formatePrice(calcTotal(invoice) - discountAmount(invoice)),
       // HOME delta: debt + profit columns replace the creator column.
-      debt: outstandingDebtOf(invoice),
+      debt: cancelled ? 0 : outstandingDebtOf(invoice),
       profitValue,
       returnBadge: returnBadgeFor(invoice),
       returnTotal: returnTotals.value[invoice.id || ""] ?? 0,
@@ -837,6 +848,7 @@ type InvoiceRow = {
   created_at_object: Date;
 };
 function returnBadgeFor(inv: Invoice): string {
+  if (inv.status === "cancelled") return "فاتورة ملغاة";
   if (inv.return_status === "full") return "مرتجع كلي";
   if (inv.return_status === "partial") return "مرتجع جزئي";
   return "";
@@ -914,6 +926,7 @@ const returnRows = ref<ReturnRow[]>([]);
 const returnNote = ref("");
 const returnError = ref("");
 const returnBusy = ref(false);
+const returnLoading = ref(false);
 const returnCashRefund = ref(0);
 const returnCreditBalance = ref(0);
 const returnOpen = computed({
@@ -929,27 +942,43 @@ async function openReturn(inv: Invoice): Promise<void> {
   returnCreditBalance.value = 0;
   returnInvoice.value = inv;
   returnRows.value = [];
-  const prev = await returnsApi.fetchReturnsForInvoice(inv.id as string);
-  returnRows.value = returnsApi.buildReturnRows(inv, prev);
-  if (inv.customer_id) {
-    try {
-      const credit = await callStaff<{ customerId: string }, { balance: number }>("getCustomerCredit", { customerId: inv.customer_id });
-      if (returnInvoice.value?.id === inv.id) returnCreditBalance.value = credit.balance;
-    } catch { returnError.value = "تعذر تحميل رصيد العميل. أعد فتح المرتجع."; }
+  returnLoading.value = true;
+  try {
+    const preview = await returnsApi.previewReturn(inv.id as string);
+    returnRows.value = preview.rows.filter((row) => row.maxQty > 0).map((row) => ({ ...row, qty: 0, return_bucket: "loose", return_unit_id: null }));
+    returnCreditBalance.value = preview.creditBalance;
+  } catch (error) {
+    returnError.value = error instanceof Error ? error.message : "بيانات الوحدات أو المرتجعات غير مكتملة.";
+    returnRows.value = [];
+  } finally {
+    returnLoading.value = false;
   }
 }
-/** Exact preview refund for a cost-group row: spread over its own lines. */
 function rowRefundValue(r: ReturnRow, ratio: number): number {
-  let need = Math.min(Math.trunc(round2(toNum(r.qty))), r.maxQty);
-  let total = 0;
-  for (const ln of r.lines) {
-    if (need <= 0) break;
-    const take = Math.min(need, ln.qty - ln.returnedQty);
-    if (take <= 0) continue;
-    need = round2(need - take);
-    total = round2(total + lineRefundValue(ln.price, take, ratio));
-  }
-  return total;
+  const quantity = Math.min(Math.max(0, Number(r.qty) || 0), r.maxQty);
+  return round2(r.unit_price * quantity * ratio);
+}
+function returnComponentOptions(row: ReturnRow): { label: string; value: string }[] {
+  return [
+    { label: `${row.inventory_mode === "independent" ? "عبوات مفردة كاملة" : "كمية مفتوحة"} · ${row.loose_unit_name || row.unit_name}`, value: "loose" },
+    ...row.return_units.map((unit) => ({ label: `عبوة مغلقة · ${unit.name}`, value: `package:${unit.id}` })),
+  ];
+}
+function returnComponentKey(row: ReturnRow): string {
+  return row.return_bucket === "package" && row.return_unit_id ? `package:${row.return_unit_id}` : "loose";
+}
+function setReturnComponent(row: ReturnRow, value: string): void {
+  row.return_bucket = value.startsWith("package:") ? "package" : "loose";
+  row.return_unit_id = row.return_bucket === "package" ? value.slice("package:".length) : null;
+}
+function returnComponentError(row: ReturnRow): string {
+  if (row.qty <= 0 || row.return_bucket !== "package") return "";
+  const pack = row.return_units.find((unit) => unit.id === row.return_unit_id);
+  if (!pack) return "العبوة المغلقة المختارة غير موجودة.";
+  const baseQuantity = toNum(row.qty) * row.unit_factor;
+  return Math.abs(baseQuantity / pack.factor - Math.round(baseQuantity / pack.factor)) > 1e-9
+    ? `كمية المرتجع لا تكوّن عددًا صحيحًا من ${pack.name}. اختر كمية مناسبة أو أعدها ككمية مفتوحة.`
+    : "";
 }
 function previewRefund(r: ReturnRow): number {
   if (!returnInvoice.value) return 0;
@@ -964,15 +993,15 @@ const returnPreviewSplit = computed(() => {
 });
 const returnPreviewTotal = computed(() => returnPreviewSplit.value.total);
 async function submitReturn(): Promise<void> {
-  if (!returnInvoice.value) return;
+  if (!returnInvoice.value || returnBusy.value || returnLoading.value) return;
   returnError.value = "";
   returnBusy.value = true;
   try {
       const res = await returnsApi.createReturn(
         returnInvoice.value,
         returnRows.value
-          .map((r) => ({ rowKey: r.key, quantity: Math.min(Math.trunc(round2(toNum(r.qty))), r.maxQty) }))
-          .filter((i) => i.quantity > 0),
+          .map((r) => ({ line_id: r.line_id, quantity: r.qty, return_bucket: r.return_bucket, return_unit_id: r.return_unit_id }))
+          .filter((item) => item.quantity > 0),
         returnNote.value.trim() || null,
         Number(returnCashRefund.value || 0),
       );

@@ -1,8 +1,9 @@
 import { collection, doc, getDocs, query, where } from "firebase/firestore";
 import type { InventoryTransaction, InventoryTransactionType } from "~/types/finance";
 import type { Product } from "~/types";
-import { applyStockGroup, round4, toNum } from "./finance";
+import { round4 } from "./finance";
 import { toDateSafe } from "~/types";
+import { inventoryTotal, replayMovementGroup } from "../functions/shared/inventoryCore.mjs";
 
 export type RepairStatus = "OK" | "REPAIRABLE" | "STOCK_MISMATCH" | "INSUFFICIENT_HISTORY" | "INVALID_HISTORY";
 
@@ -46,6 +47,12 @@ function hasKnownCost(v: unknown): v is number {
   );
 }
 
+function inventoryTotalOrNull(product: Product): number | null {
+  if (!product.inventory) return null;
+  try { return inventoryTotal(product.inventory, product.units ?? []); }
+  catch { return null; }
+}
+
 interface ReplayStep {
   stockIn: number;
   stockOut: number;
@@ -56,7 +63,7 @@ interface ReplayStep {
  *  Quantities must be finite and > 0; required costs must be present,
  *  finite and non-negative (never coerced from null to 0). */
 function classify(t: InventoryTransaction): ReplayStep | { invalid: string } {
-  const rawQty = t.base_quantity === undefined ? t.quantity : t.base_quantity;
+    const rawQty = t.base_quantity;
   const qty = Number(rawQty);
   if (!Number.isFinite(qty) || qty <= 0) return { invalid: "invalid quantity" };
   switch (t.type as InventoryTransactionType) {
@@ -113,6 +120,10 @@ function transactionFingerprint(transactions: InventoryTransaction[]): string {
       invoice_id: transaction.invoice_id ?? null,
       return_id: transaction.return_id ?? null,
       purchase_invoice_id: transaction.purchase_invoice_id ?? null,
+      operation_id: transaction.operation_id ?? null,
+      reason: transaction.reason ?? null,
+      component_deltas: transaction.component_deltas ?? null,
+      opened_packages: transaction.opened_packages ?? null,
       seq: transaction.seq ?? null,
       created_at: toDateSafe(transaction.created_at)?.getTime() ?? null,
     }))
@@ -120,27 +131,8 @@ function transactionFingerprint(transactions: InventoryTransaction[]): string {
   return JSON.stringify(evidence);
 }
 
-function isOneAtomicMovementGroup(transactions: InventoryTransaction[]): boolean {
-  if (transactions.length <= 1) return true;
-  const first = transactions[0]!;
-  if (first.type === "purchase" && first.purchase_invoice_id) {
-    return transactions.every((transaction) => transaction.type === "purchase" && transaction.purchase_invoice_id === first.purchase_invoice_id);
-  }
-  if (first.type === "refund" && first.return_id) {
-    return transactions.every((transaction) => transaction.type === "refund" && transaction.return_id === first.return_id);
-  }
-  if (first.type === "supplier_return" && first.return_id) {
-    return transactions.every((transaction) => transaction.type === "supplier_return" && transaction.return_id === first.return_id);
-  }
-  if (first.type === "sale" && first.invoice_id) {
-    return transactions.every((transaction) => transaction.type === "sale" && transaction.invoice_id === first.invoice_id);
-  }
-  return false;
-}
-
 export const useInventoryCostRepair = defineStore("inventoryCostRepair", () => {
-  const { db, serverTimestamp, readFrom } = useFirebase();
-  const authStore = useAuth();
+  const { db, readFrom } = useFirebase();
 
   interface AnalyzeScope {
     productIds?: string[];
@@ -217,15 +209,7 @@ export const useInventoryCostRepair = defineStore("inventoryCostRepair", () => {
     for (const p of products) {
       if (!p.id) continue;
       const movements = byProduct.get(p.id) ?? [];
-      if (p.units?.length) {
-        const missingUnit = movements.some((movement) => !movement.unit_id || !p.units!.some((unit) => unit.id === movement.unit_id));
-        for (const unit of p.units) {
-          const row = analyzeOne({ ...p, stock_quantity: unit.stock_quantity, cost_price: unit.average_cost ?? null }, movements.filter((movement) => movement.unit_id === unit.id), unit.id, unit.name);
-          rows.push(missingUnit ? { ...row, status: "INVALID_HISTORY" } : row);
-        }
-      } else {
-        rows.push(analyzeOne(p, movements));
-      }
+      rows.push(analyzeOne(p, movements));
       done += 1;
       if (done % 20 === 0) onProgress?.(done, products.length);
     }
@@ -247,7 +231,7 @@ export const useInventoryCostRepair = defineStore("inventoryCostRepair", () => {
       product_id: p.id as string,
       unit_id: unitId,
       product_name: unitName ? `${p.name} — ${unitName}` : p.name,
-      currentStock: (p.stock_quantity ?? null) as number | null,
+      currentStock: inventoryTotalOrNull(p),
       replayedStock: 0,
       currentCost: (p.cost_price ?? null) as number | null,
       recomputedCost: null as number | null,
@@ -260,6 +244,7 @@ export const useInventoryCostRepair = defineStore("inventoryCostRepair", () => {
       lastMovementId: p.last_inventory_transaction_id ?? null,
       lastMovementIds: [...(p.last_inventory_transaction_ids ?? [])].sort(),
     };
+    if (base.currentStock === null) return { ...base, replayedStock: 0, status: "INVALID_HISTORY" };
     // Deterministic order: timestamp, then write sequence, then doc id.
     // A missing timestamp anywhere makes ordering unreliable → invalid.
     const ordered = [...txns].sort((a, b) => {
@@ -279,58 +264,47 @@ export const useInventoryCostRepair = defineStore("inventoryCostRepair", () => {
         return { ...base, replayedStock: 0, status: "INVALID_HISTORY" };
       }
     }
-    // Group by identical millisecond: one atomic batch each. A group with
-    // several cost-bearing inflows whose order can't be established (any
-    // missing seq) is genuinely ambiguous → invalid, never guessed.
-    const groups = new Map<number, InventoryTransaction[]>();
+    const groups = new Map<string, { timestamp: number; items: InventoryTransaction[] }>();
     for (const t of ordered) {
       const ms = toDateSafe(t.created_at)!.getTime();
-      if (!groups.has(ms)) groups.set(ms, []);
-      groups.get(ms)!.push(t);
+      let key = t.operation_id ? `operation:${t.operation_id}` : null;
+      if (!key && t.type === "purchase" && t.purchase_invoice_id) key = `purchase:${t.purchase_invoice_id}`;
+      if (!key && t.return_id) key = `return:${t.type}:${t.return_id}`;
+      if (!key && t.type === "sale" && t.invoice_id) key = `sale:${t.invoice_id}`;
+      key ||= `movement:${t.id}`;
+      const group = groups.get(key) ?? { timestamp: ms, items: [] };
+      if (group.timestamp !== ms) return { ...base, replayedStock: 0, status: "INVALID_HISTORY" };
+      group.items.push(t);
+      groups.set(key, group);
     }
+    const groupsByTimestamp = new Map<number, string[]>();
+    for (const [key, group] of groups) groupsByTimestamp.set(group.timestamp, [...(groupsByTimestamp.get(group.timestamp) || []), key]);
     let stock = 0;
     let avg: number | undefined;
     let untrusted = false;
     let lastMs = 0;
-    for (const [ms, list] of [...groups.entries()].sort((a, b) => a[0] - b[0])) {
-      lastMs = ms;
-      const steps: { qty: number; cost: number | null; dir: "in" | "out" }[] = [];
+    if ([...groupsByTimestamp.values()].some((keys) => keys.length > 1)) return { ...base, replayedStock: round4(stock), status: "INVALID_HISTORY" };
+    for (const group of [...groups.values()].sort((a, b) => a.timestamp - b.timestamp)) {
+      const list = group.items;
+      lastMs = group.timestamp;
+      const seqs = list.map((transaction) => transaction.seq).filter((seq): seq is number => typeof seq === "number");
+      if (list.length > 1 && (seqs.length !== list.length || new Set(seqs).size !== seqs.length)) return { ...base, replayedStock: round4(stock), status: "INVALID_HISTORY" };
+      const steps: { direction: "in" | "out"; base_quantity: number; unit_cost: number | null }[] = [];
       for (const t of list) {
         const step = classify(t);
         if ("invalid" in step) {
           return { ...base, replayedStock: round4(stock), status: "INVALID_HISTORY" };
         }
         steps.push(step.stockIn > 0
-          ? { qty: step.stockIn, cost: step.knownCost, dir: "in" as const }
-          : { qty: step.stockOut, cost: null, dir: "out" as const });
+          ? { direction: "in", base_quantity: step.stockIn, unit_cost: step.knownCost }
+          : { direction: "out", base_quantity: step.stockOut, unit_cost: t.unit_cost ?? null });
       }
-      const costInflows = steps.filter((s) => s.dir === "in" && s.cost !== null);
-      const hasInflowAndOutflow = costInflows.length > 0 && steps.some((s) => s.dir === "out");
-      const hasAmbiguousCostOrder = costInflows.length > 0 && steps.length > 1 && !isOneAtomicMovementGroup(list);
-      const seqs = list.map((transaction) => transaction.seq).filter((seq): seq is number => typeof seq === "number");
-      const hasDuplicateSeq = seqs.length !== new Set(seqs).size;
-      if (
-        hasAmbiguousCostOrder ||
-        (costInflows.length > 0 && hasDuplicateSeq) ||
-        (costInflows.length > 1 || hasInflowAndOutflow) &&
-        list.some((t) => t.seq === null || t.seq === undefined)
-      ) {
-        return { ...base, replayedStock: round4(stock), status: "INVALID_HISTORY" };
-      }
-      // Costless stock inflows cannot safely establish the average cost basis.
-      for (const s of steps) {
-        if (s.dir === "in" && s.cost === null) untrusted = true;
-      }
-      const outs = round4(steps.filter((s) => s.dir === "out").reduce((a, s) => a + s.qty, 0));
-      const ins = steps
-        .filter((s) => s.dir === "in")
-        .map((s) => ({ qty: s.qty, cost: s.cost }));
-      const r = applyStockGroup(stock, avg, outs, ins);
-      stock = r.stock;
-      avg = r.avg;
-      if (stock < -QTY_EPS) {
-        return { ...base, replayedStock: stock, status: "INVALID_HISTORY" };
-      }
+      try {
+        const result = replayMovementGroup(stock, avg ?? null, steps);
+        stock = result.stock;
+        avg = result.average ?? undefined;
+        untrusted ||= result.untrusted;
+      } catch { return { ...base, replayedStock: round4(stock), status: "INVALID_HISTORY" }; }
     }
     base.lastTxnMs = lastMs;
     return finishRow(base, p, stock, avg, untrusted);
@@ -344,8 +318,9 @@ export const useInventoryCostRepair = defineStore("inventoryCostRepair", () => {
     untrusted: boolean,
   ): RepairRow {
     const replayedStock = round4(stock);
-    const recomputedCost = avg === undefined ? null : round4(avg);
-    const storedStock = p.stock_quantity ?? null;
+    const recomputedCost = avg === undefined ? null : avg;
+    const storedStock = inventoryTotalOrNull(p);
+    if (storedStock === null) return { ...base, replayedStock, recomputedCost, difference: null, status: "INVALID_HISTORY" };
     const storedCost = p.cost_price ?? null;
     // Stock compare (stored null counts as 0 for matching purposes).
     if (Math.abs(replayedStock - (storedStock ?? 0)) > QTY_EPS) {
@@ -388,87 +363,16 @@ export const useInventoryCostRepair = defineStore("inventoryCostRepair", () => {
       return { ok: false, error: "سجل الحركات أكبر من حد التحقق الذري — لم يُطبق الإصلاح." };
     }
     try {
-      const logSnap = await getDocs(query(collection(db, "inventory_transactions"), where("product_id", "==", row.product_id)));
-      const freshTransactions = logSnap.docs.map((d) => ({ id: d.id, ...(d.data() as object) }) as InventoryTransaction).filter((movement) => movement.unit_id === row.unit_id || row.unit_id === null);
-      if (
-        freshTransactions.length !== row.txnCount ||
-        transactionFingerprint(freshTransactions) !== row.txnFingerprint
-      ) {
-        return { ok: false, error: "تغيّر سجل الحركات أثناء المراجعة — أعد التحليل." };
-      }
-      const res: { ok: true } | { ok: false; error: string } = { ok: true };
-      await runTx(async (tx) => {
-        const pRef = doc(db, "products", row.product_id);
-        const pSnap = await tx.get(pRef);
-        if (!pSnap.exists()) throw new Error("VALIDATION:المنتج غير موجود.");
-        const currentTransactions: InventoryTransaction[] = [];
-        for (const transactionId of row.txnIds) {
-          const transactionSnap = await tx.get(doc(db, "inventory_transactions", transactionId));
-          if (!transactionSnap.exists()) throw new Error("VALIDATION:تغيّر سجل الحركات أثناء المراجعة — أعد التحليل.");
-          currentTransactions.push({ id: transactionSnap.id, ...(transactionSnap.data() as object) } as InventoryTransaction);
-        }
-        if (transactionFingerprint(currentTransactions) !== row.txnFingerprint) {
-          throw new Error("VALIDATION:تغيّر سجل الحركات أثناء المراجعة — أعد التحليل.");
-        }
-        const units = Array.isArray(pSnap.data().units) ? pSnap.data().units : [];
-        const selectedUnit = row.unit_id === null ? null : units.find((unit: { id?: string }) => unit.id === row.unit_id);
-        if (row.unit_id !== null && !selectedUnit) throw new Error("VALIDATION:وحدة المنتج لم تعد موجودة.");
-        const curCostRaw = selectedUnit ? selectedUnit.average_cost : pSnap.data().cost_price;
-        const curCost = curCostRaw ?? null;
-        const curStock = (selectedUnit ? selectedUnit.stock_quantity : pSnap.data().stock_quantity) ?? null;
-        const currentLastMovementId = pSnap.data().last_inventory_transaction_id ?? null;
-        const currentLastMovementIds = [
-          ...((pSnap.data().last_inventory_transaction_ids ?? []) as string[]),
-        ].sort();
-        // Guard 1: explicit null-vs-number comparison (a null↔value flip counts).
-        const costPresenceChanged =
-          (curCost === null || curCost === undefined) !==
-          (row.currentCost === null || row.currentCost === undefined);
-        // Guard 2: values moved since analysis.
-        const costMoved =
-          !costPresenceChanged &&
-          curCost !== null &&
-          curCost !== undefined &&
-          row.currentCost !== null &&
-          Math.abs(Number(curCost) - Number(row.currentCost)) >= COST_EPS;
-        const stockPresenceChanged =
-          (curStock === null || curStock === undefined) !==
-          (row.currentStock === null || row.currentStock === undefined);
-        const stockMoved =
-          !stockPresenceChanged &&
-          Math.abs(toNum(curStock) - toNum(row.currentStock)) > QTY_EPS;
-        if (
-          stockPresenceChanged ||
-          stockMoved ||
-          costPresenceChanged ||
-          costMoved ||
-          currentLastMovementId !== row.lastMovementId ||
-          JSON.stringify(currentLastMovementIds) !== JSON.stringify(row.lastMovementIds)
-        ) {
-          throw new Error("VALIDATION:تغيّر المنتج أثناء المراجعة — أعد التحليل.");
-        }
-        const now = serverTimestamp();
-        const adjustmentRef = doc(collection(db, "inventory_cost_adjustments"));
-        tx.update(pRef, row.unit_id === null
-          ? { cost_price: row.recomputedCost, last_cost_adjustment_id: adjustmentRef.id }
-          : { units: units.map((unit: { id?: string }) => unit.id === row.unit_id ? { ...unit, average_cost: row.recomputedCost } : unit), last_cost_adjustment_id: adjustmentRef.id });
-        tx.set(adjustmentRef, {
-          product_id: row.product_id,
-          unit_id: row.unit_id,
-          old_cost: row.currentCost,
-          new_cost: row.recomputedCost,
-          created_by: creator(),
-          created_at: now,
-          reason,
-        });
+      await callStaff("applyInventoryCostRepair", {
+        requestId: crypto.randomUUID(), product_id: row.product_id, transaction_ids: row.txnIds,
+        transaction_fingerprint: row.txnFingerprint, current_stock: row.currentStock,
+        replayed_stock: row.replayedStock, current_cost: row.currentCost, recomputed_cost: row.recomputedCost,
+        last_movement_id: row.lastMovementId, last_movement_ids: row.lastMovementIds, reason,
       });
-      return res;
-    } catch (e) {
-      if (e instanceof Error && e.message.startsWith("VALIDATION:")) {
-        return { ok: false, error: e.message.slice("VALIDATION:".length) };
-      }
-      console.error(e);
-      return { ok: false, error: "تعذر تطبيق الإصلاح." };
+      return { ok: true };
+    } catch (error) {
+      console.error(error);
+      return { ok: false, error: "تعذر تطبيق الإصلاح. أعد التحليل وتحقق من صلاحيات المسؤول." };
     }
   }
 
@@ -492,11 +396,6 @@ export const useInventoryCostRepair = defineStore("inventoryCostRepair", () => {
       onProgress?.(done, targets.length);
     }
     return { applied, skipped, failed };
-  }
-
-  function creator(): string | null {
-    const authStore = useAuth();
-    return (authStore.currentUserKey as string) || null;
   }
 
   return { analyze, analyzeScoped, applyOne, applyMany };

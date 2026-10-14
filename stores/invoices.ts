@@ -1,21 +1,21 @@
 import { defineStore } from "pinia";
-import { and, collection, doc, getDocs, limit as fsLimit, orderBy, or, query, startAfter, Timestamp, where, type Query, type QueryDocumentSnapshot } from "firebase/firestore";
+import { and, collection, getDocs, limit as fsLimit, orderBy, or, query, startAfter, Timestamp, where, type Query, type QueryDocumentSnapshot } from "firebase/firestore";
 import type { Invoice } from "~/types";
 import type { InvoiceReturn } from "~/types/finance";
 import { toDateSafe } from "~/types";
 import { merchandiseProfitOf, round2, toNum } from "~/composables/finance";
-import { writeInvoiceStatsDelta } from "~/composables/performanceSummaries";
 import { formatInvoiceLineName } from "~/composables/helpers";
 
 const INVOICE_PAGE_SIZE = 25;
 
 export const useInvoicesStore = defineStore("invoices", () => {
-  const { readFrom, saveDataTo, updateItem, db, getDoc } = useFirebase();
+  const { readFrom, db } = useFirebase();
   const { notify } = useAppToast();
   const list = ref<Invoice[]>([]);
   const invoiceToEdit = ref<Invoice | undefined>(undefined);
   let pendingEdit: { fingerprint: string; requestId: string } | null = null;
   let pendingCreate: { fingerprint: string; requestId: string } | null = null;
+  let pendingCancel: { id: string; requestId: string } | null = null;
 
   // Substring search without per-keystroke full scans:
   // - New docs carry normalized `customer_name_norm` + `customer_phone_digits`
@@ -287,18 +287,6 @@ export const useInvoicesStore = defineStore("invoices", () => {
     return true;
   };
 
-  const addInvoice = async (invoice: Omit<Invoice, "id">) => {
-    const saved = await saveDataTo("invoices", invoice as Record<string, unknown>);
-    if (saved) invalidateCache();
-    return saved;
-  };
-
-  const updateInvoice = async (id: string, updatedFields: Partial<Invoice>) => {
-    const result = await updateItem("invoices", id, updatedFields as Record<string, unknown>);
-    if (result !== null) invalidateCache();
-    return result;
-  };
-
   /** Atomic invoice creation (F9/F29): invoice + stock decrement +
    *  inventory logs + cashbox (paid only). Flags the doc applied. */
   async function createInvoiceWithAccounting(
@@ -344,57 +332,21 @@ export const useInvoicesStore = defineStore("invoices", () => {
   }
 
   const deleteInvoice = async (id: string): Promise<{ ok: boolean; blocked?: boolean }> => {
-    // F26: never silently erase financial history — block when the invoice
-    // has applied effects or linked audit records.
     try {
-      const snap = await getDoc(doc(db, "invoices", id));
-      const data = snap.exists() ? (snap.data() as Record<string, unknown>) : {};
-      const hasEffects = data.inventory_applied === true || data.cashbox_applied === true;
-      let linked = false;
-      if (!hasEffects) {
-        const [ret, cash] = await Promise.all([
-          getDocs(query(collection(db, "invoice_returns"), where("invoice_id", "==", id), fsLimit(1))),
-          getDocs(query(collection(db, "cash_transactions"), where("invoice_id", "==", id), fsLimit(1))),
-        ]);
-        linked = !ret.empty || !cash.empty;
-      }
-      if (hasEffects || linked) {
-        notify("لا يمكن حذف فاتورة لها حركات مخزنية أو نقدية — استخدم المرتجع بدلاً من الحذف.", "error");
-        return { ok: false, blocked: true };
-      }
-    } catch (e) {
-      console.error(e);
-      return { ok: false };
-    }
-    try {
-      await runTx(async (tx) => {
-        const invoiceRef = doc(db, "invoices", id);
-        const [invoiceSnap, statsSnap] = await Promise.all([
-          tx.get(invoiceRef),
-          tx.get(doc(db, "store_stats", "current")),
-        ]);
-        if (!invoiceSnap.exists()) return;
-        const invoice = { id: invoiceSnap.id, ...(invoiceSnap.data() as object) } as Invoice;
-        const data = invoiceSnap.data();
-        if (data.inventory_applied === true || data.cashbox_applied === true) {
-          throw new Error("VALIDATION:لا يمكن حذف فاتورة لها حركات مخزنية أو نقدية — استخدم المرتجع بدلاً من الحذف.");
-        }
-        tx.delete(invoiceRef);
-        tx.delete(doc(db, "invoice_debt_summaries", id));
-        if (statsSnap.exists() && statsSnap.data().initialized === true) {
-          writeInvoiceStatsDelta(tx, db, invoice, null);
-        }
-      });
-      list.value = list.value.filter((inv) => inv.id !== id);
+      if (pendingCancel?.id !== id) pendingCancel = { id, requestId: crypto.randomUUID() };
+      await callStaff("deleteStaffInvoice", { id, requestId: pendingCancel.requestId });
+      pendingCancel = null;
+      const cancelledAt = new Date();
+      list.value = list.value.map((invoice) => invoice.id === id
+        ? { ...invoice, status: "cancelled", remaining: 0, cancelled_at: cancelledAt } as Invoice
+        : invoice);
       invalidateCache();
+      notify("تم إلغاء الفاتورة وعكس أثرها.", "success");
       return { ok: true };
     } catch (e) {
-      if (e instanceof Error && e.message.startsWith("VALIDATION:")) {
-        notify(e.message.slice("VALIDATION:".length), "error");
-        return { ok: false, blocked: true };
-      }
       console.error(e);
-      return { ok: false };
+      notify("تعذر إلغاء الفاتورة. قد تحتوي على مرتجع أو تسوية دين أو تغير رصيد المخزون؛ راجعها ثم أعد المحاولة.", "error");
+      return { ok: false, blocked: true };
     }
   };
 
@@ -409,20 +361,22 @@ export const useInvoicesStore = defineStore("invoices", () => {
 
       const formatted = invoices.map((inv) => {
         const products = Array.isArray(inv.products) ? inv.products : [];
-        const netTotal = products.reduce(
+        const cancelled = inv.status === "cancelled";
+        const returnTotal = cancelled ? 0 : returnsByInvoice.get(inv.id || "") ?? 0;
+        const netTotal = cancelled ? 0 : products.reduce(
           (sum, p) => sum + (Number(p.product_price) || 0) * (Number(p.product_quantity) || 0),
           0
         );
-        const totalCost = products.reduce(
+        const totalCost = cancelled ? 0 : products.reduce(
           (sum, p) => sum + (Number(p.product_cost_price) || 0) * (Number(p.base_quantity ?? p.product_quantity) || 0),
           0
         );
-        const discountValue = inv.discount_percentage
+        const discountValue = cancelled ? 0 : inv.discount_percentage
           ? (netTotal * (Number(inv.discount) || 0)) / 100
           : Number(inv.discount) || 0;
-        const totalAfterDiscount = netTotal - discountValue + (Number(inv.delivery_price) || 0);
-        const invoiceTotal = totalAfterDiscount + Number(inv.debt || 0) + Number(inv.amount_of_mahros || 0) + Number(inv.amount_of_animal_feeds || 0);
-        const profit = merchandiseProfitOf(inv);
+        const totalAfterDiscount = cancelled ? 0 : netTotal - discountValue + (Number(inv.delivery_price) || 0);
+        const invoiceTotal = cancelled ? 0 : totalAfterDiscount + Number(inv.debt || 0) + Number(inv.amount_of_mahros || 0) + Number(inv.amount_of_animal_feeds || 0);
+        const profit = cancelled ? 0 : merchandiseProfitOf(inv);
         const productsList = products
           .map((p, i) => {
             const name = formatInvoiceLineName(p.product_name || "غير محدد", p.unit_name, p.option);
@@ -436,6 +390,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
 
         return {
           "رقم الفاتورة": inv.id || "",
+          "حالة الفاتورة": cancelled ? "ملغاة — للتدقيق" : "فعالة",
           "اسم العميل": inv.customer_name || "",
           "رقم الهاتف": inv.customer_phone || "",
           "منشئ الفاتورة": formateActiveUserKey((inv.created_by as string) ?? null)?.name || "",
@@ -450,8 +405,8 @@ export const useInvoicesStore = defineStore("invoices", () => {
           "إجمالي التكلفة": totalCost || 0,
           "إجمالي الفاتورة": invoiceTotal,
           "حالة المرتجع": inv.return_status === "full" ? "كلي" : inv.return_status === "partial" ? "جزئي" : "لا يوجد",
-          "إجمالي المرتجعات": returnsByInvoice.get(inv.id || "") ?? 0,
-          "الصافي بعد المرتجعات": round2(invoiceTotal - (returnsByInvoice.get(inv.id || "") ?? 0)),
+          "إجمالي المرتجعات": returnTotal,
+          "الصافي بعد المرتجعات": round2(invoiceTotal - returnTotal),
           الربح: profit || 0,
           المنتجات: productsList,
         };
@@ -511,25 +466,6 @@ export const useInvoicesStore = defineStore("invoices", () => {
     }
   };
 
-  // FLAG [S6]: destructive bulk delete — requires explicit double-confirm by caller
-  // and should be moved to a server function with admin Custom Claim. Never call
-  // from console/untrusted context.
-  const deleteOldInvoices = async (confirmed = false): Promise<number> => {
-    if (!confirmed) throw new Error("Refusing bulk delete without explicit confirmation (pass confirmed=true after re-auth).");
-    const now = new Date();
-    const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const allInvoices = await readFrom<Invoice>("invoices");
-    let deletedCount = 0;
-    for (const inv of allInvoices) {
-      const invDate = toDateSafe(inv.date);
-      if (invDate && invDate < firstDayOfMonth && inv.id) {
-        const res = await deleteInvoice(inv.id);
-        if (res.ok) deletedCount++;
-      }
-    }
-    return deletedCount;
-  };
-
   return {
     list,
     invoiceToEdit,
@@ -537,12 +473,9 @@ export const useInvoicesStore = defineStore("invoices", () => {
     fetchInvoicePage,
     fetchInvoicesForExport,
     invalidateCache,
-    addInvoice,
-    updateInvoice,
     createInvoiceWithAccounting,
     updateInvoiceWithAccounting,
     deleteInvoice,
-    deleteOldInvoices,
     exportInvoicesToExcel,
   };
 });

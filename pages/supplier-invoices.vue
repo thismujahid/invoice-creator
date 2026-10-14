@@ -30,7 +30,10 @@
         <UFormField label="رقم فاتورة المورد"><UInput v-model="supplierRef" dir="ltr" class="w-full" /></UFormField>
         <div v-for="(line, index) in draftLines" :key="line.key" class="space-y-2 rounded-xl border border-gray-200 p-3">
           <div class="flex items-center justify-between"><b class="text-sm">صنف {{ index + 1 }}</b><UButton size="xs" color="error" variant="ghost" icon="i-lucide-trash-2" aria-label="حذف الصنف" :disabled="draftLines.length <= 1" @click="draftLines.splice(index, 1)" /></div>
-          <UFormField label="المنتج"><USelectMenu :model-value="line.product" :items="productOptions(line)" label-key="name" by="id" placeholder="اختر المنتج" :search-input="{ placeholder: 'بحث عن منتج...', icon: 'i-lucide-search' }" class="w-full" @update:model-value="(product) => pickProduct(line, product)" /></UFormField>
+          <UFormField label="المنتج"><USelectMenu :model-value="selectedFamily(line)" :items="familyOptions" label-key="name" by="id" placeholder="اختر المنتج" :search-input="{ placeholder: 'بحث باسم المنتج...', icon: 'i-lucide-search' }" class="w-full" @update:model-value="(family) => pickFamily(line, family)" /></UFormField>
+          <UFormField v-if="line.family_id && selectedFamily(line)?.inventory_mode !== 'independent'" label="النوع"><USelectMenu :model-value="line.product" :items="productOptions(line)" label-key="variant_name" by="id" placeholder="اختر النوع" :search-input="{ placeholder: 'بحث عن نوع...', icon: 'i-lucide-search' }" class="w-full" @update:model-value="(product) => pickProduct(line, product)" /></UFormField>
+          <UFormField v-if="line.family_id && selectedFamily(line)?.inventory_mode === 'independent' && selectedFamily(line)?.uses_variants !== false" label="النوع"><USelectMenu :model-value="selectedVariantOption(line)" :items="variantOptions(line)" label-key="name" by="key" placeholder="اختر النوع" :search-input="{ placeholder: 'بحث عن نوع...', icon: 'i-lucide-search' }" class="w-full" @update:model-value="(variant) => pickVariant(line, variant)" /></UFormField>
+          <UFormField v-if="line.family_id && selectedFamily(line)?.inventory_mode === 'independent' && (selectedFamily(line)?.uses_variants === false || line.variant_key)" label="حجم العبوة"><USelectMenu :model-value="line.product" :items="packSizeOptions(line)" label-key="pack_size_name" by="id" placeholder="اختر حجم العبوة" :search-input="{ placeholder: 'بحث عن حجم عبوة...', icon: 'i-lucide-search' }" class="w-full" @update:model-value="(product) => pickProduct(line, product)" /></UFormField>
           <div v-if="line.product" class="grid grid-cols-2 gap-2">
             <UFormField label="وحدة الشراء"><USelectMenu :model-value="selectedUnit(line)" :items="unitOptions(line)" label-key="name" by="id" :search-input="false" class="w-full" @update:model-value="(unit) => pickUnit(line, unit)" /></UFormField>
             <UFormField label="الكمية"><UInputNumber v-model="line.quantity" :min="0.01" :step="selectedUnit(line)?.allows_fractional ? 0.01 : 1" class="w-full" /></UFormField>
@@ -76,8 +79,14 @@
         <p class="text-sm">{{ returnInvoice.supplier_name }} · إجمالي الفاتورة {{ formatePrice(returnInvoice.total_amount) }} ج</p>
         <div v-for="line in returnLines" :key="line.index" class="rounded-lg border p-3 text-sm">
           <div class="flex justify-between gap-2"><b>{{ line.name }}</b><span>المتاح من الفاتورة: {{ line.max }} {{ line.unit }}</span></div>
-          <div class="mt-1 text-xs text-gray-500">تكلفة الوحدة الأصلية {{ formatePrice(line.cost) }} ج · المخزون الحالي {{ line.stock }} {{ line.unit }}</div>
-          <UInputNumber v-model="line.quantity" :min="0" :max="line.max" :step="line.fractional ? 0.01 : 1" class="mt-2 w-full" />
+          <div class="mt-1 text-xs text-gray-500">تكلفة الوحدة الأصلية {{ formatePrice(line.cost) }} ج</div>
+          <UFormField label="المكوّن الفعلي المراد إرجاعه" class="mt-2">
+            <USelect v-model="line.componentKey" :items="returnComponentOptions(line)" value-key="value" label-key="label" class="w-full" />
+          </UFormField>
+          <p class="mt-1 text-xs text-gray-500">الرصيد الفعلي المحدد: {{ returnComponentBalance(line) }}</p>
+          <UFormField label="الكمية المرتجعة" :error="returnPhysicalError(line) || undefined" class="mt-2">
+            <UInputNumber v-model="line.quantity" :min="0" :max="returnMaxQuantity(line)" :step="line.fractional ? 0.0001 : 1" class="w-full" />
+          </UFormField>
           <div class="mt-1 text-xs">قيمة الصنف: {{ formatePrice(line.quantity * line.cost) }} ج</div>
         </div>
         <UEmpty v-if="!returnLines.length" title="لا توجد أصناف قابلة للإرجاع" />
@@ -114,7 +123,7 @@ import { convertUnitPrice, proposedSellingPrice, purchaseLineBaseCost, purchaseL
 import { toDateSafe } from "~/types";
 import { useSuppliersStore } from "~/stores/suppliers";
 
-interface DraftLine { key: string; product?: Product; unit_id: string; unit_name: string; unit_factor: number; quantity: number; unit_cost: number; priceMode: "keep" | "proposed" | "custom"; approvedProposal?: number | null; customPrice?: number }
+interface DraftLine { key: string; family_id: string | null; variant_key?: string | null; product?: Product; unit_id: string; unit_name: string; unit_factor: number; quantity: number; unit_cost: number; priceMode: "keep" | "proposed" | "custom"; approvedProposal?: number | null; customPrice?: number }
 definePageMeta({ title: "فواتير الموردين" });
 const { formatePrice } = useHelpers();
 const { notify } = useAppToast();
@@ -126,8 +135,8 @@ const returnsApi = useSupplierReturns();
 const cashbox = useCashbox();
 function invoiceBaseQuantityLabel(item: PurchaseInvoiceItem): string {
   const product = productsStore.productsById.get(item.product_id);
-  const quantity = item.base_quantity ?? item.quantity * (item.unit_factor || 1);
-  return product ? stockQuantityLabel(product, quantity) : String(quantity);
+  const quantity = item.base_quantity;
+  return product && quantity !== null && quantity !== undefined ? stockQuantityLabel(product, quantity) : "—";
 }
 const pinnedInvoices = ref<PurchaseInvoice[]>([]);
 const pageInvoices = ref<PurchaseInvoice[]>([]);
@@ -186,8 +195,8 @@ const savingDraft = ref(false);
 const draftError = ref("");
 const requestKey = ref("");
 const priceModeItems = [{ label: "الإبقاء على السعر الحالي", value: "keep" }, { label: "اعتماد السعر المقترح", value: "proposed" }, { label: "سعر مخصص", value: "custom" }];
-const draftTotal = computed(() => round2(draftLines.value.reduce((sum, line) => sum + round2(toNum(line.quantity) * round4(toNum(line.unit_cost))), 0)));
-const draftReady = computed(() => !savingDraft.value && !!(draftSupplier.value?.id || (draftSource.value && supplierName.value.trim())) && draftLines.value.length > 0 && draftLines.value.every((line) => line.product?.id && line.quantity > 0 && (selectedUnit(line)?.allows_fractional === true || Number.isInteger(line.quantity)) && line.unit_cost >= 0 && (!pricePolicyApplies(line) || line.priceMode !== "keep") && (line.priceMode !== "proposed" || previewLine(line).proposed !== null && Number(line.approvedProposal) >= 0) && (line.priceMode !== "custom" || Number(line.customPrice) >= 0)) && toNum(paidNow.value) >= 0 && toNum(paidNow.value) <= cashbox.balance && (toNum(paidNow.value) <= draftTotal.value || !!draftSupplier.value?.id));
+const draftTotal = computed(() => round2(draftLines.value.reduce((sum, line) => sum + round2(toNum(line.quantity) * toNum(line.unit_cost)), 0)));
+const draftReady = computed(() => !savingDraft.value && !!(draftSupplier.value?.id || (draftSource.value && supplierName.value.trim())) && draftLines.value.length > 0 && draftLines.value.every((line) => line.product?.id && selectedUnit(line) && Number.isFinite(line.unit_factor) && line.unit_factor > 0 && line.quantity > 0 && (selectedUnit(line)?.allows_fractional === true || Number.isInteger(line.quantity)) && line.unit_cost >= 0 && (!pricePolicyApplies(line) || line.priceMode !== "keep") && (line.priceMode !== "proposed" || previewLine(line).proposed !== null && Number(line.approvedProposal) >= 0) && (line.priceMode !== "custom" || Number(line.customPrice) >= 0)) && toNum(paidNow.value) >= 0 && toNum(paidNow.value) <= cashbox.balance && (toNum(paidNow.value) <= draftTotal.value || !!draftSupplier.value?.id));
 const draftMessage = computed(() => draftError.value);
 const visibleInvoices = computed(() => [...new Map([...pinnedInvoices.value, ...pageInvoices.value].map((invoice) => [invoice.id, invoice])).values()].filter((invoice) => {
   const query = search.value.trim().toLocaleLowerCase();
@@ -202,7 +211,7 @@ const selectedInvoice = ref<PurchaseInvoice | null>(null);
 const selectedReturns = ref<SupplierReturn[]>([]);
 const returnsLoading = ref(false);
 const returnsError = ref("");
-interface SupplierReturnLine { index: number; name: string; unit: string; cost: number; fractional: boolean; max: number; stock: number; quantity: number }
+interface SupplierReturnLine { index: number; name: string; unit: string; cost: number; fractional: boolean; max: number; sourceFactor: number; product?: Product; componentKey: string; quantity: number }
 const returnInvoice = ref<PurchaseInvoice | null>(null);
 const supplierReturnOpen = ref(false);
 const returnLines = ref<SupplierReturnLine[]>([]);
@@ -216,7 +225,7 @@ const returnTotal = computed(() => round2(returnLines.value.reduce((sum, line) =
 const returnSettlement = computed(() => splitSupplierReturn(returnTotal.value, returnInvoice.value?.remaining_amount));
 const returnPayableReduction = computed(() => returnSettlement.value.payableReduction);
 const returnReceivable = computed(() => returnSettlement.value.receivable);
-const returnCanSubmit = computed(() => !returnBusy.value && returnLines.value.some((line) => line.quantity > 0) && returnLines.value.every((line) => (line.fractional || Number.isInteger(line.quantity)) && line.quantity >= 0 && line.quantity <= line.max) && (!returnReceivable.value || !!(returnInvoice.value?.supplier_id || returnSupplier.value?.id)));
+const returnCanSubmit = computed(() => !returnBusy.value && returnLines.value.some((line) => line.quantity > 0) && returnLines.value.every((line) => (line.fractional || Number.isInteger(line.quantity)) && line.quantity >= 0 && !returnPhysicalError(line)) && (!returnReceivable.value || !!(returnInvoice.value?.supplier_id || returnSupplier.value?.id)));
 const advances = ref<SupplierAdvance[]>([]);
 const advanceTarget = ref<SupplierAdvance | null>(null);
 const advanceMode = ref<"apply" | "refund">("apply");
@@ -248,13 +257,56 @@ function statusColor(invoice: PurchaseInvoice): "success" | "warning" | "error" 
 function sourceLabel(source?: string): string { return source === "excel_import" ? "استيراد Excel" : source === "repeat" ? "من فاتورة سابقة" : "يدوية"; }
 function formatDateOnly(value: unknown): string { const date = toDateSafe(value); return date?.toLocaleDateString("ar-EG") ?? "—"; }
 function unitOptions(line: DraftLine): ProductUnit[] { return line.product ? purchasableUnitsForProduct(line.product) : []; }
-function selectedUnit(line: DraftLine): ProductUnit | undefined { return unitOptions(line).find((unit) => unit.id === line.unit_id) ?? unitOptions(line)[0]; }
-function newLine(): DraftLine { return { key: id(), unit_id: "", unit_name: "", unit_factor: 1, quantity: 1, unit_cost: 0, priceMode: "keep" }; }
+function selectedUnit(line: DraftLine): ProductUnit | undefined { return unitOptions(line).find((unit) => unit.id === line.unit_id); }
+const familyOptions = computed(() => [...new Map(productsStore.list
+  .filter((product) => product.is_active !== false && product.family_id && product.family_name)
+  .map((product) => [product.family_id as string, { id: product.family_id as string, name: product.family_name as string, uses_variants: product.uses_variants !== false, inventory_mode: product.inventory_mode === "independent" ? "independent" as const : "convertible" as const }]))]
+  .map(([, family]) => family)
+  .sort((left, right) => left.name.localeCompare(right.name, "ar")));
+function selectedFamily(line: DraftLine): { id: string; name: string; uses_variants: boolean; inventory_mode: "convertible" | "independent" } | undefined {
+  return line.family_id ? familyOptions.value.find((family) => family.id === line.family_id) : undefined;
+}
+function newLine(): DraftLine { return { key: id(), family_id: null, variant_key: null, unit_id: "", unit_name: "", unit_factor: Number.NaN, quantity: 1, unit_cost: 0, priceMode: "keep" }; }
 function addDraftLine(): void { draftLines.value.push(newLine()); }
 function productOptions(line: DraftLine): Product[] {
   // Same product may appear in several purchase units (e.g. cartons + pieces);
   // exact duplicate rows (same product + same unit) are rejected at save.
-  return [...productsStore.list];
+  return productsStore.list.filter((product) => product.is_active !== false && product.family_id === line.family_id);
+}
+type VariantOption = { key: string; name: string };
+function variantOptions(line: DraftLine): VariantOption[] {
+  const options = new Map<string, VariantOption>();
+  for (const product of productsStore.list) {
+    if (product.is_active === false || product.family_id !== line.family_id || product.inventory_mode !== "independent") continue;
+    const key = product.variant_key || "default";
+    if (!options.has(key)) options.set(key, { key, name: product.variant_name || "أساسي" });
+  }
+  return [...options.values()].sort((left, right) => Number(productsStore.list.find(product => product.family_id === line.family_id && product.variant_key === left.key)?.variant_order || 0) - Number(productsStore.list.find(product => product.family_id === line.family_id && product.variant_key === right.key)?.variant_order || 0));
+}
+function selectedVariantOption(line: DraftLine): VariantOption | undefined { return variantOptions(line).find(option => option.key === line.variant_key); }
+function packSizeOptions(line: DraftLine): Product[] { return productsStore.list.filter(product => product.is_active !== false && product.family_id === line.family_id && product.inventory_mode === "independent" && (product.variant_key || "default") === (line.variant_key || "default")).sort((left, right) => (left.pack_size_order ?? 0) - (right.pack_size_order ?? 0)); }
+function pickVariant(line: DraftLine, variant?: VariantOption | null): void {
+  line.variant_key = variant?.key || null; line.product = undefined; line.unit_id = ""; line.unit_name = ""; line.unit_factor = Number.NaN; line.unit_cost = 0;
+  const sizes = packSizeOptions(line); if (sizes.length === 1) pickProduct(line, sizes[0]);
+}
+function pickFamily(line: DraftLine, family?: { id: string; name: string } | null): void {
+  line.family_id = family?.id ?? null;
+  if (line.product?.family_id !== line.family_id) {
+    line.product = undefined;
+    line.variant_key = null;
+    line.unit_id = "";
+    line.unit_name = "";
+    line.unit_factor = Number.NaN;
+    line.unit_cost = 0;
+  }
+  const selected = selectedFamily(line);
+  if (selected?.inventory_mode === "independent") {
+    if (selected.uses_variants === false) line.variant_key = "default";
+    const variants = variantOptions(line); if (selected.uses_variants !== false && variants.length === 1) pickVariant(line, variants[0]);
+    const sizes = packSizeOptions(line); if (sizes.length === 1) pickProduct(line, sizes[0]);
+  } else {
+    const products = productOptions(line); if (selected?.uses_variants === false && products.length === 1) pickProduct(line, products[0]);
+  }
 }
 function pickUnit(line: DraftLine, unit?: ProductUnit): void {
   if (!unit) return;
@@ -263,25 +315,40 @@ function pickUnit(line: DraftLine, unit?: ProductUnit): void {
   line.unit_cost = unitLastCost !== null && unitLastCost !== undefined
     ? unitLastCost
     : line.unit_cost;
-  line.unit_id = unit.id; line.unit_name = unit.name; line.unit_factor = 1;
+  const f = Number(unit.factor);
+  if (!Number.isFinite(f) || f <= 0) return;
+  line.unit_id = unit.id; line.unit_name = unit.name; line.unit_factor = f;
 }
 function pickProduct(line: DraftLine, product?: Product): void {
   if (!product) { line.product = undefined; return; }
+  if (product.family_id !== line.family_id) return;
   line.product = product;
+  line.variant_key = product.variant_key ?? null;
   const options = purchasableUnitsForProduct(product);
-  const base = options[0]!;
-  line.unit_id = base.id; line.unit_name = base.name; line.unit_factor = 1;
+  const base = options.find((unit) => unit.id === product.base_unit_id) ?? options[0];
+  if (!base) {
+    line.unit_id = "";
+    line.unit_name = "";
+    line.unit_factor = Number.NaN;
+    return;
+  }
+  const f = Number(base.factor);
+  if (!Number.isFinite(f) || f <= 0) { line.product = undefined; return; }
+  line.unit_id = base.id; line.unit_name = base.name; line.unit_factor = f;
   // Prefill with the unit's last purchase price when known (more accurate
   // than the blended base average for repeat buys of the same unit).
-  line.unit_cost = unitPurchasePrice(product, base) ?? toNum(product.cost_price);
+  line.unit_cost = unitPurchasePrice(product, base) ?? round4(toNum(product.cost_price) * f);
   line.approvedProposal = previewLine(line).proposed;
 }
 function openUnitFromSnapshot(productId: string, name: string, unitId?: string | null, unitName?: string | null, factor?: number | null): DraftLine {
   const line = newLine();
   line.product = productsStore.list.find((product) => product.id === productId);
-  line.unit_id = unitId || line.product?.base_unit_id || "legacy-base";
-  line.unit_name = unitName || line.product?.base_unit_name || "وحدة";
-  line.unit_factor = 1;
+  const cfg = line.product?.units?.find((u) => u.id === unitId);
+  const f = Number(factor);
+  line.family_id = line.product?.family_id ?? null;
+  line.unit_id = unitId || "";
+  line.unit_name = unitName || "";
+  line.unit_factor = Number.isFinite(f) && f > 0 && cfg && Number(cfg.factor) === f ? f : Number.NaN;
   return line;
 }
 function startDraft(source?: PurchaseInvoice): void {
@@ -313,35 +380,51 @@ function previewLine(line: DraftLine): { avg: number; proposed: number | null; b
   if (!line.product) return { avg: 0, proposed: null, baseQty: 0, baseCost: 0 };
   const unit = selectedUnit(line);
   if (!unit) return { avg: 0, proposed: null, baseQty: 0, baseCost: 0 };
-  const baseQty = line.quantity;
-  const baseCost = line.unit_cost;
+  const f = Number(unit.factor);
+  if (!Number.isFinite(f) || f <= 0) return { avg: 0, proposed: null, baseQty: 0, baseCost: 0 };
+  const baseQty = round4(toNum(line.quantity) * f);
+  const baseCost = toNum(line.unit_cost) / f;
   let totalQty = 0;
   let totalCost = 0;
   for (const other of draftLines.value) {
-    if (!other.product || other.product.id !== line.product.id || other.unit_id !== unit.id) continue;
-    const q = other.quantity;
-    const c = other.unit_cost;
-    totalQty = round2(totalQty + q);
-    totalCost += q * c;
+    if (!other.product || other.product.id !== line.product.id) continue;
+    const ou = other.product.units?.find((u) => u.id === other.unit_id);
+    const of = ou ? Number(ou.factor) : Number(other.unit_factor);
+    if (!Number.isFinite(of) || of <= 0) return { avg: 0, proposed: null, baseQty: 0, baseCost: 0 };
+    const q = round4(toNum(other.quantity) * of);
+    totalQty = round4(totalQty + q);
+    totalCost += q * (toNum(other.unit_cost) / of);
   }
   const combinedCost = totalQty > 0 ? totalCost / totalQty : baseCost;
-  const avg = purchasePreviewAverage(unit.stock_quantity, unit.average_cost, totalQty, combinedCost);
-  return { avg: round4(avg), proposed: proposedSellingPrice(unit.average_cost, unit.selling_price, avg).proposed, baseQty, baseCost: round4(baseCost) };
+  const avg = purchasePreviewAverage(line.product.stock_quantity, line.product.cost_price, totalQty, combinedCost);
+  const unitAvg = round4(avg * f);
+  const oldUnitAvg = line.product.inventory_mode === "independent"
+    ? unitPurchasePrice(line.product, unit)
+    : line.product.cost_price == null ? null : round4(toNum(line.product.cost_price) * f);
+  const nextUnitCost = line.product.inventory_mode === "independent" ? toNum(line.unit_cost) : unitAvg;
+  const proposed = oldUnitAvg === null ? null : proposedSellingPrice(oldUnitAvg, unit.selling_price, nextUnitCost).proposed;
+  return { avg: round4(avg), proposed, baseQty, baseCost: round4(baseCost) };
 }
 
 function proposalsForProduct(productId: string | undefined): { unitId: string; unitName: string; factor: number; oldAvg: number | null; oldPrice: number | null; newAvg: number | null; rate: number | null; proposed: number | null }[] {
   const line = draftLines.value.find((l) => l.product?.id === productId);
   const product = line?.product;
   if (!product) return [];
+  if (product.inventory_mode === "independent") return [];
   return purchaseUnitProposals(product as Product, previewLine(line).avg);
 }
-function pricePolicyApplies(line: DraftLine): boolean { return previewLine(line).avg - toNum(selectedUnit(line)?.selling_price) > 1e-9; }
+function pricePolicyApplies(line: DraftLine): boolean {
+  const unit = selectedUnit(line);
+  if (!unit) return false;
+  const cost = line.product?.inventory_mode === "independent" ? toNum(line.unit_cost) : previewLine(line).avg * Number(unit.factor);
+  return cost - toNum(unit.selling_price) > 1e-9;
+}
 function setPriceMode(line: DraftLine, mode: string): void {
   if (mode !== "keep" && mode !== "proposed" && mode !== "custom") return;
   line.priceMode = mode;
   line.approvedProposal = previewLine(line).proposed;
 }
-watch(() => draftLines.value.map((line) => `${line.key}:${line.quantity}:${line.unit_cost}:${line.unit_factor}:${line.product?.stock_quantity}:${line.product?.cost_price}:${line.product?.price}`).join("|"), () => {
+watch(() => draftLines.value.map((line) => `${line.key}:${line.quantity}:${line.unit_cost}:${line.unit_factor}:${line.product?.stock_quantity}:${line.product?.cost_price}`).join("|"), () => {
   for (const line of draftLines.value) line.approvedProposal = previewLine(line).proposed;
 });
 async function confirmDraft(): Promise<void> {
@@ -374,17 +457,77 @@ function openReturn(invoice: PurchaseInvoice): void {
   returnSupplier.value = null;
   returnNote.value = "";
   returnError.value = "";
-  returnLines.value = invoice.items.map((item, index) => ({
-    index,
-    name: item.product_name,
-    unit: item.unit_name || "وحدة",
-    cost: toNum(item.unit_cost),
-    fractional: productsStore.productsById.get(item.product_id)?.units?.find((unit) => unit.id === item.unit_id)?.allows_fractional === true,
-    max: Math.max(0, toNum(item.quantity) - toNum(invoice.returned_quantities?.[String(index)])),
-    stock: toNum(productsStore.productsById.get(item.product_id)?.units?.find((unit) => unit.id === item.unit_id)?.stock_quantity),
-    quantity: 0,
-  })).filter((line) => line.max > 0);
+  returnLines.value = invoice.items.map((item, index) => {
+    const product = productsStore.productsById.get(item.product_id);
+    const unit = product?.units?.find((u) => u.id === item.unit_id);
+    const f = Number(item.unit_factor);
+    const sourceKind = item.stock_kind || unit?.stock_kind;
+    const closedCount = item.unit_id ? toNum(product?.inventory?.closed_packages?.[item.unit_id]) : 0;
+    return {
+      index,
+      name: item.product_name,
+      unit: item.unit_name || "وحدة",
+      cost: toNum(item.unit_cost),
+      fractional: item.allows_fractional === true,
+      max: Math.max(0, toNum(item.quantity) - toNum(invoice.returned_quantities?.[String(index)])),
+      sourceFactor: f,
+      product,
+      componentKey: sourceKind === "package" && closedCount > 0 ? `package:${item.unit_id}` : "loose",
+      quantity: 0,
+    };
+  }).filter((line) => line.max > 0);
   supplierReturnOpen.value = true;
+}
+function returnComponentOptions(line: SupplierReturnLine): { label: string; value: string }[] {
+  const product = line.product;
+  if (!product) return [{ label: "الكمية المفتوحة", value: "loose" }];
+  const options = [{ label: `${product.inventory_mode === "independent" ? "عبوات مفردة كاملة" : "كمية مفتوحة"} · ${product.base_unit_name || "الوحدة الأساسية"}`, value: "loose" }];
+  for (const unit of product.units || []) {
+    if (unit.stock_kind !== "package") continue;
+    const count = toNum(product.inventory?.closed_packages?.[unit.id]);
+    options.push({ label: `${unit.name} مغلقة · المتاح ${count}`, value: `package:${unit.id}` });
+  }
+  return options;
+}
+function returnBucket(line: SupplierReturnLine): "loose" | "package" {
+  return line.componentKey.startsWith("package:") ? "package" : "loose";
+}
+function returnUnitId(line: SupplierReturnLine): string | null {
+  return returnBucket(line) === "package" ? line.componentKey.slice("package:".length) : null;
+}
+function returnComponentBalance(line: SupplierReturnLine): string {
+  if (!line.product) return "غير متاح";
+  if (returnBucket(line) === "loose") return `${round4(toNum(line.product.inventory?.loose_base_quantity))} ${line.product.base_unit_name || "وحدة"}`;
+  const unitId = returnUnitId(line) || "";
+  const unit = line.product.units?.find((entry) => entry.id === unitId);
+  return `${toNum(line.product.inventory?.closed_packages?.[unitId])} ${unit?.name || "عبوة"}`;
+}
+function returnMaxQuantity(line: SupplierReturnLine): number {
+  if (!(line.sourceFactor > 0)) return 0;
+  const product = line.product;
+  const bucket = returnBucket(line);
+  const unitId = returnUnitId(line);
+  const unit = bucket === "package" ? product?.units?.find((entry) => entry.id === unitId) : undefined;
+  const availableBase = bucket === "package"
+    ? toNum(product?.inventory?.closed_packages?.[unitId || ""]) * Number(unit?.factor)
+    : toNum(product?.inventory?.loose_base_quantity);
+  if (bucket === "package") {
+    const factor = Number(unit?.factor);
+    if (!(factor > 0)) return 0;
+    return Math.min(line.max, round4(Math.floor((availableBase + 1e-9) / factor) * factor / line.sourceFactor));
+  }
+  return Math.min(line.max, round4(availableBase / line.sourceFactor));
+}
+function returnPhysicalError(line: SupplierReturnLine): string {
+  if (!(line.quantity > 0)) return "";
+  if (!(line.sourceFactor > 0)) return "معامل الوحدة في الفاتورة غير صالح.";
+  if (line.quantity - returnMaxQuantity(line) > 1e-9) return "الرصيد الفعلي للمكوّن المحدد لا يكفي لهذه الكمية.";
+  if (returnBucket(line) === "package") {
+    const unit = line.product?.units?.find((entry) => entry.id === returnUnitId(line));
+    const count = line.quantity * line.sourceFactor / Number(unit?.factor);
+    if (!Number.isFinite(count) || Math.abs(count - Math.round(count)) > 1e-9) return "كمية المرتجع يجب أن تطابق عددًا صحيحًا من العبوات المغلقة.";
+  }
+  return "";
 }
 function onReturnSupplierCreated(supplier: Supplier | null | undefined): void {
   if (supplier?.id) returnSupplier.value = supplier;
@@ -394,7 +537,7 @@ async function submitSupplierReturn(): Promise<void> {
   returnBusy.value = true;
   returnError.value = "";
   try {
-    const result = await returnsApi.createReturn({ id: returnKey.value, invoice_id: returnInvoice.value.id, items: returnLines.value.filter((line) => line.quantity > 0).map((line) => ({ line_index: line.index, quantity: line.quantity })), supplier_id: returnSupplier.value?.id, note: returnNote.value.trim() || null });
+    const result = await returnsApi.createReturn({ id: returnKey.value, invoice_id: returnInvoice.value.id, items: returnLines.value.filter((line) => line.quantity > 0).map((line) => ({ line_index: line.index, quantity: line.quantity, return_bucket: returnBucket(line), return_unit_id: returnUnitId(line) })), supplier_id: returnSupplier.value?.id, note: returnNote.value.trim() || null });
     if (!result.ok) { returnError.value = result.error; return; }
     const invoiceId = returnInvoice.value.id;
     supplierReturnOpen.value = false;

@@ -23,8 +23,14 @@ const operations = new Set([
   "payStaffDebts",
   "getStaffReturnPreview",
   "createStaffReturn",
+  "createStaffSupplierReturn",
   "deleteStaffInvoice",
   "updateStaffInvoice",
+  "saveInventoryProduct",
+  "archiveInventoryProduct",
+  "adjustInventoryBucket",
+  "executeInventoryPurchase",
+  "applyInventoryCostRepair",
   "factoryReset",
 ]);
 
@@ -89,6 +95,8 @@ export default defineEventHandler(async (event) => {
       const actionsPath = require.resolve("./functions/staffInvoiceActions.cjs");
       delete require.cache[staffPath];
       delete require.cache[actionsPath];
+      delete require.cache[require.resolve("./functions/inventoryOperations.cjs")];
+      delete require.cache[require.resolve("./functions/staffMath.cjs")];
       staff = require(staffPath);
     } else {
       staff = name === "factoryReset"
@@ -100,7 +108,7 @@ export default defineEventHandler(async (event) => {
   } catch (error) {
     const code = String(error?.code || "").replace(/^functions\//, "");
     if (code in statuses) {
-      throw createError({ statusCode: statuses[code], statusMessage: error.message });
+      throw createError({ statusCode: statuses[code], statusMessage: "Request rejected", data: { code, userMessage: error.message } });
     }
     throw createError({ statusCode: 500, statusMessage: "The operation could not be completed." });
   }

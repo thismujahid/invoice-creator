@@ -11,29 +11,19 @@ import { toDateSafe } from "~/types";
 import {
   MAX_PURCHASE_ITEMS,
   allocateSupplierCash,
-  applyUnitPurchase,
-  estimatePurchaseOps,
-  prependPurchasePriceHistory,
   round2,
   round4,
   toNum,
 } from "./finance";
 import type { PriceDecision } from "./finance";
 import { writeSupplierSummaryDelta } from "./performanceSummaries";
+import { callStaff } from "./staffApi";
 
 export interface PurchaseItemInput {
-  /** Existing product id; null/undefined for brand-new products. */
   product_id?: string | null;
-  /** Required for new products. */
-  name?: string | null;
   quantity: number;
   unit_cost: number;
   pricing: PriceDecision;
-  /** Required selling price for new products. */
-  price?: number | null;
-  /** Shortage alert for new products, applied to the BASE unit in base-unit
-   *  terms (default 5). Per-unit thresholds may also arrive on `units`. */
-  threshold?: number | null;
   unit_id?: string | null;
   unit_name?: string | null;
   unit_factor?: number | null;
@@ -100,105 +90,15 @@ export const usePurchasing = defineStore("purchasing", () => {
   const by = () => (authStore.currentUserKey as string) || null;
 
   async function executeUnitPurchase(input: ExecutePurchaseInput): Promise<ExecutePurchaseResult> {
-    const items = input.items ?? [];
-    const total = round2(items.reduce((sum, item) => sum + round2(toNum(item.quantity) * toNum(item.unit_cost)), 0));
-    const paid = round2(toNum(input.paidNow));
-    const { applied: invoicePaid, advance } = allocateSupplierCash(total, paid);
-    const fingerprint = JSON.stringify(input);
-    let cached: Product[] = [];
-    let cashBalanceAfterPurchase: number | null = null;
-    let result: ExecutePurchaseResult = { ok: false, error: "تعذر حفظ فاتورة المورد." };
     try {
-      await runTx(async (tx) => {
-        const invoiceRef = doc(db, "purchase_invoices", input.idempotencyKey);
-        const duplicate = await tx.get(invoiceRef);
-        if (duplicate.exists()) {
-          const data = duplicate.data();
-          if (data.request_fingerprint !== fingerprint) throw new Error("VALIDATION:مفتاح العملية مستخدم لبيانات مختلفة. أعد فتح الاستيراد.");
-          result = { ok: true, duplicate: true, id: invoiceRef.id, total: round2(toNum(data.total_amount)), paid: round2(toNum(data.paid_amount)), remaining: round2(toNum(data.remaining_amount)), fullyPaid: toNum(data.remaining_amount) <= 0, advance: round2(toNum(data.advance_amount)) };
-          return;
-        }
-        const cashRef = doc(db, "cashbox", "current");
-        const cash = await tx.get(cashRef);
-        const balance = cash.exists() ? round2(toNum(cash.data()?.balance)) : 0;
-        if (paid > 0 && !cash.exists()) throw new Error("VALIDATION:لا يمكن الدفع قبل تهيئة الخزنة.");
-        if (paid - balance > 1e-9) throw new Error("VALIDATION:المدفوع الآن يتجاوز رصيد الخزنة المتاح.");
-        const productIds = [...new Set(items.map((item) => item.product_id).filter((id): id is string => !!id))];
-        const products = new Map<string, { ref: ReturnType<typeof doc>; data: Product }>();
-        for (const productId of productIds) {
-          const snap = await tx.get(doc(db, "products", productId));
-          if (!snap.exists()) throw new Error("VALIDATION:منتج غير موجود.");
-          products.set(productId, { ref: snap.ref, data: { id: snap.id, ...(snap.data() as object) } as Product });
-        }
-        const now = serverTimestamp();
-        const nowMs = Date.now();
-        const movements: Record<string, unknown>[] = [];
-        const invoiceItems: PurchaseInvoiceItem[] = [];
-        const writes = new Map<string, Product>();
-        let seq = 0;
-        for (const item of items) {
-          const quantity = round4(toNum(item.quantity));
-          const cost = round4(toNum(item.unit_cost));
-          if (!(quantity > 0) || !(cost >= 0)) throw new Error("VALIDATION:كمية أو تكلفة الشراء غير صالحة.");
-          let product: Product;
-          let productId: string;
-          if (item.product_id) {
-            product = writes.get(item.product_id) ?? products.get(item.product_id)!.data;
-            productId = item.product_id;
-          } else {
-            productId = doc(collection(db, "products")).id;
-            const unitId = item.unit_id || "unit";
-            const provided = item.units?.length ? item.units : [{ id: unitId, name: item.unit_name || "وحدة", factor: 1, selling_price: item.price ?? null, purchase_price: cost, low_stock_threshold: item.threshold ?? null, can_purchase: true, can_sell: toNum(item.price) > 0, allows_fractional: false }];
-            product = { id: productId, name: String(item.name ?? "").trim(), price: null, cost_price: null, units: provided.map((unit) => ({ ...unit, factor: 1, stock_quantity: round4(toNum(unit.stock_quantity)), average_cost: unit.average_cost ?? null })) };
-          }
-          const unitId = item.unit_id ?? product.units?.[0]?.id;
-          const index = product.units?.findIndex((unit) => unit.id === unitId) ?? -1;
-          if (index < 0) throw new Error("VALIDATION:وحدة الشراء غير موجودة.");
-          const unit = product.units![index]!;
-          const basis = item.pricing.averageBasis;
-          if (input.source === "excel_import" && basis && (Math.abs(toNum(unit.stock_quantity) - basis.stock) > 0.00005 || Math.abs(toNum(unit.average_cost) - basis.cost) > 0.00005)) {
-            throw Object.assign(new Error("STALE_PRICING"), { stale: { product_id: productId, product_name: product.name, newAvg: toNum(unit.average_cost), proposed: null, oldPrice: toNum(unit.selling_price), oldCost: toNum(unit.average_cost), rate: null } });
-          }
-          if (unit.can_purchase === false) throw new Error("VALIDATION:هذه الوحدة مرجعية ولا يمكن الشراء بها.");
-          if (unit.allows_fractional !== true && Math.abs(quantity - Math.round(quantity)) > 1e-9) throw new Error("VALIDATION:هذه الوحدة لا تقبل كميات كسرية.");
-          const movementId = doc(collection(db, "inventory_transactions")).id;
-          let nextUnit: ProductUnit;
-          try { nextUnit = applyUnitPurchase(unit, quantity, cost, item.pricing); }
-          catch (error) { throw new Error(`VALIDATION:${error instanceof Error ? error.message : "بيانات الشراء غير صالحة."}`); }
-          nextUnit.purchase_price_history = prependPurchasePriceHistory(unit.purchase_price_history, cost, nowMs);
-          product = { ...product, units: product.units!.map((entry, entryIndex) => entryIndex === index ? nextUnit : entry) };
-          writes.set(productId, product);
-          invoiceItems.push({ product_id: productId, product_name: product.name, quantity, unit_cost: cost, unit_id: unit.id, unit_name: unit.name, line_total: round2(quantity * cost) });
-          movements.push({ id: movementId, type: "purchase", direction: "in", product_id: productId, product_name: product.name, quantity, unit_quantity: quantity, unit_id: unit.id, unit_name: unit.name, unit_cost: cost, purchase_invoice_id: invoiceRef.id, note: input.note ?? null, seq: seq++, created_by: by(), created_at: now });
-        }
-        const remaining = round2(total - invoicePaid);
-        tx.set(invoiceRef, { request_fingerprint: fingerprint, supplier_name: input.supplier_name?.trim() || null, supplier_id: input.supplier_id ?? null, supplier_ref: input.supplier_ref?.trim() || null, invoice_number: input.invoice_number?.trim() || null, source: input.source ?? "manual", pinned: false, items: invoiceItems, product_ids: [...writes.keys()], total_amount: total, paid_amount: invoicePaid, advance_amount: advance, remaining_amount: remaining, status: deriveSupplierInvoiceStatus(invoicePaid, remaining), payment_ids: [], note: input.note ?? null, created_by: by(), created_at: now });
-        for (const [productId, product] of writes) {
-          const ids = movements.filter((movement) => movement.product_id === productId).map((movement) => String(movement.id));
-          tx.set(doc(db, "products", productId), { name: product.name, units: product.units, is_active: product.is_active !== false, last_inventory_transaction_id: ids.at(-1) ?? null, last_inventory_transaction_ids: ids, last_purchase_invoice_id: invoiceRef.id }, { merge: true });
-        }
-        for (const movement of movements) {
-          const { id, ...data } = movement;
-          tx.set(doc(db, "inventory_transactions", String(id)), data);
-        }
-        if (advance > 0) tx.set(doc(db, "supplier_advances", invoiceRef.id), { supplier_id: input.supplier_id, supplier_name: input.supplier_name ?? null, purchase_invoice_id: invoiceRef.id, amount: advance, remaining_amount: advance, created_by: by(), created_at: now });
-        if (paid > 0) {
-          cashBalanceAfterPurchase = round2(balance - paid);
-          tx.set(cashRef, { balance: cashBalanceAfterPurchase, updated_at: now }, { merge: true });
-        }
-        if (paid > 0) tx.set(doc(collection(db, "cash_transactions")), { type: "inventory_purchase", direction: "out", amount: paid, purchase_invoice_id: invoiceRef.id, reference_type: "supplier_invoice", reference_id: invoiceRef.id, reference_label: `فاتورة توريد من ${input.supplier_name?.trim() || "مورد غير مسمى"}`, note: input.note ?? null, created_by: by(), created_at: now });
-        writeSupplierSummaryDelta(tx, db, { supplier_id: input.supplier_id, supplier_name: input.supplier_name }, { invoice_count: 1, total_purchases: total, outstanding_payable: remaining, advance_receivable: advance });
-        cached = [...writes.values()];
-        result = { ok: true, id: invoiceRef.id, total, paid: invoicePaid, remaining, fullyPaid: remaining <= 0, advance };
-      });
-      for (const product of cached) useProductsStore().upsertCached(product);
-      if (cashBalanceAfterPurchase !== null) useCashbox().balance = cashBalanceAfterPurchase;
+      const result = await callStaff<ExecutePurchaseInput, ExecutePurchaseResult>("executeInventoryPurchase", input);
+      useProductsStore().invalidateCache();
+      await useCashbox().fetchCashbox();
       return result;
     } catch (error) {
-      if (error instanceof Error && error.message === "STALE_PRICING") return { ok: false, error: "تغيّر رصيد الوحدة أو متوسط تكلفتها. راجع المعاينة ثم أكد مجددًا.", stale: (error as Error & { stale?: ExecutePurchaseResult["stale"] }).stale };
-      if (error instanceof Error && error.message.startsWith("VALIDATION:")) return { ok: false, error: error.message.slice(11) };
       console.error(error);
-      return { ok: false, error: "تعذر تسجيل شراء المخزون." };
+      const message = error instanceof Error ? error.message : "";
+      return { ok: false, error: message || "تعذر تسجيل شراء المخزون." };
     }
   }
 
@@ -206,23 +106,8 @@ export const usePurchasing = defineStore("purchasing", () => {
     if (!input.idempotencyKey) return { ok: false, error: "مفتاح عدم التكرار مفقود." };
     const items = input.items ?? [];
     if (!items.length) return { ok: false, error: "لا توجد أصناف للشراء." };
-    const newCount = items.filter((i) => !i.product_id).length;
     if (items.length > MAX_PURCHASE_ITEMS) {
-      return { ok: false, error: `عدد الأصناف (${items.length}) يتجاوز حد المعالجة الذرية (${MAX_PURCHASE_ITEMS}) — يلزم مسار خادمي لهذه الفاتورة.` };
-    }
-    if (estimatePurchaseOps(items.length, newCount) > 450) {
-      return { ok: false, error: "الفاتورة تتجاوز حد الكتابات الآمن للمعاملة الذرية — يلزم مسار خادمي." };
-    }
-    // Uniqueness is product + unit (same product may appear in several
-    // purchase units, e.g. 2 cartons + 5 pieces). Exact duplicate rows
-    // (same product + same unit) are still rejected.
-    const seenItems = new Set<string>();
-    for (const [index, item] of items.entries()) {
-      const key = item.product_id
-        ? `id:${item.product_id}|unit:${String(item.unit_id ?? "")}`
-        : `name:${String(item.name ?? "").trim().toLocaleLowerCase()}`;
-      if (seenItems.has(key)) return { ok: false, error: `الصنف رقم ${index + 1} مكرر في الفاتورة.` };
-      seenItems.add(key);
+      return { ok: false, error: `عدد الأصناف (${items.length}) يتجاوز حد المعالجة الآمن (${MAX_PURCHASE_ITEMS}).` };
     }
     // Client-side pre-validation (server re-validates inside txn).
     for (const [idx, it] of items.entries()) {
@@ -230,15 +115,12 @@ export const usePurchasing = defineStore("purchasing", () => {
       if (it.product_id && typeof it.product_id !== "string") return { ok: false, error: `صنف ${n}: معرّف غير صالح.` };
       if (!Number.isFinite(it.quantity) || !(it.quantity > 0)) return { ok: false, error: `صنف ${n}: الكمية يجب أن تكون أكبر من صفر.` };
       if (!Number.isFinite(it.unit_cost) || it.unit_cost < 0) return { ok: false, error: `صنف ${n}: تكلفة الوحدة غير صالحة.` };
-      if (!it.product_id) {
-        if (!String(it.name ?? "").trim()) return { ok: false, error: `صنف ${n}: اسم المنتج الجديد مطلوب.` };
-        if (!(toNum(it.price) > 0)) return { ok: false, error: `صنف ${n}: سعر بيع المنتج الجديد مطلوب.` };
-      }
+      if (!it.product_id) return { ok: false, error: `صنف ${n}: اختر نوعًا مخزنيًا موجودًا قبل تسجيل الشراء.` };
       if (it.pricing.mode === "custom" && (!Number.isFinite(it.pricing.price) || it.pricing.price < 0)) {
         return { ok: false, error: `صنف ${n}: سعر البيع المخصص غير صالح.` };
       }
     }
-    const total = round2(items.reduce((s, it) => s + round2(toNum(it.quantity) * round4(toNum(it.unit_cost))), 0));
+    const total = round2(items.reduce((s, it) => s + round2(toNum(it.quantity) * toNum(it.unit_cost)), 0));
     const paid = round2(toNum(input.paidNow));
     if (!Number.isFinite(input.paidNow) || input.paidNow < 0) return { ok: false, error: "المدفوع الآن يجب ألا يكون سالبًا." };
     if (paid > total && !input.supplier_id) return { ok: false, error: "اختر المورد لتسجيل المبلغ الزائد كسلفة مستحقة لنا." };

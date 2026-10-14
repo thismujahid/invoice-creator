@@ -12,6 +12,7 @@ export type CashTransactionType =
   | "manual_deposit"
   | "manual_withdrawal"
   | "invoice_sale"
+  | "invoice_cancel"
   | "invoice_payment"
   | "invoice_refund"
   | "customer_credit_payout"
@@ -51,6 +52,7 @@ export const CASH_TYPE_LABELS: Record<CashTransactionType, string> = {
   manual_deposit: "إضافة أموال",
   manual_withdrawal: "سحب أموال",
   invoice_sale: "بيع فاتورة",
+  invoice_cancel: "عكس قبض فاتورة ملغاة",
   invoice_payment: "تحصيل باقي فاتورة",
   invoice_refund: "مرتجع فاتورة",
   customer_credit_payout: "صرف رصيد عميل",
@@ -83,13 +85,20 @@ export interface InventoryTransaction {
   unit_id?: string | null;
   unit_name?: string | null;
   unit_factor?: number | null;
+  stock_kind?: "loose" | "package";
+  allows_fractional?: boolean;
   unit_quantity?: number | null;
   base_quantity?: number | null;
+  component_deltas?: { loose_base_quantity: number; closed_packages: Record<string, number> };
+  opened_packages?: Array<{ unit_id: string; unit_name: string; unit_factor: number; count: number }>;
+  return_bucket?: "loose" | "package" | null;
+  return_unit_id?: string | null;
   direction: "in" | "out";
   unit_cost?: number | null;
   invoice_id?: string | null;
   return_id?: string | null;
   purchase_invoice_id?: string | null;
+  operation_id?: string | null;
   reason?: string | null;
   /** Write order inside one atomic batch; replay sorts by (created_at, seq). */
   seq?: number | null;
@@ -108,6 +117,8 @@ export interface PurchaseInvoiceItem {
   unit_id?: string | null;
   unit_name?: string | null;
   unit_factor?: number | null;
+  stock_kind?: "loose" | "package";
+  allows_fractional?: boolean;
   base_quantity?: number | null;
   base_unit_cost?: number | null;
   line_total: number;
@@ -214,6 +225,7 @@ export function estimatePurchaseOps(itemCount: number, newProductCount = 0): num
 // ---------- Returns ----------
 
 export interface InvoiceReturnItem {
+  line_id?: string;
   product_id: string;
   product_name: string;
   quantity: number;
@@ -225,6 +237,9 @@ export interface InvoiceReturnItem {
   original_unit_cost?: number;
   source_line_index?: number;
   source_cost_group_index?: number;
+  cost_allocations?: Array<{ cost_group_id: string; base_quantity: number; unit_cost: number }>;
+  return_bucket?: "loose" | "package";
+  return_unit_id?: string | null;
   refund_amount: number;
 }
 
@@ -256,6 +271,9 @@ export interface SupplierReturnItem {
   inventory_unit_cost?: number;
   inventory_amount?: number;
   cost_variance?: number;
+  return_bucket?: "loose" | "package";
+  return_unit_id?: string | null;
+  return_unit_name?: string | null;
 }
 
 export interface SupplierReturn {

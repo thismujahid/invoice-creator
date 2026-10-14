@@ -942,15 +942,9 @@ const adminOpen = ref(false);
 const fixAccountsBusy = ref(false);
 const fixAccountsMsg = ref("");
 const fixAccountsOk = ref(false);
-const migStockBusy = ref(false);
-const migStockPct = ref(0);
-const migStockMsg = ref("");
 const migSupplierStatusBusy = ref(false);
 const migSupplierStatusPct = ref(0);
 const migSupplierStatusMsg = ref("");
-const migUnitBusy = ref(false);
-const migUnitPct = ref(0);
-const migUnitMsg = ref("");
 // Factory reset state machine: password -> confirm -> wiping -> done.
 const resetOpen = ref(false);
 const resetStep = ref<"password" | "confirm" | "wiping" | "done">("password");
@@ -1014,35 +1008,6 @@ async function runFactoryReset(): Promise<void> {
 function reloadApp(): void {
   if (import.meta.client) window.location.reload();
 }
-const openingQtys = ref<Record<string, number | undefined>>({});
-const openingThresholds = ref<Record<string, number | undefined>>({});
-const stockSearch = ref("");
-const missingStock = computed(() =>
-  products.list.filter(
-    (p) =>
-      p.id && !p.units?.length && (p.stock_quantity === null || p.stock_quantity === undefined),
-  ),
-);
-// Search within not-yet-counted products (entered quantities are preserved
-// while typing since inputs are keyed by product id).
-const filteredMissingStock = computed(() => {
-  const q = stockSearch.value.trim();
-  if (!q) return missingStock.value;
-  return missingStock.value.filter((p) => p.name?.includes(q));
-});
-// Lazy rendering: mount only the first chunk; user appends more with the
-// button, so 60 heavy inputs never mount at once.
-const STOCK_PAGE = 15;
-const visibleCount = ref(STOCK_PAGE);
-const visibleMissingStock = computed(() =>
-  filteredMissingStock.value.slice(0, visibleCount.value),
-);
-watch(stockSearch, () => {
-  visibleCount.value = STOCK_PAGE;
-});
-function showMoreStock(): void {
-  visibleCount.value += STOCK_PAGE;
-}
 /** One-button account repair: normalize phones → clean bad links →
  *  link old invoices → rebuild summaries. Idempotent; safe to re-run. */
 async function runFixAccounts(): Promise<void> {
@@ -1091,73 +1056,6 @@ async function runSupplierStatusBackfill(): Promise<void> {
     migSupplierStatusBusy.value = false;
   }
 }
-async function runUnitBackfill(): Promise<void> {
-  migUnitBusy.value = true;
-  migUnitMsg.value = "";
-  try {
-    const result = await migration.backfillProductUnits((done, total) => {
-      migUnitPct.value = total ? Math.round((done / total) * 100) : 100;
-    });
-    migUnitMsg.value = `تم تحديث ${result.updated} من ${result.total} منتج.`;
-    notify(migUnitMsg.value, "success");
-    await products.fetchProducts(undefined, true);
-  } catch (error) {
-    console.error("Product unit initialization failed:", error);
-    migUnitMsg.value = `فشلت التهيئة: ${migrationErrorDetail(error)}`;
-    notify(migUnitMsg.value, "error");
-  } finally {
-    migUnitBusy.value = false;
-  }
-}
-async function runStockEntry(): Promise<void> {
-  const selectedEntries = missingStock.value
-    .filter((p) => p.id && openingQtys.value[p.id] !== undefined)
-    .map((p) => ({
-      product_id: p.id as string,
-      quantity: round2(openingQtys.value[p.id as string] ?? 0),
-      unit_cost: toNum(p.cost_price),
-      low_stock_threshold:
-        openingThresholds.value[p.id as string] ?? p.low_stock_threshold ?? 5,
-    }));
-  if (
-    selectedEntries.some(
-      (entry) =>
-        !Number.isFinite(entry.quantity) ||
-        entry.quantity < 0 ||
-        !Number.isFinite(entry.low_stock_threshold) ||
-        entry.low_stock_threshold < 0,
-    )
-  ) {
-    migStockMsg.value =
-      "راجع الرصيد ومؤشر الكمية القليلة؛ يجب أن يكونا صفرًا أو أكبر.";
-    return;
-  }
-  const entries = selectedEntries;
-  if (!entries.length) {
-    migStockMsg.value =
-      "أدخل رصيدًا افتتاحيًا لمنتج واحد على الأقل؛ يمكن أن تكون الكمية صفرًا.";
-    return;
-  }
-  migStockBusy.value = true;
-  migStockMsg.value = "";
-  try {
-    const res = await migration.setOpeningStocks(entries, (d, t) => {
-      migStockPct.value = t ? Math.round((d / t) * 100) : 100;
-    });
-    migStockMsg.value = `تم: حُفظ ${res.set} من ${res.total} منتج.`;
-    notify(`اكتمل إدخال الأرصدة: ${res.set} منتج.`, "success");
-    openingQtys.value = {};
-    openingThresholds.value = {};
-    await products.fetchProducts();
-  } catch (error) {
-    console.error("Opening stock entry failed:", error);
-    migStockMsg.value = `فشل الحفظ: ${migrationErrorDetail(error)}`;
-    notify(migStockMsg.value, "error");
-  } finally {
-    migStockBusy.value = false;
-  }
-}
-
 function migrationErrorDetail(error: unknown): string {
   return error instanceof Error
     ? error.message

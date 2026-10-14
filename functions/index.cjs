@@ -30,10 +30,17 @@ async function resetProductPage(cursor) {
   const batch = db.batch();
   for (const item of page.docs) {
     const data = item.data();
-    const units = Array.isArray(data.units) ? data.units.map((unit) => ({ ...unit, selling_price: null, purchase_price: null })) : [];
+    const units = Array.isArray(data.units) ? data.units.map((unit) => {
+      const { stock_quantity: _sq, average_cost: _ac, low_stock_threshold: _lt, ...rest } = unit;
+      void _sq; void _ac; void _lt;
+      return { ...rest, selling_price: null, purchase_price: null };
+    }) : [];
+    const closedPackages = Object.fromEntries(units.filter((unit) => unit.stock_kind === "package").map((unit) => [unit.id, 0]));
     batch.update(item.ref, {
-      stock_quantity: 0,
-      price: null,
+      inventory: { loose_base_quantity: 0, closed_packages: closedPackages },
+      stock_quantity: FieldValue.delete(),
+      average_cost: FieldValue.delete(),
+      price: FieldValue.delete(),
       cost_price: null,
       units,
       count: FieldValue.delete(),

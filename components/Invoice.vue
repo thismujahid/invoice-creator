@@ -1,11 +1,19 @@
 <template>
   <div id="invoice-data" class="rounded-lg border border-gray-300 bg-white p-2.5 text-[13px] leading-relaxed">
     <UAlert
-      v-if="invoiceData.id && !viewMode"
+      v-if="invoiceData.id && !isReadOnly"
       color="warning"
       variant="soft"
       icon="i-lucide-file-pen-line"
       title="أنت في وضع التعديل علي فاتورة سابقة"
+      class="no-print mb-2"
+    />
+    <UAlert
+      v-if="invoiceData.status === 'cancelled'"
+      color="error"
+      variant="soft"
+      icon="i-lucide-ban"
+      title="فاتورة ملغاة — للعرض والتدقيق فقط"
       class="no-print mb-2"
     />
     <div>
@@ -106,15 +114,15 @@
           :loading="printing"
           @click="() => startPrint()"
           >{{
-            props.invoiceData.id && !viewMode
+            props.invoiceData.id && !isReadOnly
               ? "طباعة وحفظ التعديل"
-              : viewMode
+              : isReadOnly
                 ? "طباعة"
                 : "حفظ وطباعة"
           }}</UButton
         >
         <UButton
-          v-if="!viewMode"
+          v-if="!isReadOnly"
           class="min-h-11 flex-1"
           color="error"
           variant="soft"
@@ -123,7 +131,7 @@
           >إعادة ظبط الفاتورة</UButton
         >
         <UButton
-          v-if="viewMode"
+          v-if="isReadOnly"
           class="min-h-11 flex-1"
           color="error"
           variant="soft"
@@ -159,6 +167,7 @@ const props = defineProps<{
 const { formatDate, calcTotal, formatTime12Hour, formatePrice, useDownloadPDF, formatInvoiceLineName } = useHelpers();
 const { notify } = useAppToast();
 const printing = ref(false);
+const isReadOnly = computed(() => props.viewMode === true || props.invoiceData.status === "cancelled");
 const { saveDataTo, updateItem } = useFirebase();
 const emit = defineEmits(["reset", "saved", "close"]);
 const oldDebt = computed(() => Number(props.openingBalance?.debt ?? props.invoiceData.debt ?? 0));
@@ -180,7 +189,7 @@ const mappedProducts = computed(() => {
     };
   });
 });
-const hasReturns = computed(() => !!props.viewMode && !!props.returns?.length);
+const hasReturns = computed(() => !!isReadOnly.value && !!props.returns?.length);
 const { round2 } = useFinance();
 const returnTotal = computed(() => round2((props.returns ?? []).reduce((sum, item) => sum + Number(item.total_refund || 0), 0)));
 const cashRefundTotal = computed(() => round2((props.returns ?? []).reduce((sum, item) => sum + Number(item.cash_refund || 0), 0)));
@@ -228,13 +237,18 @@ async function startPrint(saveOnly?: boolean) {
     notify("لا يمكن حفظ فاتورة فارغة.", "error");
     return true;
   }
+  if (lines.some((line) => !Number.isFinite(Number(line.unit_factor)) || Number(line.unit_factor) <= 0 || !Number.isFinite(Number(line.base_quantity)) || line.base_quantity! < 0)) {
+    notify("بيانات وحدة أحد الأسطر أو كميته الأساسية غير مكتملة. أعد اختيار النوع والوحدة.", "error");
+    return true;
+  }
   const _time = resolveTime(props.invoiceData.date, props.invoiceData.time);
   void _time;
-  if (!props.viewMode && !costConfirmed.value) {
+  if (!isReadOnly.value && !costConfirmed.value) {
     // Same-unit comparison: selected-unit price vs derived selected-unit
     // average (base average × factor). Never compare against base cost directly.
     const belowCost = lines.some((element) => {
-      const factor = Number(element.unit_factor) > 0 ? Number(element.unit_factor) : 1;
+      const factor = Number(element.unit_factor);
+      if (!Number.isFinite(factor) || factor <= 0) return true;
       const baseCost = Number(element.product_cost_price);
       if (!Number.isFinite(baseCost)) return false;
       // product_cost_price on the form may already be a selected-unit average
@@ -264,7 +278,7 @@ function confirmCostAndContinue(): void {
 async function doSave(saveOnly?: boolean) {
   printing.value = saveOnly ? false : true;
 
-  if (!props.viewMode) {
+  if (!isReadOnly.value) {
     // Button loader (printing) is the progress indicator — no extra alert.
     const { id, order: _order, ...data } = props.invoiceData as Invoice & { order?: unknown };
     void _order;
@@ -304,7 +318,7 @@ async function doSave(saveOnly?: boolean) {
       printing.value = false;
     }, 100);
   }
-  if (!props.viewMode) {
+  if (!isReadOnly.value) {
     costConfirmed.value = false;
     notify("تم حفظ الفاتورة بنجاح", "success");
   }
