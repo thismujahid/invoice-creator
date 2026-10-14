@@ -304,5 +304,24 @@ export const useProductsStore = defineStore("products", () => {
     }
   }
 
-  return { list, families, loaded, lastFetchedAt, inventoryReady, inventorySyncState, syncPendingWrites, syncError, productsById, activeProducts, lowStockProducts, outOfStockProducts, negativeStockProducts, lowStockCount, shortageUnitCount, shortageOutUnitCount, ensureInventorySubscription, stopInventorySubscription, clearInventory, fetchProducts, updateProduct, saveProductFamily, patchCached, upsertCached, invalidateCache, archiveProduct, unarchiveProduct };
+  /** Hard-delete products the server proves have zero stock and zero history
+   *  (no movements, no purchase references). Server messages are specific
+   *  (stock vs history), so they surface as-is instead of a generic error. */
+  async function deleteProduct(id: string, ids: string[] = [id]): Promise<{ ok: true } | { ok: false; error: string }> {
+    try {
+      await callStaff("deleteInventoryProduct", { ids });
+      const gone = new Set(ids);
+      list.value = list.value.filter((p) => !(p.id && gone.has(p.id)));
+      return { ok: true };
+    } catch (e) {
+      if (e instanceof Error && e.message.startsWith("VALIDATION:")) {
+        return { ok: false, error: e.message.slice("VALIDATION:".length) };
+      }
+      if (e instanceof Error && e.message.trim()) return { ok: false, error: e.message };
+      console.error(e);
+      return { ok: false, error: "تعذر حذف المنتج." };
+    }
+  }
+
+  return { list, families, loaded, lastFetchedAt, inventoryReady, inventorySyncState, syncPendingWrites, syncError, productsById, activeProducts, lowStockProducts, outOfStockProducts, negativeStockProducts, lowStockCount, shortageUnitCount, shortageOutUnitCount, ensureInventorySubscription, stopInventorySubscription, clearInventory, fetchProducts, updateProduct, saveProductFamily, patchCached, upsertCached, invalidateCache, archiveProduct, unarchiveProduct, deleteProduct };
 });

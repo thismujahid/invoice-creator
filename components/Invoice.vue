@@ -1,5 +1,5 @@
 <template>
-  <div id="invoice-data" class="rounded-lg border border-gray-300 bg-white p-2.5 text-[13px] leading-relaxed">
+  <div id="invoice-data" dir="rtl" class="inv-ref">
     <UAlert
       v-if="invoiceData.id && !isReadOnly"
       color="warning"
@@ -17,22 +17,23 @@
       class="no-print mb-2"
     />
     <div>
-      <div class="sticky top-0 z-10 bg-white pb-1">
-        <div class="flex items-center justify-between gap-2 px-1">
-          <div class="min-w-0">
-            <div><strong> الاسم/ </strong>{{ invoiceData.customer_name }}</div>
-            <div><strong> الهاتف/ </strong><span dir="ltr">{{ invoiceData.customer_phone }}</span></div>
+      <!-- Reference header: customer (right) + store branding (left), compact bold RTL. -->
+      <header class="inv-ref-head">
+        <div class="inv-ref-customer">
+          <div class="inv-ref-line"><strong>العميل / </strong><span>{{ invoiceData.customer_name || "—" }}</span></div>
+          <div v-if="customerPhoneText" class="inv-ref-line"><strong>رقم الهاتف / </strong><span dir="ltr">{{ customerPhoneText }}</span></div>
+          <div class="inv-ref-line"><strong>التاريخ / </strong><span dir="ltr">{{ invoiceDateText }}</span></div>
+        </div>
+        <div class="inv-ref-brand">
+          <div class="inv-ref-store">
+            <img src="/logo.png" alt="شعار المتجر" width="72" height="72" />
+            <span class="inv-ref-store-name">قريتي</span>
           </div>
-          <img src="/logo.png" alt="app logo" width="110px" />
+          <div class="inv-ref-time">{{ invoiceTimeText }}</div>
         </div>
-        <div class="px-1 text-gray-500">
-          <strong> الوقت/ </strong>
-          {{ formatDate(invoiceData.date) }}
-          {{ formatTime12Hour(invoiceData.time) }}
-        </div>
-      </div>
+      </header>
       <InvoiceGroupedItemsTable :lines="invoiceData.products ?? []" />
-      <section v-if="hasReturns" class="mt-3 rounded-lg border border-red-100 bg-red-50/40 p-3">
+      <section v-if="hasReturns" class="no-print mt-3 rounded-lg border border-red-100 bg-red-50/40 p-3">
         <h3 class="mb-2 font-bold text-red-800">الأصناف المرتجعة</h3>
         <div v-for="(row, i) in returnedProducts" :key="`return-${i}`" class="flex items-center justify-between gap-3 border-t border-red-100 py-2 first:border-0">
           <div class="min-w-0">
@@ -42,8 +43,8 @@
           <strong class="shrink-0 text-red-700">{{ formatePrice(row.amount) }} ج</strong>
         </div>
       </section>
-      <div class="bg-white pt-1" :class="hasReturns ? '' : 'sticky bottom-0 z-10'">
-        <div v-if="hasReturns" class="mt-3 space-y-3">
+      <div class="bg-white pt-1">
+        <div v-if="hasReturns" class="no-print mt-3 space-y-3">
           <div class="rounded-lg border border-gray-200 p-3">
             <h3 class="mb-2 font-bold">ملخص الفاتورة</h3>
             <div v-if="invoiceData.discount" class="flex justify-between gap-3 py-1 text-gray-600"><span>الإجمالي قبل الخصم</span><span>{{ formatePrice(calcTotal(invoiceData)) }} ج</span></div>
@@ -60,31 +61,32 @@
             <div class="mt-2 flex justify-between gap-3 border-t border-gray-200 pt-2 font-bold"><span>المتبقي على الفاتورة الآن</span><span>{{ formatePrice(currentRemaining) }} ج</span></div>
           </div>
         </div>
-        <div v-else class="inv-footer">
-          <div v-if="oldDebt > 0"><strong>القديم/</strong> <span>{{ formatePrice(oldDebt) }}</span></div>
-          <div v-if="walletBalance > 0 && !Number(invoiceData.credit_used || 0)"><strong>رصيد المحفظة/</strong> <span>{{ formatePrice(walletBalance) }}</span></div>
-          <div v-if="invoiceData.amount_of_mahros"><strong>محروس/</strong> <span>{{ formatePrice(invoiceData.amount_of_mahros) }}</span></div>
-          <div v-if="invoiceData.amount_of_animal_feeds"><strong>العلف/</strong> <span>{{ formatePrice(invoiceData.amount_of_animal_feeds) }}</span></div>
-          <div v-if="invoiceData.delivery_price"><strong>التوصيل/</strong> <span>{{ formatePrice(invoiceData.delivery_price) }}</span></div>
-          <div v-if="invoiceData.discount">
-            <strong>الإجمالي قبل الخصم/</strong> <span class="tabular-nums">{{ formatePrice(calcTotal(invoiceData)) }}</span>
+        <!-- Reference footer: labels right, values left, black separators. -->
+        <footer v-else class="inv-ref-foot" aria-label="إجماليات الفاتورة">
+          <div v-if="oldDebt > 0" class="inv-ref-foot-row"><strong>القديم /</strong><span class="tabular-nums">{{ formatePrice(oldDebt) }}</span></div>
+          <div v-if="walletBalance > 0 && !Number(invoiceData.credit_used || 0)" class="inv-ref-foot-row"><strong>رصيد المحفظة /</strong><span class="tabular-nums">{{ formatePrice(walletBalance) }}</span></div>
+          <div v-if="Number(invoiceData.amount_of_mahros) > 0" class="inv-ref-foot-row"><strong>محروس /</strong><span class="tabular-nums">{{ formatePrice(invoiceData.amount_of_mahros) }}</span></div>
+          <div v-if="Number(invoiceData.amount_of_animal_feeds) > 0" class="inv-ref-foot-row"><strong>العلف /</strong><span class="tabular-nums">{{ formatePrice(invoiceData.amount_of_animal_feeds) }}</span></div>
+          <div v-if="Number(invoiceData.delivery_price) > 0" class="inv-ref-foot-row"><strong>التوصيل /</strong><span class="tabular-nums">{{ formatePrice(invoiceData.delivery_price) }}</span></div>
+          <div v-if="invoiceData.discount" class="inv-ref-foot-row">
+            <strong>الإجمالي قبل الخصم /</strong><span class="tabular-nums">{{ formatePrice(calcTotal(invoiceData)) }}</span>
           </div>
-          <div v-if="invoiceData.discount">
-            <strong>الخصم {{ invoiceData.discount_for ? `(${invoiceData.discount_for})` : "" }} ({{ discountLabel }})/</strong>
+          <div v-if="invoiceData.discount" class="inv-ref-foot-row">
+            <strong>الخصم {{ invoiceData.discount_for ? `(${invoiceData.discount_for})` : "" }} ({{ discountLabel }}) /</strong>
             <span class="tabular-nums">{{ formatePrice(discountAmount) }}</span>
           </div>
-          <div class="inv-grand"><strong>الإجمالي {{ invoiceData.discount ? "بعد الخصم" : "" }}/</strong><span class="tabular-nums">{{ formatePrice(originalTotal) }}</span></div>
+          <div class="inv-ref-foot-row inv-ref-grand"><strong>الإجمالي{{ invoiceData.discount ? " بعد الخصم" : "" }} /</strong><span class="tabular-nums">{{ formatePrice(originalTotal) }}</span></div>
           <!-- paid / remaining rows: 0 is a valid financial value, never hide it. -->
-          <div v-if="invoiceData.paid_amount !== null && invoiceData.paid_amount !== undefined">
-            <strong>المدفوع/</strong>
-            <span>{{ formatePrice(invoiceData.paid_amount) }}</span>
+          <div v-if="invoiceData.paid_amount !== null && invoiceData.paid_amount !== undefined" class="inv-ref-foot-row">
+            <strong>المدفوع /</strong>
+            <span class="tabular-nums">{{ formatePrice(invoiceData.paid_amount) }}</span>
           </div>
-          <div v-if="invoiceData.credit_used" class="no-print"><strong>من رصيد العميل/</strong><span>{{ formatePrice(invoiceData.credit_used) }}</span></div>
-          <div v-if="invoiceData.paid_amount !== null && invoiceData.paid_amount !== undefined" class="inv-remaining">
-            <strong>المتبقي/</strong>
+          <div v-if="invoiceData.credit_used" class="inv-ref-foot-row no-print"><strong>من رصيد العميل /</strong><span class="tabular-nums">{{ formatePrice(invoiceData.credit_used) }}</span></div>
+          <div v-if="invoiceData.paid_amount !== null && invoiceData.paid_amount !== undefined" class="inv-ref-foot-row inv-ref-remaining">
+            <strong>المتبقي /</strong>
             <span class="tabular-nums">{{ formatePrice((calcTotal(invoiceData) - discountAmount) - Number(invoiceData.paid_amount ?? 0)) }}</span>
           </div>
-        </div>
+        </footer>
       </div>
       <div class="no-print mt-3 flex gap-2 pb-1">
         <UButton
@@ -137,6 +139,7 @@
 <script setup lang="ts">
 import type { Invoice } from "~/types";
 import type { InvoiceReturn } from "~/types/finance";
+import { formatInvoiceDateDMY, formatInvoiceTimeAMPM } from "~/utils/invoiceDisplay";
 
 const props = defineProps<{
   invoiceData: Invoice;
@@ -153,6 +156,15 @@ const { saveDataTo, updateItem } = useFirebase();
 const emit = defineEmits(["reset", "saved", "close"]);
 const oldDebt = computed(() => Number(props.openingBalance?.debt ?? props.invoiceData.debt ?? 0));
 const walletBalance = computed(() => Number(props.openingBalance?.credit ?? 0));
+
+/** Header uses the stored invoice timestamp (DD/MM/YYYY + hh:mm AM/PM). */
+const customerPhoneText = computed(() => {
+  const raw = props.invoiceData.customer_phone;
+  if (raw === null || raw === undefined || String(raw).trim() === "") return "";
+  return String(raw).trim();
+});
+const invoiceDateText = computed(() => formatInvoiceDateDMY(props.invoiceData));
+const invoiceTimeText = computed(() => formatInvoiceTimeAMPM(props.invoiceData));
 
 const hasReturns = computed(() => !!isReadOnly.value && !!props.returns?.length);
 const { round2 } = useFinance();
@@ -305,37 +317,85 @@ const discountLabel = computed(() => props.invoiceData.discount_percentage ? `${
 // Ctrl+S lives on the host page (pages/index.vue) so hidden + preview
 // instances never double-fire.
 defineExpose({ startPrint });
+void saveDataTo;
+void updateItem;
 </script>
 
 <style scoped>
-/* .inv-table lives in assets/css/main.css (shared with the grouped table). */
-.inv-footer {
-  border-bottom: thin solid #000;
-  border-right: thin solid #000;
-  border-left: thin solid #000;
-  padding: 5px;
+.inv-ref {
+  background: #fff;
+  color: #000;
+  font-size: 13px;
+  line-height: 1.6;
 }
-.inv-footer > div {
+/* Header: compact two-column reference layout. */
+.inv-ref-head {
   display: flex;
-  padding-block: 5px;
-  align-items: center;
-  padding-inline-end: 10px;
   justify-content: space-between;
-  line-height: 1;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 4px 6px 6px;
+  border: 1px solid #000;
+  border-bottom: none;
+  font-weight: 700;
 }
-.inv-footer > div:not(:last-of-type) {
-  border-bottom: 1px dashed rgba(128, 128, 128, 0.163);
+.inv-ref-customer {
+  min-width: 0;
+  text-align: right;
 }
-.inv-grand {
-  font-size: 1.15em;
+.inv-ref-line {
+  white-space: nowrap;
+}
+.inv-ref-brand {
+  flex-shrink: 0;
+  text-align: center;
+}
+.inv-ref-store {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: center;
   font-weight: 800;
+  font-size: 15px;
 }
-.inv-remaining {
+.inv-ref-store-name {
+  font-size: 16px;
+  font-weight: 800;
+  color: #000;
+}
+.inv-ref-time {
+  margin-top: 2px;
+  font-weight: 700;
+}
+/* Footer: labels right, values left, full-width black separators. */
+.inv-ref-foot {
+  border: 1px solid #000;
+  border-top: none;
+  padding: 0 6px;
+}
+.inv-ref-foot-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-block: 3px;
+  line-height: 1.4;
+  border-bottom: 1px solid #000;
+}
+.inv-ref-foot-row:last-child {
+  border-bottom: none;
+}
+.inv-ref-grand,
+.inv-ref-remaining {
   font-weight: 800;
 }
 @media print {
   .no-print {
     display: none !important;
+  }
+  .inv-ref-head,
+  .inv-ref-foot {
+    break-inside: avoid;
   }
 }
 </style>

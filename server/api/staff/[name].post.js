@@ -28,6 +28,7 @@ const operations = new Set([
   "updateStaffInvoice",
   "saveInventoryProduct",
   "archiveInventoryProduct",
+  "deleteInventoryProduct",
   "unarchiveInventoryProduct",
   "adjustInventoryBucket",
   "executeInventoryPurchase",

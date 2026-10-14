@@ -417,6 +417,44 @@ function makeOperations({ db, authorize, operationRef }) {
     });
   };
 
+  /** Hard-delete products that provably never held stock or history.
+   *  All-or-nothing: every id must exist, hold exactly zero on-hand stock,
+   *  have zero inventory_transactions (every purchase/sale/return/adjustment
+   *  in this system writes one with product_id, so an empty movement log
+   *  proves no invoice ever touched the product), and appear in no
+   *  purchase_invoices product_ids. Anything else must use archiving, which
+   *  preserves accounting history. Family docs are left untouched: pickers
+   *  build from products, so an emptied family simply stops appearing. */
+  const deleteInventoryProduct = async (request) => {
+    const ids = Array.isArray(request.data?.ids) ? request.data.ids : [request.data?.id];
+    if (!ids.length || ids.length > 40 || ids.some((id) => typeof id !== "string" || !id || id.includes("/"))) invalid("اختر المنتج المطلوب حذفه.");
+    return db.runTransaction(async (tx) => {
+      const role = await authorize(request, tx);
+      if (role !== "admin") throw new HttpsError("permission-denied", "Admin access is required.");
+      const core = await inventoryCorePromise;
+      const unique = [...new Set(ids)];
+      const refs = unique.map((id) => db.doc(`products/${id}`));
+      const snapshots = await Promise.all(refs.map((ref) => tx.get(ref)));
+      if (snapshots.some((snapshot) => !snapshot.exists)) throw new HttpsError("not-found", "Product not found.");
+      for (const snapshot of snapshots) {
+        const product = snapshot.data();
+        let stock = 0;
+        try {
+          stock = core.inventoryTotal(product.inventory, product.units || []);
+        } catch {
+          throw new HttpsError("failed-precondition", "تعذر التحقق من مخزون المنتج؛ لا يمكن حذفه نهائيًا.");
+        }
+        if (Math.abs(stock) > 1e-9) throw new HttpsError("failed-precondition", "المنتج له رصيد مخزون غير صفري — لا يمكن حذفه نهائيًا. صفّر المخزون أولًا أو استخدم الأرشفة.");
+        const movements = await tx.get(db.collection("inventory_transactions").where("product_id", "==", snapshot.id).limit(1));
+        if (!movements.empty) throw new HttpsError("failed-precondition", "المنتج له سجل حركة مخزون (شراء/بيع/مرتجع/جرد) — استخدم الأرشفة بدل الحذف للحفاظ على السجل المحاسبي.");
+        const purchases = await tx.get(db.collection("purchase_invoices").where("product_ids", "array-contains", snapshot.id).limit(1));
+        if (!purchases.empty) throw new HttpsError("failed-precondition", "المنتج مذكور في فواتير شراء — استخدم الأرشفة بدل الحذف للحفاظ على السجل المحاسبي.");
+      }
+      for (const ref of refs) tx.delete(ref);
+      return { deleted: true, ids: unique };
+    });
+  };
+
   const adjustInventoryBucket = async (request) => {
     const core = await inventoryCorePromise;
     const id = text(request.data?.product_id, 128);
@@ -664,6 +702,7 @@ function makeOperations({ db, authorize, operationRef }) {
     saveInventoryProduct: onCall(saveInventoryProduct),
     archiveInventoryProduct: onCall(archiveInventoryProduct),
     unarchiveInventoryProduct: onCall(unarchiveInventoryProduct),
+    deleteInventoryProduct: onCall(deleteInventoryProduct),
     adjustInventoryBucket: onCall(adjustInventoryBucket),
     executeInventoryPurchase: onCall(executeInventoryPurchase),
   };

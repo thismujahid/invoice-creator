@@ -243,6 +243,23 @@
         المخزون المتبقي:
         {{ stockQuantityLabel(deleteTarget) }} — إرجاع المورد عملية مالية مستقلة.
       </p>
+      <div v-if="canHardDelete" class="mb-4 rounded-lg border border-red-200 bg-red-50/70 p-3">
+        <p class="mb-1 text-sm font-bold text-red-700">حذف نهائي</p>
+        <p class="mb-2 text-xs text-gray-600">
+          هذا المنتج بلا مخزون. سيُحذف نهائيًا فقط إذا لم يكن له أي سجل فواتير أو حركة مخزون، ولا يمكن التراجع عن الحذف.
+        </p>
+        <UButton
+          color="error"
+          variant="soft"
+          block
+          :loading="hardDeleting"
+          @click="hardDeleteConfirmed"
+          >حذف نهائي</UButton
+        >
+      </div>
+      <p v-else-if="deleteTarget" class="mb-4 text-xs text-gray-500">
+        لا يمكن الحذف النهائي: يوجد مخزون متبقٍ لهذا المنتج — الأرشفة هي الخيار الآمن.
+      </p>
       <template #footer>
         <div class="flex w-full flex-col gap-2">
           <UButton
@@ -1258,6 +1275,30 @@ async function archiveConfirmed(): Promise<void> {
   } finally {
     deleting.value = false;
     confirmDelete.value = null;
+  }
+}
+/** Client-side gate for the hard-delete option: zero on-hand stock only.
+ *  History (movements / purchase references) is unknowable client-side and
+ *  is enforced authoritatively by the server, which reports the exact reason. */
+const canHardDelete = computed(
+  () => !!deleteTarget.value && !(Number(deleteTarget.value.stock_quantity ?? 0) > 0),
+);
+const hardDeleting = ref(false);
+async function hardDeleteConfirmed(): Promise<void> {
+  const id = confirmDelete.value?.id;
+  if (!id || hardDeleting.value) return;
+  hardDeleting.value = true;
+  try {
+    const res = await productsStore.deleteProduct(id, confirmDelete.value?.ids || [id]);
+    if (!res.ok) {
+      notifyToast(res.error, "error");
+      return;
+    }
+    notifyToast("تم حذف المنتج نهائيًا.", "success");
+    confirmDelete.value = null;
+    await loadProds();
+  } finally {
+    hardDeleting.value = false;
   }
 }
 const unarchiving = ref(false);

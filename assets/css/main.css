@@ -21,32 +21,56 @@ html {
 }
 
 /* Invoice tables (preview + print): shared by Invoice.vue and the grouped
-   items table so the printed receipt keeps its borders. */
+   items table so the printed receipt keeps its borders.
+   Reference style: white background, solid black grid, collapsed borders,
+   compact rows, bold headers, RTL, product names right-aligned. */
 .inv-table {
   border-collapse: collapse;
-  margin-top: 5px;
+  margin-top: 0;
+  width: 100%;
+  background: #fff;
+  table-layout: fixed;
 }
 .inv-table thead th,
 .inv-table tbody td {
-  border-bottom: thin solid #000;
-  border-left: thin solid #000;
+  border: 1px solid #000;
   text-align: center;
-  padding: 2px 5px;
-  height: 30px;
+  padding: 2px 4px;
+  height: 26px;
+  color: #000;
+  background: #fff;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: break-word;
 }
 .inv-table thead th {
-  border-top: thin solid #000;
-}
-.inv-table thead th:first-child,
-.inv-table tbody td:first-child {
-  border-right: thin solid #000;
-}
-.inv-table thead th:last-child,
-.inv-table tbody td:last-child {
-  border-left: thin solid #000;
+  font-weight: 800;
 }
 
 /* Keep Vuetify print bridge working while both libs coexist */
 #printableArea {
   display: none;
+}
+
+@page {
+  size: A4;
+  margin: 8mm;
+}
+
+@media print {
+  .inv-table thead {
+    display: table-header-group;
+  }
+  .inv-table tbody tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  /* The app print bridge (.printable-area *) flattens weight/color; keep the
+     reference invoice bold and black on paper. */
+  .printable-area .inv-table thead th {
+    font-weight: 800 !important;
+    color: #000 !important;
+  }
+  .printable-area .inv-table tbody td {
+    color: #000 !important;
+  }
 }
