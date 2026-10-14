@@ -1070,7 +1070,7 @@ async function doPurchase(): Promise<void> {
     return;
   }
   if (!purchaseUnit.value || !(Number(purchaseUnit.value.factor) > 0)) {
-    stockSubmitError.value = "وحدة الشراء أو معاملها غير صالح.";
+    stockSubmitError.value = "وحدة الشراء أو عدد الوحدة الأساسية فيها غير صالح.";
     return;
   }
   const basis = {

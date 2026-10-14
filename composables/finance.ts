@@ -121,8 +121,8 @@ export function isValidFactor(factor: unknown): boolean {
 
 export function validateUnitFactor(unit: Pick<ProductUnit, "factor" | "is_base">): string | null {
   const f = Number(unit.factor);
-  if (!Number.isFinite(f) || f <= 0) return "معامل التحويل يجب أن يكون رقمًا موجبًا.";
-  if (unit.is_base && f !== 1) return "معامل الوحدة الأساسية يجب أن يساوي 1.";
+  if (!Number.isFinite(f) || f <= 0) return "اكتب الوحدة فيها كام من الوحدة الأساسية (رقم أكبر من صفر).";
+  if (unit.is_base && f !== 1) return "الوحدة الأساسية قيمتها 1 دائمًا.";
   return null;
 }
 
@@ -218,17 +218,17 @@ export function lineBaseQuantity(line: Pick<InvoiceProductLine, "product_quantit
  *  Stock and average cost are always stored in BASE terms. */
 export function toBaseQuantity(quantityInUnit: unknown, factor: unknown): number {
   const factorNum = Number(factor);
-  if (!Number.isFinite(factorNum) || factorNum <= 0) throw new Error("معامل التحويل غير صالح.");
+  if (!Number.isFinite(factorNum) || factorNum <= 0) throw new Error("عدد الوحدة الأساسية في الوحدة غير صالح.");
   try { return baseQuantityFor(Number(quantityInUnit), factorNum); }
   catch (error) {
     if (error instanceof Error && error.message === "BASE_QUANTITY_PRECISION_INVALID") throw new Error("الكمية بعد التحويل يجب أن تكون قابلة للتمثيل حتى أربع منازل عشرية.");
-    throw new Error("الكمية أو معامل التحويل غير صالح.");
+    throw new Error("الكمية أو عدد الوحدة الأساسية في الوحدة غير صالح.");
   }
 }
 
 export function toUnitQuantity(baseQuantity: unknown, factor: unknown): number {
   const factorNum = Number(factor);
-  if (!Number.isFinite(factorNum) || factorNum <= 0) throw new Error("معامل التحويل غير صالح.");
+  if (!Number.isFinite(factorNum) || factorNum <= 0) throw new Error("عدد الوحدة الأساسية في الوحدة غير صالح.");
   return round4(toNum(baseQuantity) / factorNum);
 }
 
@@ -376,7 +376,7 @@ export function purchaseLineBaseQuantity(quantity: unknown, factor: unknown): nu
 
 export function purchaseLineBaseCost(unitCost: unknown, factor: unknown): number {
   const factorNum = Number(factor);
-  if (!Number.isFinite(factorNum) || factorNum <= 0) throw new Error("معامل التحويل غير صالح.");
+  if (!Number.isFinite(factorNum) || factorNum <= 0) throw new Error("عدد الوحدة الأساسية في الوحدة غير صالح.");
   return toNum(unitCost) / factorNum;
 }
 
@@ -394,7 +394,7 @@ export function previewBasePurchase(
   factor: unknown,
 ): { baseQty: number; baseCost: number; newAvg: number; lineTotal: number } {
   const f = Number(factor);
-  if (!Number.isFinite(f) || f <= 0) throw new Error("معامل التحويل غير صالح.");
+  if (!Number.isFinite(f) || f <= 0) throw new Error("عدد الوحدة الأساسية في الوحدة غير صالح.");
   const baseQty = round4(toNum(quantityInUnit) * f);
   const baseCost = toNum(unitCost) / f;
   return {

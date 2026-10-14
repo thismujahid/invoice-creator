@@ -20,6 +20,32 @@ html {
   font-family: var(--app-font);
 }
 
+/* Invoice tables (preview + print): shared by Invoice.vue and the grouped
+   items table so the printed receipt keeps its borders. */
+.inv-table {
+  border-collapse: collapse;
+  margin-top: 5px;
+}
+.inv-table thead th,
+.inv-table tbody td {
+  border-bottom: thin solid #000;
+  border-left: thin solid #000;
+  text-align: center;
+  padding: 2px 5px;
+  height: 30px;
+}
+.inv-table thead th {
+  border-top: thin solid #000;
+}
+.inv-table thead th:first-child,
+.inv-table tbody td:first-child {
+  border-right: thin solid #000;
+}
+.inv-table thead th:last-child,
+.inv-table tbody td:last-child {
+  border-left: thin solid #000;
+}
+
 /* Keep Vuetify print bridge working while both libs coexist */
 #printableArea {
   display: none;

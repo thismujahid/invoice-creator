@@ -31,26 +31,7 @@
           {{ formatTime12Hour(invoiceData.time) }}
         </div>
       </div>
-      <table class="inv-table w-full">
-        <thead>
-          <tr>
-            <th class="w-10">عدد</th>
-            <th>البيان</th>
-            <th class="w-12">تصحيح</th>
-            <th class="w-20">سعر الوحدة</th>
-            <th class="w-20">الإجمالي</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="(row, i) in mappedProducts" :key="i">
-            <td>{{ row.عدد }}</td>
-            <td class="text-start">{{ row.البيان }}</td>
-            <td>{{ row.تصحيح }}</td>
-            <td>{{ row["سعر الوحدة"] }}</td>
-            <td class="font-semibold">{{ row.الإجمالي }}</td>
-          </tr>
-        </tbody>
-      </table>
+      <InvoiceGroupedItemsTable :lines="invoiceData.products ?? []" />
       <section v-if="hasReturns" class="mt-3 rounded-lg border border-red-100 bg-red-50/40 p-3">
         <h3 class="mb-2 font-bold text-red-800">الأصناف المرتجعة</h3>
         <div v-for="(row, i) in returnedProducts" :key="`return-${i}`" class="flex items-center justify-between gap-3 border-t border-red-100 py-2 first:border-0">
@@ -154,7 +135,7 @@
 </template>
 
 <script setup lang="ts">
-import type { Invoice, InvoiceProductLine } from "~/types";
+import type { Invoice } from "~/types";
 import type { InvoiceReturn } from "~/types/finance";
 
 const props = defineProps<{
@@ -173,22 +154,6 @@ const emit = defineEmits(["reset", "saved", "close"]);
 const oldDebt = computed(() => Number(props.openingBalance?.debt ?? props.invoiceData.debt ?? 0));
 const walletBalance = computed(() => Number(props.openingBalance?.credit ?? 0));
 
-const mappedProducts = computed(() => {
-  // Empty draft lines (no product picked yet) never render or print.
-  return (props.invoiceData?.products ?? []).filter((prod) => prod.product_id).map((prod) => {
-    let quantity: string | number = prod.product_quantity || "";
-    if (prod.product_quantity === 0.5) quantity = "1/2";
-    else if (prod.product_quantity === 0.25) quantity = "1/4";
-    else if (prod.product_quantity === 0.75) quantity = "3/4";
-    return {
-      عدد: quantity,
-      البيان: formatInvoiceLineName(prod.product_name, prod.unit_name, prod.option),
-      تصحيح: "",
-      "سعر الوحدة": formatePrice(prod.product_price || 0),
-      الإجمالي: formatePrice(calcTotalOfForm(prod)),
-    };
-  });
-});
 const hasReturns = computed(() => !!isReadOnly.value && !!props.returns?.length);
 const { round2 } = useFinance();
 const returnTotal = computed(() => round2((props.returns ?? []).reduce((sum, item) => sum + Number(item.total_refund || 0), 0)));
@@ -207,12 +172,6 @@ const returnedProducts = computed(() => hasReturns.value ? (props.returns ?? [])
 const costConfirmOpen = ref(false);
 const costConfirmed = ref(false);
 const pendingSaveOnly = ref<boolean | undefined>(undefined);
-const calcTotalOfForm = (form: Pick<InvoiceProductLine, "product_price" | "product_quantity">): number => {
-  if (form.product_price && form.product_quantity) {
-    return Number(form.product_price) * Number(form.product_quantity);
-  }
-  return 0;
-};
 
 function resolveTime(dateVal: unknown, timeVal: unknown): Date {
   if (timeVal instanceof Date && !isNaN(timeVal.getTime())) return new Date(timeVal);
@@ -335,29 +294,7 @@ defineExpose({ startPrint });
 </script>
 
 <style scoped>
-.inv-table {
-  border-collapse: collapse;
-  margin-top: 5px;
-}
-.inv-table thead th,
-.inv-table tbody td {
-  border-bottom: thin solid #000;
-  border-left: thin solid #000;
-  text-align: center;
-  padding: 2px 5px;
-  height: 30px;
-}
-.inv-table thead th {
-  border-top: thin solid #000;
-}
-.inv-table thead th:first-child,
-.inv-table tbody td:first-child {
-  border-right: thin solid #000;
-}
-.inv-table thead th:last-child,
-.inv-table tbody td:last-child {
-  border-left: thin solid #000;
-}
+/* .inv-table lives in assets/css/main.css (shared with the grouped table). */
 .inv-footer {
   border-bottom: thin solid #000;
   border-right: thin solid #000;

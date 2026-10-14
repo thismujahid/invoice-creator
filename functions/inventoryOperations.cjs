@@ -156,7 +156,7 @@ function validateUnitList(rawUnits, baseUnitId, { round4, roundMoney }) {
     const stockKind = raw?.stock_kind;
     if (!id || !name || ids.has(id)) invalid("معرّف الوحدة أو اسمها غير صالح.");
     ids.add(id);
-    if (!Number.isFinite(factor) || factor <= 0 || Math.abs(factor - round4(factor)) > 1e-9) invalid("معامل تحويل الوحدة يجب أن يكون موجبًا وبحد أقصى أربع منازل عشرية.");
+    if (!Number.isFinite(factor) || factor <= 0 || Math.abs(factor - round4(factor)) > 1e-9) invalid("عدد الوحدة الأساسية في الوحدة يجب أن يكون موجبًا وبحد أقصى أربع منازل عشرية.");
     if (stockKind !== "loose" && stockKind !== "package") invalid("حدد هل الوحدة كمية مفردة أم عبوة مغلقة.");
     if (raw?.profit_margin != null && !finite(raw.profit_margin, -1)) invalid("هامش الربح غير صالح.");
     if (raw?.selling_price != null && !finite(raw.selling_price)) invalid("سعر البيع غير صالح.");
@@ -179,7 +179,7 @@ function validateUnitList(rawUnits, baseUnitId, { round4, roundMoney }) {
     };
   });
   const base = units.filter((unit) => unit.id === baseUnitId);
-  if (base.length !== 1 || base[0].factor !== 1 || base[0].stock_kind !== "loose") invalid("الوحدة الأساسية يجب أن تكون كمية مفردة ومعاملها 1.");
+  if (base.length !== 1 || base[0].factor !== 1 || base[0].stock_kind !== "loose") invalid("الوحدة الأساسية يجب أن تكون كمية مفردة وقيمتها 1.");
   return units;
 }
 
@@ -346,7 +346,7 @@ function makeOperations({ db, authorize, operationRef }) {
           if (!next) {
             if (existing.id === old.base_unit_id) unavailable("لا يمكن أرشفة الوحدة الأساسية.");
             requested.set(existing.id, { ...existing, archived: true, can_sell: false, can_purchase: false });
-          } else if (Number(next.factor) !== Number(existing.factor) || next.stock_kind !== existing.stock_kind) unavailable(`لا يمكن تغيير معامل أو نوع الوحدة ${existing.name} بعد إنشائها.`);
+          } else if (Number(next.factor) !== Number(existing.factor) || next.stock_kind !== existing.stock_kind) unavailable(`لا يمكن تغيير عدد الوحدة الأساسية في الوحدة ${existing.name} أو نوعها بعد إنشائها.`);
         }
         for (const unit of requested.values()) {
           const previousUnit = old?.units?.find((entry) => entry.id === unit.id);
@@ -523,7 +523,7 @@ function makeOperations({ db, authorize, operationRef }) {
         const unit = (product.units || []).find((candidate) => candidate.id === item.unitId);
         if (!unit || unit.archived === true || unit.can_purchase === false) unavailable("وحدة الشراء غير متاحة لهذا الصنف.");
         const factor = Number(unit.factor);
-        if (!Number.isFinite(factor) || factor <= 0) invalid("معامل وحدة الشراء غير صالح.");
+        if (!Number.isFinite(factor) || factor <= 0) invalid("عدد الوحدة الأساسية في وحدة الشراء غير صالح.");
         if (unit.allows_fractional !== true && !Number.isInteger(item.quantity)) invalid("هذه الوحدة لا تقبل كميات كسرية.");
         let baseQuantity;
         try { baseQuantity = core.baseQuantityFor(item.quantity, factor); }

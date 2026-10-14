@@ -4,6 +4,7 @@ import type { Invoice } from "~/types";
 import type { InvoiceReturn } from "~/types/finance";
 import { toDateSafe } from "~/types";
 import { merchandiseProfitOf, round2, toNum } from "~/composables/finance";
+import { invoiceExportFigures, invoiceLinesSubtotal } from "~/utils/invoiceExport";
 import { formatInvoiceLineName } from "~/composables/helpers";
 
 const INVOICE_PAGE_SIZE = 25;
@@ -363,20 +364,14 @@ export const useInvoicesStore = defineStore("invoices", () => {
         const products = Array.isArray(inv.products) ? inv.products : [];
         const cancelled = inv.status === "cancelled";
         const returnTotal = cancelled ? 0 : returnsByInvoice.get(inv.id || "") ?? 0;
-        const netTotal = cancelled ? 0 : products.reduce(
-          (sum, p) => sum + (Number(p.product_price) || 0) * (Number(p.product_quantity) || 0),
-          0
-        );
-        const totalCost = cancelled ? 0 : products.reduce(
-          (sum, p) => sum + (Number(p.product_cost_price) || 0) * (Number(p.base_quantity ?? p.product_quantity) || 0),
-          0
-        );
-        const discountValue = cancelled ? 0 : inv.discount_percentage
-          ? (netTotal * (Number(inv.discount) || 0)) / 100
-          : Number(inv.discount) || 0;
-        const totalAfterDiscount = cancelled ? 0 : netTotal - discountValue + (Number(inv.delivery_price) || 0);
-        const invoiceTotal = cancelled ? 0 : totalAfterDiscount + Number(inv.debt || 0) + Number(inv.amount_of_mahros || 0) + Number(inv.amount_of_animal_feeds || 0);
-        const profit = cancelled ? 0 : merchandiseProfitOf(inv);
+        // Canonical figures (same policy as save/preview/print: discount base
+        // includes delivery/feeds/mahros/debt; cost prefers cost_groups).
+        const figures = invoiceExportFigures(inv);
+        const netTotal = cancelled ? 0 : invoiceLinesSubtotal(inv);
+        const totalCost = cancelled ? 0 : figures.totalCost;
+        const discountValue = cancelled ? 0 : figures.discountValue;
+        const invoiceTotal = cancelled ? 0 : figures.invoiceTotal;
+        const profit = cancelled ? 0 : figures.profit;
         const productsList = products
           .map((p, i) => {
             const name = formatInvoiceLineName(p.product_name || "غير محدد", p.unit_name, p.option);

@@ -328,8 +328,8 @@
             v-if="isExistingUnitDraft && !unitDraft.isBase"
             class="text-xs text-gray-500"
           >
-            معامل الوحدة المسجلة ثابت لحماية الحركات السابقة. إذا كان غير صحيح،
-            أضف وحدة بالمعامل الصحيح وراجع مخزون الوحدة القديمة قبل أرشفتها.
+            عدد الوحدة الأساسية في الوحدة المسجلة ثابت لحماية الحركات السابقة. إذا كان غير صحيح،
+            أضف وحدة بالعدد الصحيح وراجع مخزون الوحدة القديمة قبل أرشفتها.
           </p>
           <UFormField label="الاستخدام">
             <USelect
@@ -753,7 +753,7 @@ function confirmUnitModal(): void {
       Math.abs(Math.round(f * 10000) / 10000 - f) > 1e-9 ||
       (isIndependent.value && !Number.isInteger(f))
     ) {
-      unitModalFactorError.value = isIndependent.value ? "اكتب عددًا صحيحًا موجبًا من العبوات." : "اكتب معاملًا موجبًا بحد أقصى أربع منازل عشرية.";
+      unitModalFactorError.value = isIndependent.value ? "اكتب عددًا صحيحًا موجبًا من العبوات." : "اكتب الوحدة فيها كام من الوحدة الأساسية (موجب، بحد أقصى أربع منازل عشرية).";
       unitModalError.value = unitModalFactorError.value;
       return;
     }
@@ -917,7 +917,7 @@ function validate(): boolean {
         (!Number.isFinite(Number(unit.selling_price)) ||
           Number(unit.selling_price) < 0))
     ) {
-      e.units = `راجع بيانات الوحدة رقم ${index + 1}: الاسم والمعامل ونوع التخزين والأسعار يجب أن تكون صالحة وغير مكررة.`;
+      e.units = `راجع بيانات الوحدة رقم ${index + 1}: الاسم وعدد الوحدة الأساسية فيها ونوع التخزين والأسعار يجب أن تكون صالحة وغير مكررة.`;
       break;
     }
     unitIds.add(unit.id);

@@ -2,6 +2,7 @@ const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { getFirestore, FieldValue, FieldPath, Timestamp } = require("firebase-admin/firestore");
 const { safeProduct, safeInvoice, saleAmounts, invoiceRevision } = require("./staffMath.cjs");
 const inventoryCorePromise = import("./shared/inventoryCore.mjs");
+const saleOrderPromise = import("./shared/saleOrder.mjs");
 
 const db = getFirestore();
 const adminEmail = "mohamed.mojahead@gmail.com";
@@ -437,6 +438,7 @@ async function customerSettlementItems(tx, customerId, customer) {
 
 exports.createStaffSale = onCall(async (request) => {
   const { baseQuantityFor, normalizeInventory, sellInventory } = await inventoryCorePromise;
+  const { planSaleExecutionOrder } = await saleOrderPromise;
   const input = request.data;
   const customerId = cleanText(input?.customer_id, 128);
   const rawLines = input?.products;
@@ -475,7 +477,9 @@ exports.createStaffSale = onCall(async (request) => {
     if (money(creditUsed) - creditForDebt > 0.005) throw new HttpsError("failed-precondition", "Customer credit changed after debt settlement. Refresh it.");
     const products = new Map(productSnaps.map((snapshot) => [snapshot.id, snapshot]));
     const inventoryAfterByProduct = new Map();
-    const lines = rawLines.map((raw, index) => {
+    // Phase 1 — validate every line (SKU, unit, factor, cost, qty, price) with
+    // no inventory mutation, so one bad line never leaves partial effects.
+    const prepared = rawLines.map((raw, index) => {
       const id = cleanText(raw.product_id, 128);
       const snapshot = products.get(id);
       if (!snapshot?.exists || snapshot.data().is_active === false) fail("A product is unavailable.");
@@ -494,15 +498,29 @@ exports.createStaffSale = onCall(async (request) => {
       let baseQty;
       try { baseQty = baseQuantityFor(quantity, factor); }
       catch { fail("الكمية بعد التحويل يجب أن تكون موجبة وقابلة للتمثيل حتى أربع منازل عشرية."); }
+      return { index, id, product, unit, factor, quantity, baseQty, requestedPrice, option: cleanText(raw.option, 120) };
+    });
+    // Phase 2 — deterministic execution: sealed-package lines consume first so
+    // a loose line can never auto-open the carton another line sells sealed.
+    // Display order (input index) is preserved; only execution is reordered,
+    // and each effect stays linked to its own line.
+    const stockResults = new Array(prepared.length);
+    for (const position of planSaleExecutionOrder(prepared.length, (i) => prepared[i].unit.stock_kind)) {
+      const entry = prepared[position];
       let stockResult;
       try {
-        stockResult = sellInventory(inventoryAfterByProduct.get(id) || normalizeInventory(product.inventory), product, unit.id, quantity);
+        stockResult = sellInventory(inventoryAfterByProduct.get(entry.id) || normalizeInventory(entry.product.inventory), entry.product, entry.unit.id, entry.quantity);
       } catch (error) {
-        if (error.message === "STOCK_INSUFFICIENT") throw new HttpsError("failed-precondition", `Insufficient stock for ${product.inventory_mode === "independent" ? [product.family_name || product.name, product.uses_variants === false ? null : product.variant_name, product.pack_size_name].filter(Boolean).join(" — ") : product.uses_variants === false ? product.family_name || product.name : product.family_name ? `${product.family_name} — ${product.variant_name || product.name}` : product.name}.`);
+        if (error.message === "STOCK_INSUFFICIENT") throw new HttpsError("failed-precondition", `Insufficient stock for ${entry.product.inventory_mode === "independent" ? [entry.product.family_name || entry.product.name, entry.product.uses_variants === false ? null : entry.product.variant_name, entry.product.pack_size_name].filter(Boolean).join(" — ") : entry.product.uses_variants === false ? entry.product.family_name || entry.product.name : entry.product.family_name ? `${entry.product.family_name} — ${entry.product.variant_name || entry.product.name}` : entry.product.name}.`);
         if (error.message === "FRACTION_NOT_ALLOWED" || error.message === "PACKAGE_COUNT_MUST_BE_INTEGER") fail("This unit does not allow fractional quantities.");
         throw error;
       }
-      inventoryAfterByProduct.set(id, stockResult.inventory);
+      inventoryAfterByProduct.set(entry.id, stockResult.inventory);
+      stockResults[entry.index] = stockResult;
+    }
+    const lines = prepared.map((entry) => {
+      const { index, id, product, unit, factor, quantity, baseQty, requestedPrice, option } = entry;
+      const stockResult = stockResults[index];
       const unitCost = Number(product.cost_price);
       return {
         line_id: `${saleRef.id}-${index}`, product_id: id,
@@ -516,7 +534,7 @@ exports.createStaffSale = onCall(async (request) => {
         cost_groups: [{ group_id: `${saleRef.id}-${index}:cost:0`, base_quantity: baseQty, unit_cost: unitCost }],
         opened_packages: stockResult.opened,
         component_deltas: stockResult.changes,
-        option: cleanText(raw.option, 120), total: money(requestedPrice * quantity),
+        option, total: money(requestedPrice * quantity),
       };
     });
     const inventoryEffects = {};

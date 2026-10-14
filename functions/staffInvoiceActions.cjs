@@ -2,6 +2,7 @@ const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { FieldValue } = require("firebase-admin/firestore");
 const { safeInvoice, saleAmounts, invoiceRevision, splitCustomerReturn } = require("./staffMath.cjs");
 const inventoryCorePromise = import("./shared/inventoryCore.mjs");
+const saleOrderPromise = import("./shared/saleOrder.mjs");
 
 const money = (value) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 const cost4 = (value) => Math.round(((Number.isFinite(Number(value)) ? Number(value) : 0) + Number.EPSILON) * 10000) / 10000;
@@ -187,9 +188,12 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
 
   const updateStaffInvoice = onCall(async (request) => {
     const { baseQuantityFor, inventoryTotal, normalizeInventory, restoreSaleConsumption, sellInventory } = await inventoryCorePromise;
+    const { findDuplicateLineIds, normalizeLineId, resolvePersistedLineId } = await saleOrderPromise;
     const id = text(request.data?.id, 128);
     const requested = request.data?.products;
-    if (!id || !Array.isArray(requested) || !requested.length || requested.length > 50) invalid("Select invoice products.");
+    if (!id || !Array.isArray(requested) || !requested.length || requested.length > 50) invalid("Select 1 to 50 invoice lines (display groups do not change this limit).");
+    const duplicates = findDuplicateLineIds((requested || []).map((entry) => normalizeLineId(entry?.line_id)));
+    if (duplicates.length) invalid(`Duplicate invoice line id: ${duplicates[0]}. Reload the invoice and retry.`);
     const discount = request.data?.discount;
     const paid = request.data?.paid_amount;
     if (typeof discount !== "number" || !Number.isFinite(discount) || discount < 0 || typeof paid !== "number" || !Number.isFinite(paid) || paid < 0) invalid("Invalid invoice amounts.");
@@ -238,6 +242,9 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
       const products = new Map(productSnaps.map((snapshot) => [snapshot.id, snapshot]));
       const usedOld = new Set();
       const sourceLines = new Map();
+      // Every persisted or requested id already spoken for — new mints must
+      // avoid all of them so repeated edits never collide on a reused index.
+      const takenLineIds = new Set(oldLines.map((line) => text(line?.line_id, 128)).filter(Boolean));
       const lines = requested.map((entry, index) => {
         const productId = text(entry?.product_id, 128);
         const productSnap = products.get(productId);
@@ -256,7 +263,7 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
         try { base = baseQuantityFor(quantity, factor); }
         catch (error) {
           if (error.message === "BASE_QUANTITY_PRECISION_INVALID" || error.message === "QUANTITY_MUST_BE_POSITIVE") invalid("الكمية بعد التحويل يجب أن تكون موجبة وقابلة للتمثيل حتى أربع منازل عشرية.");
-          invalid("وحدة البيع أو معامل التحويل غير صالح.");
+          invalid("وحدة البيع أو عدد الوحدة الأساسية فيها غير صالح.");
         }
         const oldId = text(entry?.line_id, 128);
         let oldIndex = oldId.startsWith("legacy-") ? Number(oldId.slice(7)) : oldLines.findIndex((line) => line.line_id === oldId && oldId);
@@ -279,9 +286,13 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
         }
         if (product.cost_price === null || product.cost_price === undefined || !Number.isFinite(Number(product.cost_price)) || Number(product.cost_price) < 0) unavailable("متوسط تكلفة الصنف غير مسجل.");
         const currentCost = Number(product.cost_price);
-        if (keep > 0) groups.push({ group_id: `${opRef.id}:${oldLine?.line_id || `${id}-edit-${index}`}:cost:${groups.length}`, base_quantity: keep, unit_cost: currentCost });
+        // Stable identity: honor a free client id (draft-*) for new lines so a
+        // later edit that adds another line at the same position cannot reuse
+        // the same index-based id. Fall back to a collision-free mint.
+        const provisionalId = oldLine?.line_id || text(entry?.line_id, 128) || `${id}-edit-${index}`;
+        if (keep > 0) groups.push({ group_id: `${opRef.id}:${provisionalId}:cost:${groups.length}`, base_quantity: keep, unit_cost: currentCost });
         const average = groups.reduce((sum, group) => sum + group.base_quantity * group.unit_cost, 0) / base;
-        const lineId = oldLine?.line_id || `${id}-edit-${index}`;
+        const lineId = resolvePersistedLineId({ invoiceId: id, requestedId: entry?.line_id, matchedOldId: oldLine?.line_id || null, fallbackIndex: index, taken: takenLineIds });
         sourceLines.set(lineId, oldLine);
         const line = { line_id: lineId, product_id: productId,
           family_id: product.family_id || null, family_name: product.family_name || null, variant_name: product.variant_name || product.name,
@@ -347,7 +358,9 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
           component_deltas: restored.changes, opened_packages: [], reason: "invoice_edit_compensation" });
         movementEvents.set(oldLine.product_id, events);
       }
-      for (const line of lines) {
+      const { planSaleExecutionOrder: editOrder } = await saleOrderPromise;
+      for (const position of editOrder(lines.length, (i) => lines[i].stock_kind)) {
+        const line = lines[position];
         const source = sourceLines.get(line.line_id);
         if (source && source.unit_id === line.unit_id && Math.abs(baseQuantity(source) - line.base_quantity) <= 1e-9) continue;
         const product = products.get(line.product_id)?.data();
@@ -506,7 +519,7 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
         if (!row || seen.has(key) || typeof quantity !== "number" || !Number.isFinite(quantity) || quantity <= 0 || Math.abs(quantity - cost4(quantity)) > 1e-9 || quantity - row.maxQty > 1e-9) invalid("Return quantity exceeds the available quantity.");
         seen.add(key);
         const rf = Number(row.unit_factor);
-        if (!Number.isFinite(rf) || rf <= 0) unavailable("معامل وحدة الفاتورة غير صالح؛ لا يمكن تسجيل المرتجع.");
+        if (!Number.isFinite(rf) || rf <= 0) unavailable("عدد الوحدة الأساسية في وحدة الفاتورة غير صالح؛ لا يمكن تسجيل المرتجع.");
         let returnedBase;
         try { returnedBase = baseQuantityFor(quantity, rf); }
         catch { invalid("الكمية بعد التحويل يجب أن تكون موجبة وقابلة للتمثيل حتى أربع منازل عشرية."); }
@@ -774,7 +787,7 @@ module.exports = ({ db, authorize, roleOf, operationRef }) => {
         const remaining = number(line.quantity) - number(returned[String(index)]);
         if (quantity - remaining > 1e-9) invalid("كمية المرتجع تتجاوز المتاح في الفاتورة.");
         const factor = Number(line.unit_factor);
-        if (!Number.isFinite(factor) || factor <= 0 || Math.abs(factor - cost4(factor)) > 1e-9) invalid("معامل الوحدة المسجل في الفاتورة غير صالح.");
+        if (!Number.isFinite(factor) || factor <= 0 || Math.abs(factor - cost4(factor)) > 1e-9) invalid("عدد الوحدة الأساسية في الوحدة المسجلة بالفاتورة غير صالح.");
         if (line.allows_fractional !== true && !Number.isInteger(quantity)) invalid("هذه الوحدة لا تقبل كميات كسرية.");
         if (selection.return_bucket !== "loose" && selection.return_bucket !== "package") invalid("حدد هل المرتجع كمية مفتوحة أم عبوة مغلقة.");
         let base;

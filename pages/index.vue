@@ -168,333 +168,74 @@
             class="max-h-[55vh] space-y-3 overflow-y-auto p-0.5"
             v-if="!loadingProds"
           >
-            <div
-              v-for="(form, index) in invoiceData.products"
-              :key="'product-line-' + index"
-              class="rounded-lg border border-gray-200 p-3"
-              :class="isCostGreaterThanPrice(form) ? 'border-red-400!' : ''"
+            <InvoiceProductGroupEditor
+              v-for="(group, groupIndex) in productGroups"
+              :key="group.key"
+              :group-title="groupTitleOf(group)"
+              :group-total-text="formatePrice(group.total)"
+              :is-empty-group="group.isEmpty"
+              :sub-line-count="group.lines.length"
+              :show-move-up="groupIndex > 0"
+              :show-move-down="groupIndex < productGroups.length - 1"
+              :family-options="productFamilyOptions"
+              :selected-family="group.lines[0] ? selectedFamily(group.lines[0].line) : undefined"
+              @pick-family="(family) => onPickGroupFamily(group.key, family)"
+              @add-subline="addSubLine(group.key)"
+              @remove-group="removeGroup(group.key)"
+              @move-up="moveGroupBy(group.key, -1)"
+              @move-down="moveGroupBy(group.key, 1)"
             >
-              <!-- Compact read-only view once a product is picked -->
-              <div
-                v-if="!isExpanded(form)"
-                class="flex items-center justify-between gap-2"
+              <template
+                v-for="(sub, subIndex) in group.lines"
+                :key="sub.line.line_id || `line-${sub.index}`"
               >
-                <div class="min-w-0">
-                  <div class="truncate text-sm font-bold text-gray-900">
-                    {{
-                      form.product_name
-                        ? formatInvoiceLineName(
-                            form.product_name,
-                            form.unit_name,
-                            form.option,
-                          )
-                        : "—"
-                    }}
-                  </div>
-                  <div class="mt-0.5 text-[11px] text-gray-400">
-                    {{
-                      invoiceData.id
-                        ? "المتاح بالمخزون"
-                        : "المتبقي بعد الفاتورة"
-                    }}: {{ stockLabelOf(form) }}
-                  </div>
-                  <div
-                    class="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-gray-500"
-                  >
-                    <span class="flex items-center gap-1">
-                      <UButton
-                        size="xs"
-                        color="neutral"
-                        variant="soft"
-                        icon="i-lucide-minus"
-                        aria-label="تقليل الكمية"
-                        class="flex items-center justify-center"
-                        @click="changeQty(form, -stepOf(form))"
-                      />
-                      <UInput
-                        :model-value="qtyText(form)"
-                        inputmode="numeric"
-                        aria-label="الكمية"
-                        class="w-20"
-                        size="xs"
-                        @update:model-value="
-                          (v) => setQtyText(form, String(v ?? ''))
-                        "
-                        @blur="qtyDrafts.delete(form)"
-                      />
-                      <UButton
-                        size="xs"
-                        color="neutral"
-                        variant="soft"
-                        icon="i-lucide-plus"
-                        aria-label="زيادة الكمية"
-                        class="flex items-center justify-center"
-                        @click="changeQty(form, stepOf(form))"
-                      />
-                    </span>
-                    <span>×</span>
-                    <span dir="ltr">{{
-                      formatePrice(form.product_price)
-                    }}</span>
-                    <span>=</span>
-                    <span class="font-bold text-gray-800">{{
-                      formatePrice(calcTotalOfForm(form))
-                    }}</span>
-                  </div>
-                  <div
-                    v-if="qtyExceeds(form)"
-                    class="mt-0.5 text-xs font-bold text-red-600"
-                  >
-                    {{ exceedText(form) }} — لن تُحفظ
-                  </div>
-                </div>
-                <div class="flex shrink-0 gap-1.5">
-                  <UButton
-                    size="sm"
-                    color="neutral"
-                    variant="soft"
-                    icon="i-lucide-pencil"
-                    @click="expandLine(form)"
-                    >تعديل</UButton
-                  >
-                  <UButton
-                    v-if="invoiceData.products.length > 1"
-                    size="sm"
-                    color="error"
-                    variant="soft"
-                    icon="i-lucide-trash-2"
-                    @click="removeLine(form)"
-                    >حذف</UButton
-                  >
-                </div>
-              </div>
-              <!-- Expanded edit mode -->
-              <div v-else>
-                <div class="mb-2 flex items-center justify-between">
-                  <span class="text-xs font-bold text-gray-400">
-                    {{
-                      form.product_name
-                        ? formatInvoiceLineName(
-                            form.product_name,
-                            form.unit_name,
-                            form.option,
-                          )
-                        : `منتج #${index + 1}`
-                    }}
-                  </span>
-                  <div class="flex shrink-0 gap-1.5">
-                    <UButton
-                      size="sm"
-                      color="success"
-                      variant="soft"
-                      icon="i-lucide-chevron-up"
-                      @click="collapseLine(form)"
-                      >إغلاق</UButton
-                    >
-                    <UButton
-                      v-if="invoiceData.products.length > 1"
-                      icon="i-lucide-trash-2"
-                      color="error"
-                      variant="soft"
-                      size="xs"
-                      class="flex items-center justify-center"
-                      aria-label="حذف السطر"
-                      @click="removeLine(form)"
-                    />
-                  </div>
-                </div>
-                <div class="grid grid-cols-2 gap-2">
-                  <UFormField label="المنتج">
-                    <USelectMenu
-                      :model-value="selectedFamily(form)"
-                      :items="productFamilyOptions"
-                      label-key="name"
-                      by="id"
-                      :search-input="{
-                        placeholder: 'بحث باسم المنتج...',
-                        icon: 'i-lucide-search',
-                      }"
-                      placeholder="اختر المنتج"
-                      :loading="loadingProds"
-                      class="w-full"
-                      @update:model-value="
-                        (family) => onPickFamily(form, family)
-                      "
-                    />
-                  </UFormField>
-                  <UFormField
-                    v-if="
-                      selectedFamilyId(form) &&
-                      selectedFamily(form)?.inventory_mode !== 'independent' &&
-                      selectedFamily(form)?.uses_variants !== false
-                    "
-                    label="النوع"
-                  >
-                    <USelectMenu
-                      :model-value="
-                        (selectedProd(form) ?? null) as Product | undefined
-                      "
-                      :items="productMenuItems(form)"
-                      label-key="variant_name"
-                      by="id"
-                      :search-term="getProdSearch(form)"
-                      :search-input="{
-                        placeholder: 'بحث عن نوع...',
-                        icon: 'i-lucide-search',
-                      }"
-                      :ignore-filter="true"
-                      placeholder="اختر النوع"
-                      :loading="loadingProds"
-                      class="w-full"
-                      @update:search-term="(v) => setProdSearch(form, v)"
-                      @update:model-value="(prod) => onPickProduct(form, prod)"
-                    />
-                  </UFormField>
-                  <UFormField v-if="selectedFamilyId(form) && selectedFamily(form)?.inventory_mode === 'independent' && selectedFamily(form)?.uses_variants !== false" label="النوع">
-                    <USelectMenu :model-value="selectedVariantOption(form)" :items="variantOptions(form)" label-key="name" by="key" :search-input="{ placeholder: 'بحث عن نوع...', icon: 'i-lucide-search' }" placeholder="اختر النوع" class="w-full" @update:model-value="(variant) => onPickVariant(form, variant)" />
-                  </UFormField>
-                  <UFormField v-if="selectedFamilyId(form) && selectedFamily(form)?.inventory_mode === 'independent' && (selectedFamily(form)?.uses_variants === false || form.variant_key)" label="حجم العبوة">
-                    <USelectMenu :model-value="(selectedProd(form) ?? null) as Product | undefined" :items="packSizeMenuItems(form)" label-key="pack_size_name" by="id" :search-input="{ placeholder: 'بحث عن حجم عبوة...', icon: 'i-lucide-search' }" placeholder="اختر حجم العبوة" class="w-full" @update:model-value="(prod) => onPickProduct(form, prod)" />
-                  </UFormField>
-                  <UFormField
-                    v-if="
-                      unitsOf(form).length > 1 ||
-                      (form.product_id && !selectedUnit(form))
-                    "
-                    label="الوحدة"
-                  >
-                    <USelectMenu
-                      :model-value="selectedUnit(form)"
-                      :items="unitsOf(form)"
-                      label-key="name"
-                      by="id"
-                      :search-input="false"
-                      class="w-full"
-                      @update:model-value="(unit) => onPickUnit(form, unit)"
-                    />
-                  </UFormField>
-                  <UFormField
-                    :label="
-                      form.product_id
-                        ? `الكمية (المتاح ${stockNumberOf(form) ?? '—'} ${selectedUnit(form)?.name || ''})`
-                        : 'الكمية'
-                    "
-                  >
-                    <div class="flex items-center gap-1.5">
-                      <UInput
-                        :model-value="qtyText(form)"
-                        placeholder="0"
-                        inputmode="numeric"
-                        class="min-w-0 flex-1 text-center"
-                        :ui="{
-                          base: 'text-center',
-                        }"
-                        @update:model-value="
-                          (v) => setQtyText(form, String(v ?? ''))
-                        "
-                        @blur="qtyDrafts.delete(form)"
-                      >
-                        <template #leading>
-                          <UButton
-                            size="xs"
-                            color="neutral"
-                            variant="soft"
-                            icon="i-lucide-minus"
-                            aria-label="تقليل الكمية"
-                            class="flex shrink-0 items-center justify-center"
-                            @click="changeQty(form, -1)"
-                          />
-                        </template>
-                        <template #trailing>
-                          <UButton
-                            size="xs"
-                            color="neutral"
-                            variant="soft"
-                            icon="i-lucide-plus"
-                            aria-label="زيادة الكمية"
-                            class="flex shrink-0 items-center justify-center"
-                            @click="changeQty(form, 1)"
-                          />
-                        </template>
-                      </UInput>
-                    </div>
-                    <template #hint>
-                      <span
-                        v-if="form.product_id && qtyExceeds(form)"
-                        class="block text-xs font-bold text-red-600"
-                      >
-                        {{ exceedText(form) }}
-                      </span>
-                      <span
-                        v-else-if="form.product_id && packageExceeds(form)"
-                        class="block text-xs font-bold text-red-600"
-                      >
-                        {{ packageExceeds(form)?.message }}
-                      </span>
-                    </template>
-                  </UFormField>
-                  <UFormField label="سعر الوحدة">
-                    <UInputNumber
-                      v-model="form.product_price"
-                      locale="en-US"
-                      @input="(event: Event) => onUnitPriceInput(form, event)"
-                      :min="0"
-                      :step="0.01"
-                      class="w-full"
-                      :color="
-                        isCostGreaterThanPrice(form) ? 'error' : undefined
-                      "
-                    />
-                    <template
-                      v-if="
-                        (authStore.role === 'admin' &&
-                          form.product_cost_price) ||
-                        priceHintOf(form) !== null
-                      "
-                      #hint
-                    >
-                      <span
-                        v-if="
-                          authStore.role === 'admin' && form.product_cost_price
-                        "
-                        class="block text-xs text-gray-500"
-                        >تكلفة الوحدة:
-                        {{
-                          formatePrice(
-                            Number(form.product_cost_price ?? 0) *
-                              Number(form.unit_factor),
-                          )
-                        }}
-                        ج</span
-                      >
-                      <span
-                        v-if="priceHintOf(form) !== null"
-                        class="flex items-center justify-between gap-2 text-xs text-amber-700"
-                      >
-                        <span
-                          >سعر البيع الحالي:
-                          {{ formatePrice(priceHintOf(form)) }}</span
-                        >
-                        <UButton
-                          size="xs"
-                          color="warning"
-                          variant="soft"
-                          @click="applyCurrentPrice(form)"
-                          >تطبيق</UButton
-                        >
-                      </span>
-                    </template>
-                  </UFormField>
-                  <UFormField label="الإجمالي">
-                    <UInput
-                      :model-value="formatePrice(calcTotalOfForm(form))"
-                      readonly
-                      class="w-full"
-                    />
-                  </UFormField>
-                </div>
-              </div>
-            </div>
+                <InvoiceSubLineEditor
+                  v-if="sub.line.product_id || sub.line.family_id"
+                  :form="sub.line"
+                  :line-label="`بند ${subIndex + 1}`"
+                  :family-mode="familyModeOf(sub.line)"
+                  :family-uses-variants="familyUsesVariantsOf(sub.line)"
+                  :show-pack-picker="showPackPickerOf(sub.line)"
+                  :variant-options="variantOptions(sub.line)"
+                  :selected-variant="selectedVariantOption(sub.line)"
+                  :pack-sizes="packSizeMenuItems(sub.line)"
+                  :product-options="productMenuItems(sub.line)"
+                  :selected-product="selectedProd(sub.line)"
+                  :prod-search="getProdSearch(sub.line)"
+                  :units="unitsOf(sub.line)"
+                  :selected-unit="selectedUnit(sub.line)"
+                  :show-unit-picker="unitsOf(sub.line).length > 1 || (!!sub.line.product_id && !selectedUnit(sub.line))"
+                  :qty-label="sub.line.product_id ? `الكمية (المتاح ${stockNumberOf(sub.line) ?? '—'} ${selectedUnit(sub.line)?.name || ''})` : 'الكمية'"
+                  :qty-value="qtyText(sub.line)"
+                  :qty-error="qtyDraftError(sub.line)"
+                  :stock-available-text="stockLabelOf(sub.line)"
+                  :exceed-message="qtyExceeds(sub.line) ? exceedText(sub.line) : null"
+                  :package-message="packageExceeds(sub.line)?.message ?? null"
+                  :price-hint="priceHintOf(sub.line)"
+                  :price-hint-text="priceHintOf(sub.line) !== null ? formatePrice(priceHintOf(sub.line)) : null"
+                  :show-cost="authStore.role === 'admin' && !!sub.line.product_cost_price"
+                  :unit-cost-text="formatePrice(Number(sub.line.product_cost_price ?? 0) * Number(sub.line.unit_factor))"
+                  :line-total-text="formatePrice(calcTotalOfForm(sub.line))"
+                  :cost-error="isCostGreaterThanPrice(sub.line)"
+                  :can-remove="invoiceData.products.length > 1"
+                  :show-move-up="subIndex > 0"
+                  :show-move-down="subIndex < group.lines.length - 1"
+                  @pick-variant="(variant) => onPickVariant(sub.line, variant)"
+                  @pick-product="(prod) => onPickProduct(sub.line, prod)"
+                  @update:prod-search="(v) => setProdSearch(sub.line, v)"
+                  @pick-unit="(unit) => onPickUnit(sub.line, unit)"
+                  @qty-input="(v) => setQtyText(sub.line, v)"
+                  @qty-blur="qtyDrafts.delete(sub.line)"
+                  @qty-step="(d) => changeQty(sub.line, d * stepOf(sub.line))"
+                  @price-input="(event) => onUnitPriceInput(sub.line, event)"
+                  @price-change="(v) => { sub.line.product_price = v ?? 0; }"
+                  @apply-price="applyCurrentPrice(sub.line)"
+                  @remove="removeLine(sub.line)"
+                  @move-up="moveSubLineBy(group.key, subIndex, -1)"
+                  @move-down="moveSubLineBy(group.key, subIndex, 1)"
+                />
+              </template>
+            </InvoiceProductGroupEditor>
           </div>
           <template v-if="!loadingProds">
             <div class="mt-4 space-y-3 border-t border-gray-100 pt-3">
@@ -767,6 +508,14 @@ import type { ProductUnit } from "~/types";
 
 definePageMeta({ title: "إنشاء فاتورة" });
 const { formatePrice, calcTotal, formatInvoiceLineName } = useHelpers();
+import {
+  groupInvoiceLines,
+  moveGroup as moveGroupOrder,
+  moveSubLine as moveSubLineOrder,
+  ensureStableLineIds,
+  findDuplicateLineIds,
+  invoiceGroupTitle,
+} from "~/utils/invoiceGrouping";
 const {
   unitsForProduct,
   unitSellingPrice,
@@ -808,6 +557,9 @@ const containerRef = ref<HTMLElement | null>(null);
 
 function emptyLine(): InvoiceProductLine {
   return {
+    // Stable client id for Vue keys + reorder/edit matching. The server mints
+    // the persisted id on create and honors a free client id on edit.
+    line_id: `draft-${crypto.randomUUID()}`,
     product_name: "",
     product_price: 0,
     product_cost_price: 0,
@@ -1471,7 +1223,7 @@ function onPickUnit(form: InvoiceProductLine, unit?: ProductUnit): void {
   if (!unit) return;
   const factor = Number(unit.factor);
   if (!Number.isFinite(factor) || factor <= 0) {
-    notify("معامل تحويل الوحدة غير صالح. راجع إعدادات النوع.", "error");
+    notify("عدد الوحدة الأساسية في الوحدة غير صالح. راجع إعدادات النوع.", "error");
     return;
   }
   form.unit_id = unit.id;
@@ -1537,7 +1289,7 @@ function onPickProduct(
     const lf = Number(line.unit_factor);
     if (!Number.isFinite(lf) || lf <= 0) {
       notify(
-        "معامل وحدة أحد الأسطر غير صالح. أعد اختيار النوع والوحدة.",
+        "عدد الوحدة الأساسية في وحدة أحد الأسطر غير صالح. أعد اختيار النوع والوحدة.",
         "error",
       );
       return;
@@ -1563,8 +1315,7 @@ function onPickProduct(
   form.pack_size_name = real.pack_size_name ?? null;
   form.inventory_mode = real.inventory_mode ?? "convertible";
   onPickUnit(form, selected);
-  // Never auto-collapse: the line stays expanded until the user locks it
-  // explicitly with collapseLine() (إغلاق).
+  // Never auto-collapse: the line stays editable until the user removes it.
   expandedLines.add(form);
   prodSearch.delete(form);
   setProdSearch(form, "");
@@ -1612,8 +1363,20 @@ function stockKey(
 ): string {
   return productId;
 }
-function isExpanded(form: InvoiceProductLine): boolean {
-  return expandedLines.has(form) || !form.product_id;
+function familyModeOf(form: InvoiceProductLine): "convertible" | "independent" | null {
+  return selectedFamily(form)?.inventory_mode ?? form.inventory_mode ?? null;
+}
+function familyUsesVariantsOf(form: InvoiceProductLine): boolean {
+  return selectedFamily(form)?.uses_variants ?? true;
+}
+function showPackPickerOf(form: InvoiceProductLine): boolean {
+  if (familyModeOf(form) !== "independent") return false;
+  return familyUsesVariantsOf(form) === false || !!form.variant_key;
+}
+function onPickGroupFamily(groupKey: string, family: { id: string; name: string } | null | undefined): void {
+  const group = productGroups.value.find((entry) => entry.key === groupKey);
+  const target = group?.lines[0]?.line;
+  if (target) onPickFamily(target, family);
 }
 function expandLine(form: InvoiceProductLine): void {
   expandedLines.add(form);
@@ -1697,6 +1460,13 @@ function packageExceeds(form: InvoiceProductLine): { message: string } | null {
       }
     : null;
 }
+/** Visible error for a quantity draft that never parsed (empty/invalid). */
+function qtyDraftError(form: InvoiceProductLine): string | null {
+  if (!qtyDrafts.has(form)) return null;
+  const text = String(qtyDrafts.get(form) ?? "").trim();
+  if (text === "") return "أدخل الكمية قبل الحفظ.";
+  return "الكمية المدخلة غير صالحة. صحّحها قبل الحفظ.";
+}
 function exceedText(form: InvoiceProductLine): string {
   const info = form.product_id
     ? exceedsByProduct(form.product_id, form.unit_id)
@@ -1707,6 +1477,27 @@ function exceedText(form: InvoiceProductLine): string {
   return `إجمالي المطلوب ${info.need} ${product.base_unit_name || "وحدة أساسية"} يتجاوز المتاح ${info.available} ${product.base_unit_name || "وحدة أساسية"}.`;
 }
 function validateStock(): boolean {
+  // A visible draft that never became a valid quantity must block the save —
+  // never persist the stale valid value while the user sees another one.
+  const pendingDraft = invoiceData.value.products.find(
+    (item) => item.product_id && qtyDrafts.has(item),
+  );
+  if (pendingDraft) {
+    notify("إحدى الكميات المدخلة غير صالحة. صحّحها قبل الحفظ.", "error");
+    return false;
+  }
+  const duplicates = findDuplicateLineIds(invoiceData.value.products);
+  if (duplicates.length) {
+    notify("تكرار في هوية بنود الفاتورة. أعد تحميل الفاتورة وحاول مجددًا.", "error");
+    return false;
+  }
+  const nonPositive = invoiceData.value.products.find(
+    (item) => item.product_id && (!Number.isFinite(Number(item.product_quantity)) || Number(item.product_quantity) <= 0),
+  );
+  if (nonPositive) {
+    notify("أدخل كمية أكبر من صفر لكل صنف قبل الحفظ.", "error");
+    return false;
+  }
   const invalidUnitLine = invoiceData.value.products.find(
     (item) =>
       item.product_id &&
@@ -1781,82 +1572,6 @@ function changeQty(form: InvoiceProductLine, delta: number): void {
 function stepOf(form: InvoiceProductLine): number {
   return selectedUnit(form)?.allows_fractional === true ? 0.01 : 1;
 }
-// Explicit lock: collapse the line, then auto-append a fresh line on top
-// so the entry flow continues (only when no empty line exists).
-function collapseLine(form: InvoiceProductLine): void {
-  if (!form.product_id) {
-    notify("اختر المنتج أولًا قبل إغلاق السطر.", "error");
-    return;
-  }
-  const duplicateLine = invoiceData.value.id
-    ? undefined
-    : invoiceData.value.products.find(
-        (line) =>
-          line !== form &&
-          line.product_id === form.product_id &&
-          line.unit_id === form.unit_id &&
-          Number(line.unit_factor) === Number(form.unit_factor) &&
-          Number(line.product_price) === Number(form.product_price) &&
-          Number(line.product_cost_price ?? 0) ===
-            Number(form.product_cost_price ?? 0) &&
-          String(line.option ?? "") === String(form.option ?? "") &&
-          !line.cost_groups?.length &&
-          !form.cost_groups?.length,
-      );
-  const mergedQuantity =
-    Number(form.product_quantity || 0) +
-    Number(duplicateLine?.product_quantity || 0);
-
-  const formFactor = Number(form.unit_factor);
-  if (!Number.isFinite(formFactor) || formFactor <= 0) {
-    notify("معامل وحدة السطر غير صالح. أعد اختيار الوحدة.", "error");
-    return;
-  }
-  let needBase = round4(mergedQuantity * formFactor);
-  for (const line of invoiceData.value.products) {
-    if (
-      line === form ||
-      line === duplicateLine ||
-      line.product_id !== form.product_id
-    )
-      continue;
-    const lf = Number(line.unit_factor);
-    if (!Number.isFinite(lf) || lf <= 0) {
-      notify("معامل وحدة أحد الأسطر غير صالح. أعد اختيار الوحدة.", "error");
-      return;
-    }
-    needBase = round4(needBase + Number(line.product_quantity || 0) * lf);
-  }
-  const allowedBase = availableBaseOf(form.product_id ?? "");
-  if (needBase - allowedBase > 1e-9) {
-    notify(
-      `إجمالي المطلوب يتجاوز المتاح بالمخزون لمنتج ${form.product_name}.`,
-      "error",
-    );
-    return;
-  }
-
-  let lineToCollapse = form;
-  if (duplicateLine) {
-    duplicateLine.product_quantity = mergedQuantity;
-    duplicateLine.base_quantity = round4(mergedQuantity * formFactor);
-    expandedLines.delete(duplicateLine);
-    lineToCollapse = duplicateLine;
-    const duplicateIndex = invoiceData.value.products.indexOf(form);
-    if (duplicateIndex !== -1)
-      invoiceData.value.products.splice(duplicateIndex, 1);
-    prodSearch.delete(form);
-    qtyDrafts.delete(form);
-  }
-
-  expandedLines.delete(lineToCollapse);
-  if (!invoiceData.value.products.some((l) => !l.product_id)) {
-    const line = emptyLine();
-    invoiceData.value.products.unshift(line);
-    expandedLines.add(line);
-    nextTick(scrollToTop);
-  }
-}
 function removeLine(form: InvoiceProductLine): void {
   if (invoiceData.value.products.length <= 1) return;
   const index = invoiceData.value.products.indexOf(form);
@@ -1865,6 +1580,72 @@ function removeLine(form: InvoiceProductLine): void {
   prodSearch.delete(form);
   qtyDrafts.delete(form);
   invoiceData.value.products.splice(index, 1);
+}
+
+// ---- Product-group view (derived; the flat list stays the source of truth)
+const productGroups = computed(() => groupInvoiceLines(invoiceData.value.products));
+
+function groupTitleOf(group: { familyName: string | null; lines: { line: InvoiceProductLine }[] }): string {
+  return invoiceGroupTitle(group as never);
+}
+
+function cleanupLineState(form: InvoiceProductLine): void {
+  expandedLines.delete(form);
+  prodSearch.delete(form);
+  qtyDrafts.delete(form);
+}
+
+/** Add a «نوع / وحدة» sub-line inside an existing family group. */
+function addSubLine(groupKey: string): void {
+  const group = productGroups.value.find((entry) => entry.key === groupKey);
+  if (!group) return;
+  const first = group.lines[0]?.line;
+  const existingEmpty = group.lines.find(({ line }) => !line.product_id)?.line;
+  if (existingEmpty) {
+    expandLine(existingEmpty);
+    return;
+  }
+  const line = emptyLine();
+  line.family_id = first?.family_id ?? null;
+  line.family_name = first?.family_name ?? null;
+  line.inventory_mode = first?.inventory_mode ?? "convertible";
+  const lastIndex = group.lines.at(-1)?.index ?? invoiceData.value.products.length - 1;
+  invoiceData.value.products.splice(lastIndex + 1, 0, line);
+  expandedLines.add(line);
+}
+
+/** Delete a whole family group (two-step confirm lives in the component). */
+function removeGroup(groupKey: string): void {
+  const group = productGroups.value.find((entry) => entry.key === groupKey);
+  if (!group) return;
+  const doomed = new Set(group.lines.map(({ line }) => line));
+  for (const line of doomed) cleanupLineState(line);
+  invoiceData.value.products = invoiceData.value.products.filter((line) => !doomed.has(line));
+  if (!invoiceData.value.products.length) {
+    const line = emptyLine();
+    invoiceData.value.products = [line];
+    expandedLines.add(line);
+  }
+}
+
+function moveGroupBy(groupKey: string, delta: number): void {
+  const groups = productGroups.value;
+  const from = groups.findIndex((entry) => entry.key === groupKey);
+  if (from < 0) return;
+  invoiceData.value.products = moveGroupOrder(invoiceData.value.products, from, from + delta);
+}
+
+function moveSubLineBy(groupKey: string, from: number, delta: number): void {
+  invoiceData.value.products = moveSubLineOrder(invoiceData.value.products, groupKey, from, from + delta);
+}
+
+/** Legacy lines without line_id get position-based ids matching the server
+ *  `legacy-N` fallback; new drafts keep their stable `draft-*` ids. */
+function backfillLineIds(lines: InvoiceProductLine[]): InvoiceProductLine[] {
+  lines.forEach((line, index) => {
+    if (!line.line_id) line.line_id = `legacy-${index}`;
+  });
+  return ensureStableLineIds(lines);
 }
 
 // Date/time are automatic (now at save / edit refresh) — no inputs.
@@ -2031,7 +1812,7 @@ onMounted(async () => {
       ...src,
       date: new Date(d),
       time: new Date(d),
-      products: src.products?.length ? src.products : [emptyLine()],
+      products: backfillLineIds(src.products?.length ? src.products : [emptyLine()]),
     };
     invoices.invoiceToEdit = undefined;
     setTimeout(() => {

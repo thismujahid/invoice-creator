@@ -520,7 +520,7 @@ function returnMaxQuantity(line: SupplierReturnLine): number {
 }
 function returnPhysicalError(line: SupplierReturnLine): string {
   if (!(line.quantity > 0)) return "";
-  if (!(line.sourceFactor > 0)) return "معامل الوحدة في الفاتورة غير صالح.";
+  if (!(line.sourceFactor > 0)) return "عدد الوحدة الأساسية في وحدة الفاتورة غير صالح.";
   if (line.quantity - returnMaxQuantity(line) > 1e-9) return "الرصيد الفعلي للمكوّن المحدد لا يكفي لهذه الكمية.";
   if (returnBucket(line) === "package") {
     const unit = line.product?.units?.find((entry) => entry.id === returnUnitId(line));
