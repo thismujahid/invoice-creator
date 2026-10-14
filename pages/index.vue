@@ -243,34 +243,18 @@
                   class="w-full"
                   @update:model-value="onPickCustomer"
                 />
-              </div>
-              <FormsCustomer
-                v-model="showCustomerModal"
-                :refresher="loadCustomers"
-                @done="onPickCustomer"
-              />
-              <div
-                v-if="!invoiceData.id && invoiceData.customer_id"
-                aria-live="polite"
-              >
-                <div
-                  v-if="balanceError"
-                  class="flex mb-2 items-center justify-between gap-2 rounded-xl border border-red-200 bg-white p-3 text-sm text-red-600"
+                <UAlert
+                  variant="subtle"
+                  color="warning"
+                  description="جاري تحميل محفظة العميل..."
+                  icon="svg-spinners:ring-resize"
+                  class="p-1 mt-2"
+                  v-if="loadingDebt || creditLoading"
                 >
-                  <span>تعذر تحميل الأرصدة.</span>
-                  <UButton
-                    size="xs"
-                    color="error"
-                    variant="soft"
-                    icon="i-lucide-refresh-cw"
-                    :loading="creditLoading || loadingDebt"
-                    @click="retryBalances"
-                    >إعادة المحاولة</UButton
-                  >
-                </div>
+                </UAlert>
                 <div
                   v-else-if="creditBalance || customerDebt"
-                  class="space-y-2 mb-2"
+                  class="space-y-2 mt-2"
                 >
                   <div class="grid grid-cols-2 gap-2">
                     <div
@@ -320,6 +304,31 @@
                       @update:model-value="setCreditUsed"
                     />
                   </div>
+                </div>
+              </div>
+              <FormsCustomer
+                v-model="showCustomerModal"
+                :refresher="loadCustomers"
+                @done="onPickCustomer"
+              />
+              <div
+                v-if="!invoiceData.id && invoiceData.customer_id"
+                aria-live="polite"
+              >
+                <div
+                  v-if="balanceError"
+                  class="flex mb-2 items-center justify-between gap-2 rounded-xl border border-red-200 bg-white p-3 text-sm text-red-600"
+                >
+                  <span>تعذر تحميل الأرصدة.</span>
+                  <UButton
+                    size="xs"
+                    color="error"
+                    variant="soft"
+                    icon="i-lucide-refresh-cw"
+                    :loading="creditLoading || loadingDebt"
+                    @click="retryBalances"
+                    >إعادة المحاولة</UButton
+                  >
                 </div>
               </div>
               <section
@@ -1178,34 +1187,62 @@ function triggerAltAction(): void {
   for (const line of [...expandedLines]) expandedLines.delete(line);
   focusHeaderFamilySelect();
 }
+/** The invoice line containing keyboard focus, if any. */
+function focusedLine(): InvoiceProductLine | undefined {
+  const active = document.activeElement as HTMLElement | null;
+  const holder = active?.closest?.("[data-line-id]");
+  const id = holder?.getAttribute?.("data-line-id");
+  return id
+    ? invoiceData.value.products.find((line) => line.line_id === id)
+    : undefined;
+}
+/** Alt+D: delete the focused line, else the first open one. */
+function deleteCurrentOpenLine(): void {
+  const line =
+    focusedLine() ??
+    invoiceData.value.products.find(
+      (item) =>
+        item.product_id && isLineComplete(item) && expandedLines.has(item),
+    );
+  if (!line) {
+    notify("لا يوجد بند مفتوح للحذف.", "error");
+    return;
+  }
+  if (invoiceData.value.products.length <= 1) {
+    notify("لا يمكن حذف آخر بند في الفاتورة.", "error");
+    return;
+  }
+  const flat = invoiceData.value.products;
+  const at = flat.indexOf(line);
+  removeLine(line);
+  const next = flat[at] ?? flat[at - 1];
+  if (next) {
+    expandedLines.add(next);
+    focusLineField(next.line_id, "first");
+  } else {
+    focusHeaderFamilySelect();
+  }
+}
 function handleShortcuts(e: KeyboardEvent): void {
   if (!e) return;
-  // Native UModal/USlideover already closes the topmost dialog on Escape —
-  // no custom chain (it would double-close). Other shortcuts never fire
-  // while any dialog is open, and Alt+N never fires while typing.
-  if (e.key === "Alt" && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.repeat) {
-    if (!anyDialogOpen()) altAlone = true;
+  // Lone Alt press (release triggers the Alt action); any other key cancels it.
+  // Alt repeats while held must not clear the pending lone press.
+  if (e.key === "Alt" && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+    if (!e.repeat && !anyDialogOpen()) altAlone = true;
     return;
   }
   altAlone = false;
-  if (anyDialogOpen()) return;
-  const target = e.target as HTMLElement | null;
-  const inField = !!target?.closest?.(
-    "input, textarea, select, [contenteditable]",
-  );
-  if ((e.ctrlKey || e.metaKey) && e.code === "KeyS") {
+  if (anyDialogOpen() || e.repeat) return;
+  // Only Alt-based shortcuts remain (AltGr excluded via ctrlKey).
+  if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  if (e.code === "KeyS") {
     e.preventDefault();
     void saveAndNew();
     return;
   }
-  if ((e.ctrlKey || e.metaKey) && e.code === "Enter") {
+  if (e.code === "KeyD") {
     e.preventDefault();
-    void saveAndPrint();
-    return;
-  }
-  if (e.altKey && e.code === "KeyN" && !inField) {
-    e.preventDefault();
-    addNewForm();
+    deleteCurrentOpenLine();
   }
 }
 const resetConfirmOpen = ref(false);
@@ -1244,7 +1281,19 @@ function focusLineField(
           ? root.querySelector(".grid button, .grid input")
           : (root.querySelector(`[data-field="${field}"] input`) ??
             root.querySelector(".grid button, .grid input"));
-      (target as HTMLElement | null)?.focus?.();
+      const targetEl = target as HTMLElement | null;
+      targetEl?.focus?.();
+      // USelectMenu hands focus back to its own trigger on close, which can
+      // steal ours right after a pick — retry once if focus didn't stick.
+      setTimeout(() => {
+        if (
+          targetEl &&
+          document.activeElement !== targetEl &&
+          !root.contains(document.activeElement)
+        ) {
+          targetEl.focus?.();
+        }
+      }, 150);
     });
   });
 }
@@ -2055,8 +2104,7 @@ function removeLine(form: InvoiceProductLine): void {
 const productGroups = computed(() =>
   groupInvoiceLines(invoiceData.value.products),
 );
-// Review mode: the whole product section collapses into compact rows and the
-// section-title picker takes focus for the next product. No data is touched.
+// Section-title product entry: picking creates a group or revisits one.
 type HeaderFamilyOption = {
   id: string;
   name: string;
@@ -2282,26 +2330,6 @@ async function loadProds(updatePrices?: boolean, force = false): Promise<void> {
     loadingProds.value = false;
   }
 }
-function addNewForm(): void {
-  // New products enter through the section-title picker: refuse while any
-  // draft is still empty, else focus the picker for the next product.
-  // Fresh invoice (nothing chosen yet): just focus the picker, no scolding.
-  if (!hasProductContent.value) {
-    focusHeaderFamilySelect();
-    return;
-  }
-  const incomplete = invoiceData.value.products.find((l) => !l.product_id);
-  if (incomplete) {
-    notify(
-      "عذرًا، يجب أن تُضيف منتجًا في السطر الفارغ أولًا حتى تتمكّن من إضافة منتج جديد للفاتورة.",
-      "error",
-    );
-    expandedLines.add(incomplete);
-    focusLineField(incomplete.line_id);
-    return;
-  }
-  focusHeaderFamilySelect();
-}
 function updateProdsPrices(preserveHistoricalCosts = false): void {
   const productMap = new Map(products.list.map((p) => [p.id, p]));
   invoiceData.value.products.forEach((item) => {
@@ -2426,11 +2454,13 @@ onMounted(async () => {
   }
   /** A mouse press or window blur cancels a pending lone-Alt press. */
 
-  await Promise.all([loadCustomers(), loadProds()]);
+  // Listeners first: shortcuts must work (and unmount cleanly) even while
+  // the initial loads are still pending.
   window.addEventListener("keydown", handleShortcuts);
   window.addEventListener("keyup", handleAltKeyup);
   window.addEventListener("pointerdown", cancelAltAlone);
   window.addEventListener("blur", cancelAltAlone);
+  await Promise.all([loadCustomers(), loadProds()]);
 });
 function cancelAltAlone(): void {
   altAlone = false;
