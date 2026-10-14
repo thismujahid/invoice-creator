@@ -322,18 +322,6 @@
                   </div>
                 </div>
               </div>
-              <!-- <InvoiceSummarySidebar
-                :gross-text="sidebarGrossText"
-                :show-discount="sidebarShowDiscount"
-                :discount-label="sidebarDiscountLabel"
-                :discount-text="sidebarDiscountText"
-                :net-text="sidebarNetText"
-                :show-paid="sidebarShowPaid"
-                :paid-text="sidebarPaidText"
-                :remaining-text="sidebarRemainingText"
-                :show-credit-used="sidebarShowCreditUsed"
-                :credit-used-text="sidebarCreditUsedText"
-              /> -->
               <section
                 v-if="!loadingProds"
                 aria-label="الخصم والدفع"
@@ -1161,7 +1149,6 @@ async function fetchCustomerDebt(
 }
 function anyDialogOpen(): boolean {
   return (
-    shortcutsOpen.value ||
     previewOpen.value ||
     cashierReceiptOpen.value ||
     cashierCostConfirmOpen.value ||
@@ -1221,7 +1208,6 @@ function handleShortcuts(e: KeyboardEvent): void {
     addNewForm();
   }
 }
-const shortcutsOpen = ref(false);
 const resetConfirmOpen = ref(false);
 const shortagesOpen = ref(false);
 
@@ -1602,14 +1588,17 @@ function onPickProduct(
     );
     return;
   }
-  // Same product + same unit picked twice: merge the quantities into the
-  // existing line instead of repeating it.
-  const duplicate = invoiceData.value.products.find(
-    (line) =>
-      line !== form &&
-      line.product_id === real.id &&
-      line.unit_id === selected.id,
-  );
+  // Same product + same unit picked twice (with a real quantity): merge the
+  // quantities into the existing line instead of repeating it.
+  const duplicate =
+    wanted > 0
+      ? invoiceData.value.products.find(
+          (line) =>
+            line !== form &&
+            line.product_id === real.id &&
+            line.unit_id === selected.id,
+        )
+      : undefined;
   if (duplicate) {
     duplicate.product_quantity = round4(
       Number(duplicate.product_quantity || 0) + wanted,
@@ -1707,7 +1696,25 @@ function onPickGroupFamily(
 ): void {
   const group = productGroups.value.find((entry) => entry.key === groupKey);
   const target = group?.lines[0]?.line;
-  if (target) onPickFamily(target, family);
+  if (!target || !family) {
+    if (target) onPickFamily(target, family);
+    return;
+  }
+  // Retargeting an empty draft to an already-added family: join that group
+  // instead of duplicating it.
+  const isDraft = !target.product_id;
+  const existing = productGroups.value.find(
+    (entry) =>
+      entry.key !== groupKey &&
+      entry.familyId === family.id &&
+      entry.lines.some(({ line }) => line.product_id),
+  );
+  if (isDraft && existing) {
+    notify("هذا المنتج مضاف بالفعل — تم الانتقال إليه.", "info");
+    scrollToGroupAndExpand(existing.key);
+    return;
+  }
+  onPickFamily(target, family);
 }
 /** One-line hint for sellable variants hidden only by zero stock (H6). */
 function hiddenVariantHintOf(form: InvoiceProductLine): string | null {
@@ -1808,37 +1815,6 @@ function variantHintOf(line: InvoiceProductLine): string | null {
     return "لا توجد نتائج مطابقة للبحث.";
   return null;
 }
-// Sidebar mirror (read-only; every figure is computed here, never inside).
-const sidebarGrossText = computed(() =>
-  formatePrice(calcTotal(invoiceData.value)),
-);
-const sidebarShowDiscount = computed(() => !!invoiceData.value.discount);
-const sidebarDiscountLabel = computed(() =>
-  invoiceData.value.discount_percentage
-    ? `${invoiceData.value.discount}%`
-    : "مبلغ ثابت",
-);
-const sidebarDiscountText = computed(() => formatePrice(discountAmount.value));
-const sidebarNetText = computed(() => formatePrice(totalOfInvoice.value));
-const sidebarShowPaid = computed(
-  () =>
-    invoiceData.value.paid_amount !== null &&
-    invoiceData.value.paid_amount !== undefined,
-);
-const sidebarPaidText = computed(() =>
-  formatePrice(Number(invoiceData.value.paid_amount ?? 0)),
-);
-const sidebarRemainingText = computed(() =>
-  formatePrice(
-    totalOfInvoice.value - Number(invoiceData.value.paid_amount ?? 0),
-  ),
-);
-const sidebarShowCreditUsed = computed(
-  () => !!Number(invoiceData.value.credit_used || 0),
-);
-const sidebarCreditUsedText = computed(() =>
-  formatePrice(Number(invoiceData.value.credit_used || 0)),
-);
 // Live stock info per line (reactive to store + typed qty).
 // Canonical: one base balance per product; needs aggregate across ALL units.
 function stockLabelOf(form: InvoiceProductLine): string {

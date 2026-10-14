@@ -82,11 +82,6 @@ const open = computed({
 });
 const internalOpen = ref(false);
 
-function openDialog(): void {
-  submitError.value = "";
-  errors.value = {};
-  open.value = true;
-}
 function closeDialog(): void {
   open.value = false;
 }
