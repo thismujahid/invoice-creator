@@ -1,17 +1,19 @@
 <template>
   <span class="inline-flex" @click="open = true"><slot /></span>
   <UiAppDialog v-model:open="open" :title="edit ? 'تعديل المنتج' : 'إضافة منتج'" width="sm:max-w-[760px]">
-    <div class="space-y-4">
+    <div class="space-y-5">
       <UFormField label="اسم المنتج" required :error="nameError || undefined">
         <UInput v-model="name" placeholder="مثال: شاي" size="lg" class="w-full" :disabled="saving" />
       </UFormField>
-      <UFormField label="طريقة المخزون" required :error="modeError || undefined">
-        <USelect :model-value="inventoryMode" :items="inventoryModeItems" value-key="value" label-key="label" size="lg" class="w-full" :disabled="saving || hasRecordedActivity" @update:model-value="changeInventoryMode" />
-        <p class="mt-1 text-xs text-gray-500">{{ inventoryMode === 'independent' ? 'كل حجم عبوة صنف مستقل برصيده وتكلفته وأسعاره.' : 'الوحدات بدائل لنفس المخزون ويمكن فتح العبوات عند البيع.' }}</p>
-        <p v-if="hasRecordedActivity" class="mt-1 text-xs text-amber-700">طريقة المخزون ثابتة بعد تسجيل رصيد أو حركة.</p>
-      </UFormField>
-      <USwitch :model-value="usesVariants" @update:model-value="changeVariantMode" label="استخدام الأنواع" :disabled="saving || typeCount > 1" />
-      <p v-if="typeCount > 1" class="text-xs text-gray-500">هذا المنتج يحتوي على عدة أنواع مستقلة.</p>
+      <div class="space-y-3 rounded-lg border border-slate-200 p-3">
+        <UFormField :error="modeError || undefined">
+          <URadioGroup :model-value="inventoryMode" :items="inventoryModeItems" legend="طريقة المخزون" variant="card" size="sm" color="success" :disabled="saving || hasRecordedActivity" :ui="{ fieldset: 'grid grid-cols-1 gap-2 sm:grid-cols-2', item: 'min-h-16 p-3' }" @update:model-value="changeInventoryMode" />
+        </UFormField>
+        <p v-if="hasRecordedActivity" class="text-xs text-amber-700">طريقة المخزون ثابتة بعد تسجيل حركة.</p>
+        <div class="border-t border-slate-100 pt-3">
+          <USwitch :model-value="usesVariants" @update:model-value="changeVariantMode" label="أنواع متعددة للمنتج" :disabled="saving || typeCount > 1" />
+        </div>
+      </div>
 
       <template v-if="inventoryMode === 'convertible'">
         <template v-if="usesVariants">
@@ -19,9 +21,8 @@
             <h3 class="font-semibold">الأنواع</h3>
             <UButton icon="i-lucide-plus" :disabled="saving || variants.length >= 40" @click="editVariant()">إضافة نوع</UButton>
           </div>
-          <p class="text-xs text-gray-500">تُحفظ جميع الأنواع عند الضغط على «حفظ المنتج».</p>
-          <UEmpty v-if="!variants.length" title="أضف أول نوع" description="حدّد اسمه ووحداته وأسعاره وتنبيهاته." />
-          <div v-for="(variant, index) in variants" :key="variant.id || index" class="flex items-center justify-between gap-3 rounded-xl border border-gray-200 p-3">
+          <UEmpty v-if="!variants.length" title="لا توجد أنواع بعد" description="أضف نوعًا وحدد وحداته وأسعاره." />
+          <div v-for="(variant, index) in variants" :key="variant.id || index" class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 p-3">
             <div><h4 class="font-semibold">{{ variant.variant_name }}</h4><p class="text-xs text-gray-500">{{ activeUnitNames(variant) }}</p></div>
             <div class="flex flex-wrap gap-2"><UButton variant="soft" color="neutral" icon="i-lucide-pencil" :disabled="saving" @click="editVariant(index)">تعديل النوع</UButton><UButton v-if="!variant.id" variant="ghost" color="error" :disabled="saving" @click="variants.splice(index, 1)">إزالة</UButton></div>
           </div>
@@ -31,11 +32,11 @@
 
       <template v-else>
         <div class="flex items-center justify-between gap-2">
-          <div><h3 class="font-semibold">{{ usesVariants ? 'الأنواع وأحجام العبوات' : 'أحجام العبوات' }}</h3><p class="text-xs text-gray-500">250 جرام (ربع) و125 جرام (ثمن) و100 جرام أرصدة مستقلة ولا يتحول أحدها إلى الآخر.</p></div>
+          <h3 class="font-semibold">{{ usesVariants ? 'الأنواع وأحجام العبوات' : 'أحجام العبوات' }}</h3>
           <UButton v-if="usesVariants" class="shrink-0 whitespace-nowrap" icon="i-lucide-plus" :disabled="saving || typeDrafts.length >= 40" @click="editType()">إضافة نوع</UButton>
           <UButton v-else icon="i-lucide-plus" :disabled="saving || variants.length >= 40" @click="editPack('default')">إضافة حجم</UButton>
         </div>
-        <UEmpty v-if="usesVariants && !typeDrafts.length" title="أضف أول نوع" description="بعد تسمية النوع أضف أحجام العبوات الخاصة به." />
+        <UEmpty v-if="usesVariants && !typeDrafts.length" title="لا توجد أنواع بعد" description="أضف نوعًا ثم حجم عبوة له." />
         <section v-for="type in visibleTypes" :key="type.key" class="space-y-3 rounded-xl border border-gray-200 p-3">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <div><h4 v-if="usesVariants" class="font-semibold">{{ type.name }}</h4><p v-if="usesVariants" class="text-xs text-gray-500">{{ type.products.length === 1 ? 'حجم عبوة واحد' : `${type.products.length} أحجام عبوات` }}</p></div>
@@ -46,12 +47,11 @@
             </div>
           </div>
           <UEmpty v-if="!type.products.length" title="لا توجد أحجام" description="أضف حجم عبوة واحدًا على الأقل لهذا النوع." />
-          <div v-for="product in type.products" :key="product.id || `${type.key}-${product.pack_size_name}`" class="flex items-center justify-between gap-3 rounded-lg border border-gray-100 p-3">
+          <div v-for="product in type.products" :key="product.id || `${type.key}-${product.pack_size_name}`" class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-100 p-3">
             <div><h5 class="font-semibold">{{ product.pack_size_name }}</h5><p class="text-xs text-gray-500">{{ activeUnitNames(product) }}</p></div>
             <div class="flex flex-wrap gap-2"><UButton size="sm" color="neutral" variant="soft" icon="i-lucide-pencil" @click="editPack(type.key, variants.indexOf(product))">تعديل الحجم</UButton><UButton v-if="!product.id" size="sm" color="error" variant="ghost" @click="variants.splice(variants.indexOf(product), 1)">إزالة</UButton></div>
           </div>
         </section>
-        <p v-if="variants.length" class="text-xs text-gray-500">الأنواع والأحجام مسودة حتى تضغط «حفظ المنتج».</p>
       </template>
       <UAlert v-if="error" color="error" :title="error" />
     </div>
@@ -96,7 +96,10 @@ const typeError = ref("");
 const typeEditingKey = ref<string | null>(null);
 const editorKey = ref(0);
 const defaultEditor = ref<{ getDraft: () => Product | null } | null>(null);
-const inventoryModeItems = [{ label: "سايب قابل للتحويل", value: "convertible" }, { label: "عبوات مستقلة", value: "independent" }];
+const inventoryModeItems = [
+  { label: "رصيد مشترك", description: "وحدات مختلفة من نفس المخزون", value: "convertible" },
+  { label: "أحجام مستقلة", description: "لكل حجم رصيد وسعر خاص", value: "independent" },
+];
 const open = computed({ get: () => props.modelValue ?? internalOpen.value, set: (value: boolean) => { if (saving.value) return; internalOpen.value = value; emit("update:modelValue", value); if (!value) emit("close"); } });
 function copy(product: Product): Product { return JSON.parse(JSON.stringify(product)) as Product; }
 function newTypeKey(): string { return typeof crypto !== "undefined" && "randomUUID" in crypto ? `type_${crypto.randomUUID()}` : `type_${Date.now()}_${Math.random().toString(36).slice(2)}`; }
@@ -198,8 +201,9 @@ async function save(): Promise<void> {
     variants.value = variants.value.map(product => { const products = variants.value.filter(entry => entry.variant_key === product.variant_key); return { ...product, variant_order: typeOrder.get(product.variant_key || "default") ?? 0, pack_size_order: products.indexOf(product) }; });
   }
   saving.value = true;
-  try { await store.saveProductFamily({ family_id: props.edit?.family_id || undefined, family_name: name.value.trim(), uses_variants: usesVariants.value, inventory_mode: inventoryMode.value, variants: variants.value }); await props.refresher(); emit("done"); open.value = false; }
-  catch (cause) { error.value = cause instanceof Error ? cause.message : "تعذر حفظ المنتج. بياناتك محفوظة في النموذج؛ حاول مرة أخرى."; }
+  try { await store.saveProductFamily({ family_id: props.edit?.family_id || undefined, family_name: name.value.trim(), uses_variants: usesVariants.value, inventory_mode: inventoryMode.value, variants: variants.value }); await props.refresher(); emit("done"); }
+  catch (cause) { error.value = cause instanceof Error ? cause.message : "تعذر حفظ المنتج. بياناتك محفوظة في النموذج؛ حاول مرة أخرى."; return; }
   finally { saving.value = false; }
+  open.value = false;
 }
 </script>

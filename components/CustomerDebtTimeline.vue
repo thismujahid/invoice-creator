@@ -1,8 +1,8 @@
 <template>
   <div class="space-y-5" dir="rtl">
     <div class="grid grid-cols-2 gap-3 text-sm">
-      <div class="rounded-xl border border-red-100 bg-red-50/60 px-4 py-3"><span class="block text-xs text-red-700">عليه الآن</span><b class="mt-1 block text-base text-red-800">{{ formatePrice(totalDebt) }} ج</b></div>
-      <div class="rounded-xl border border-emerald-100 bg-emerald-50/60 px-4 py-3"><span class="block text-xs text-emerald-700">له الآن</span><b class="mt-1 block text-base text-emerald-800">{{ formatePrice(creditBalance) }} ج</b></div>
+      <div class="rounded-xl border border-red-100 bg-red-50/60 px-4 py-3"><span class="block text-xs text-red-700">عليه الآن</span><b class="mt-1 block text-base text-red-800">{{ formatePrice(totalDebt) }}</b></div>
+      <div class="rounded-xl border border-emerald-100 bg-emerald-50/60 px-4 py-3"><span class="block text-xs text-emerald-700">له الآن</span><b class="mt-1 block text-base text-emerald-800">{{ formatePrice(creditBalance) }}</b></div>
     </div>
     <div class="flex justify-end"><UButton icon="i-lucide-refresh-cw" color="neutral" variant="ghost" size="sm" :loading="loading" @click="load">تحديث السجل</UButton></div>
     <UAlert v-if="error" color="error" variant="soft" :title="error" />
@@ -17,7 +17,7 @@
         <div class="min-w-0 rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <div class="flex min-w-0 items-center gap-2"><UIcon :name="icon(item)" class="size-4 shrink-0" :class="textColor(item)" /><span class="font-semibold leading-6 text-gray-900">{{ label(item) }}</span></div>
-            <strong class="whitespace-nowrap text-base tabular-nums" :class="textColor(item)">{{ formatePrice(item.amount) }} ج</strong>
+            <strong class="whitespace-nowrap text-base tabular-nums" :class="textColor(item)">{{ formatePrice(item.amount) }}</strong>
           </div>
           <time class="mt-1 block text-sm text-gray-600">{{ formatDate(item.date) }}</time>
           <p v-if="item.detail" class="mt-2 text-xs leading-5 text-gray-600">{{ item.detail }}</p>

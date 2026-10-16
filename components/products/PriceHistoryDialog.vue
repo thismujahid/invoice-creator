@@ -9,7 +9,7 @@
         :key="`${record.at}-${index}`"
         class="flex items-center justify-between gap-2 rounded-lg border border-gray-100 p-2 text-sm"
       >
-        <b>{{ formatePrice(record.price) }} ج</b>
+        <b>{{ formatePrice(record.price) }}</b>
         <span class="text-xs text-gray-500">{{ formatDate(record.at) }}</span>
       </div>
       <p class="text-xs text-gray-400">الأحدث أولاً · يُحفظ آخر {{ cap }} سعرًا للمرجعية.</p>

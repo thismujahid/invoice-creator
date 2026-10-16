@@ -5,7 +5,7 @@
       <div class="space-y-3" dir="rtl">
         <USkeleton v-if="loading" class="h-16 w-full" />
         <template v-else>
-          <div class="rounded-lg bg-emerald-50 p-3 text-sm">الرصيد المتاح للعميل: <strong>{{ formatePrice(balance) }} ج</strong></div>
+          <div class="rounded-lg bg-emerald-50 p-3 text-sm">الرصيد المتاح للعميل: <strong>{{ formatePrice(balance) }}</strong></div>
           <UFormField label="المبلغ المصروف نقدًا"><UInputNumber v-model="amount" :min="0" :max="balance" :step="0.01" class="w-full" /></UFormField>
           <p class="text-xs text-gray-500">سيُخصم من رصيد العميل والخزنة معًا. لن تتغير قيمة الفاتورة الأصلية.</p>
           <UAlert v-if="error" color="error" variant="soft" :title="error" />

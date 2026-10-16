@@ -24,9 +24,9 @@
       </tbody>
     </table>
     <div class="supplier-invoice-footer">
-      <div><strong>الإجمالي/</strong><span>{{ formatePrice(invoice.total_amount) }} ج</span></div>
-      <div><strong>المدفوع/</strong><span>{{ formatePrice(invoice.paid_amount) }} ج</span></div>
-      <div><strong>المتبقي/</strong><span>{{ formatePrice(invoice.remaining_amount) }} ج</span></div>
+      <div><strong>الإجمالي/</strong><span>{{ formatePrice(invoice.total_amount) }}</span></div>
+      <div><strong>المدفوع/</strong><span>{{ formatePrice(invoice.paid_amount) }}</span></div>
+      <div><strong>المتبقي/</strong><span>{{ formatePrice(invoice.remaining_amount) }}</span></div>
     </div>
     <div class="no-print mt-3">
       <UButton class="w-full" color="success" icon="i-lucide-printer" :loading="printing" @click="printInvoice">طباعة الفاتورة</UButton>

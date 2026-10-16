@@ -4,7 +4,7 @@
     dir="rtl"
   >
     <div class="text-center">
-      <h2 class="text-xl font-bold text-gray-900">قريتي</h2>
+      <h1 class="text-2xl font-bold text-gray-900">قريتي</h1>
       <p class="mt-1 text-sm text-gray-500">سجّل الدخول للمتابعة إلى التطبيق</p>
       <p v-if="isOffline" class="mt-2 text-sm font-semibold text-red-600">
         لا يوجد اتصال بالإنترنت — تحقق من الشبكة ثم أعد المحاولة

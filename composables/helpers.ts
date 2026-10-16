@@ -1,20 +1,7 @@
 import type { Invoice, InvoiceProductLine } from "~/types";
+import { formatPrice } from "./usePriceFormat";
 
-export function formatePrice(price: unknown): string {
-  if (price === null || price === undefined || price === "") return "0.00";
-  const num = Number(price);
-  if (!Number.isFinite(num)) return "0.00";
-  try {
-    const formatter = new Intl.NumberFormat("en-US", {
-      maximumFractionDigits: 2,
-      minimumFractionDigits: 2,
-      style: "decimal",
-    });
-    return formatter.format(num);
-  } catch {
-    return num.toFixed(2);
-  }
-}
+export { formatPrice as formatePrice } from "./usePriceFormat";
 
 export function formatDate(date: unknown, options?: { time?: boolean }): string {
   if (!date) return "-";
@@ -138,7 +125,7 @@ export async function useDownloadPDF(elementId: string, fileName: string): Promi
 }
 
 export const useHelpers = () => ({
-  formatePrice,
+  formatePrice: formatPrice,
   formatDate,
   formatTime12Hour,
   useDownloadPDF,

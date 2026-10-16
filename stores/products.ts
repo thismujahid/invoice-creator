@@ -33,8 +33,10 @@ export const useProductsStore = defineStore("products", () => {
   const syncPendingWrites = ref(false);
   const syncError = ref<string | null>(null);
   let pendingProductSave: { fingerprint: string; requestId: string } | null = null;
+  let cashierFetchGeneration = 0;
 
   const productsById = computed(() => new Map(list.value.filter((p) => p.id).map((p) => [p.id as string, p])));
+  const familyById = computed(() => new Map(families.value.filter((family) => family.id).map((family) => [family.id as string, family])));
   const activeProducts = computed(() => list.value.filter((p) => p.is_active !== false));
   const lowStockProducts = computed(() => activeProducts.value.filter((p) => isLowStock(p)));
   const outOfStockProducts = computed(() => activeProducts.value.filter((p) => isOutOfStock(p) && hasShortageAlert(p)));
@@ -48,7 +50,7 @@ export const useProductsStore = defineStore("products", () => {
 
   function presentProduct(id: string, data: Record<string, unknown>): Product {
     const familyId = typeof data.family_id === "string" ? data.family_id : null;
-    const family = families.value.find((entry) => entry.id === familyId);
+    const family = familyId ? familyById.value.get(familyId) : undefined;
     const familyName = family?.name || (typeof data.family_name === "string" ? data.family_name : "");
     const variantName = typeof data.variant_name === "string" ? data.variant_name : String(data.name || "");
     const inventoryMode = data.inventory_mode === "independent" ? "independent" : "convertible";
@@ -82,9 +84,12 @@ export const useProductsStore = defineStore("products", () => {
   }
 
   function refreshNames(): void {
-    list.value = list.value.map((product) => product.id
-      ? presentProduct(product.id, product as unknown as Record<string, unknown>)
-      : product);
+    const next = list.value.map((product) => {
+      if (!product.id) return product;
+      const familyName = (product.family_id ? familyById.value.get(product.family_id)?.name : null) || product.family_name || "";
+      return familyName === product.family_name ? product : presentProduct(product.id, product as unknown as Record<string, unknown>);
+    });
+    if (next.some((product, index) => product !== list.value[index])) list.value = next;
   }
 
   function ensureInventorySubscription(): void {
@@ -119,21 +124,23 @@ export const useProductsStore = defineStore("products", () => {
         if (session !== inventorySession || !inventoryUnsub) return;
         const nextUid = useFirebase().auth.currentUser?.uid ?? null;
         if (nextUid !== uid) return;
-        for (const change of snap.docChanges()) {
-          const item = presentProduct(change.doc.id, change.doc.data() as Record<string, unknown>);
-          if (change.type === "removed") {
-            list.value = list.value.filter((p) => p.id !== item.id);
-          } else {
-            const index = list.value.findIndex((p) => p.id === item.id);
-            if (index < 0) list.value = [...list.value, item];
-            else list.value = list.value.map((p) => (p.id === item.id ? item : p));
+        const changes = snap.docChanges();
+        if (changes.length) {
+          const next = new Map(list.value.map((product) => [product.id, product]));
+          for (const change of changes) {
+            if (change.type === "removed") {
+              next.delete(change.doc.id);
+            } else {
+              next.set(change.doc.id, presentProduct(change.doc.id, change.doc.data() as Record<string, unknown>));
+            }
           }
+          list.value = Array.from(next.values());
         }
         loaded.value = true;
         inventoryReady.value = true;
         lastFetchedAt.value = Date.now();
         syncPendingWrites.value = snap.metadata.hasPendingWrites;
-        inventorySyncState.value = snap.metadata.fromCache ? "cache" : "live";
+        inventorySyncState.value = syncError.value ? "error" : snap.metadata.fromCache ? "cache" : "live";
       },
       (error) => {
         if (session !== inventorySession) return;
@@ -158,6 +165,7 @@ export const useProductsStore = defineStore("products", () => {
 
   function clearInventory(): void {
     stopInventorySubscription();
+    cashierFetchGeneration += 1;
     inventoryUid = null;
     list.value = [];
     families.value = [];
@@ -170,9 +178,12 @@ export const useProductsStore = defineStore("products", () => {
   const fetchProducts = async (filters?: Record<string, string | number | boolean | Date | null | undefined>, force = false): Promise<boolean> => {
     if (authStore.role === "cashier") {
       if (!force && loaded.value && Date.now() - lastFetchedAt.value < 15_000) return true;
+      const generation = ++cashierFetchGeneration;
+      const session = inventorySession;
       inventorySyncState.value = "loading";
       try {
         const response = await callStaff<Record<string, never>, { items: Product[] }>("getCashierCatalog", {});
+        if (generation !== cashierFetchGeneration || session !== inventorySession || authStore.role !== "cashier") return false;
         list.value = response.items.map((product) => ({ ...product, cost_price: null }));
         loaded.value = true;
         inventoryReady.value = true;
@@ -181,9 +192,10 @@ export const useProductsStore = defineStore("products", () => {
         syncError.value = null;
         return true;
       } catch (error) {
+        if (generation !== cashierFetchGeneration || session !== inventorySession || authStore.role !== "cashier") return false;
         syncError.value = error instanceof Error ? error.message : "تعذر تحميل المنتجات";
         inventorySyncState.value = "error";
-        throw error;
+        return false;
       }
     }
     const filtered = !!filters && Object.values(filters).some((value) => value !== undefined && value !== null && value !== "");
@@ -191,12 +203,23 @@ export const useProductsStore = defineStore("products", () => {
     if (inventoryUnsub) return true;
     if (!force && loaded.value && Date.now() - lastFetchedAt.value < 30_000) return true;
     const session = inventorySession;
-    const [items, familyItems] = await Promise.all([
-      readFrom<Product>("products", {}),
-      readFrom<ProductFamily>("product_families", {}),
-    ]);
+    let items: Product[];
+    let familyItems: ProductFamily[];
+    try {
+      [items, familyItems] = await Promise.all([
+        readFrom<Product>("products", {}),
+        readFrom<ProductFamily>("product_families", {}),
+      ]);
+    } catch {
+      if (session !== inventorySession || authStore.role !== "admin" || inventoryUnsub) return false;
+      syncError.value = "تعذر تحميل المنتجات. تحقق من الاتصال ثم أعد المحاولة.";
+      inventorySyncState.value = "error";
+      return false;
+    }
+    if (session !== inventorySession || authStore.role !== "admin") return false;
+    if (inventoryUnsub) return true;
     families.value = familyItems;
-    if (session !== inventorySession || inventoryUnsub) return true;
+    syncError.value = null;
     list.value = items.map((product) => presentProduct(product.id || "", product as unknown as Record<string, unknown>));
     loaded.value = true;
     inventoryReady.value = true;

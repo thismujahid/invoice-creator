@@ -1,36 +1,30 @@
 <template>
-  <UModal
-    :open="true"
-    :dismissible="!!title"
-    :title="title || 'تسجيل الدخول'"
-    @update:open="(v: any) => !v && emit('close')"
-  >
-    <template #body>
-      <div class="space-y-4 text-center" dir="rtl">
+  <div class="w-full rounded-xl border border-slate-200 bg-white p-5 sm:p-6" dir="rtl">
+      <div class="space-y-4 text-center">
         <div class="text-start">
           <div class="mb-1.5 text-sm font-medium text-gray-700">نوع الحساب</div>
           <div
-            role="tablist"
+            role="group"
             aria-label="نوع الحساب"
             class="grid grid-cols-2 rounded-lg bg-gray-100 p-1"
           >
             <UButton
-              role="tab"
               color="neutral"
               :variant="selectedRole === 'cashier' ? 'solid' : 'ghost'"
               block
               :disabled="loading"
-              :aria-selected="selectedRole === 'cashier'"
+              :aria-pressed="selectedRole === 'cashier'"
+              class="min-h-11"
               @click="selectedRole = 'cashier'"
               >كاشير</UButton
             >
             <UButton
-              role="tab"
               color="neutral"
               :variant="selectedRole === 'admin' ? 'solid' : 'ghost'"
               block
               :disabled="loading"
-              :aria-selected="selectedRole === 'admin'"
+              :aria-pressed="selectedRole === 'admin'"
+              class="min-h-11"
               @click="selectedRole = 'admin'"
               >مسؤول</UButton
             >
@@ -50,7 +44,8 @@
             autofocus
             dir="ltr"
             size="lg"
-            class="justify-center"
+            class="justify-center [&_input]:min-h-11 [&_input]:min-w-11"
+            aria-label="رمز الدخول المكوّن من ستة أرقام"
             :disabled="loading"
             @complete="login"
           />
@@ -60,6 +55,7 @@
           block
           :loading="loading"
           :disabled="loading"
+          class="min-h-11"
           @click="login"
           >تسجيل الدخول</UButton
         >
@@ -74,8 +70,7 @@
           >
         </div>
       </div>
-    </template>
-  </UModal>
+  </div>
 </template>
 
 <script setup lang="ts">

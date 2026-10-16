@@ -133,8 +133,8 @@
                   <UFormField :label="`الكمية (${row.unitName || row.requestedUnitName || 'الوحدة'})`"
                     ><UInputNumber
                       v-model="row.quantity"
-                      :min="0.0001"
-                      :step="selectedUnit(row)?.allows_fractional ? 0.0001 : 1"
+                      :min="selectedUnit(row)?.allows_fractional === true ? 0.0001 : 1"
+                      :step="selectedUnit(row)?.allows_fractional === true ? 0.0001 : 1"
                       class="w-full"
                   /></UFormField>
                   <UFormField :label="`تكلفة ${row.unitName || row.requestedUnitName || 'الوحدة'}`"
@@ -187,7 +187,7 @@
               <span
                 >{{ row.name }} · {{ row.quantity ?? "—" }}
                 {{ row.unitName || row.requestedUnitName }} ×
-                {{ formatePrice(row.unitCost) }} ج</span>
+                {{ formatePrice(row.unitCost) }}</span>
               <span
                 :class="
                   rowErrors(row).length ? 'text-red-600' : 'text-emerald-700'
@@ -201,21 +201,21 @@
           >
             <div class="space-y-1 text-sm">
               <div class="flex justify-between gap-2">
-                <span>إجمالي الفاتورة</span><b>{{ formatePrice(total) }} ج</b>
+                <span>إجمالي الفاتورة</span><b>{{ formatePrice(total) }}</b>
               </div>
               <div class="flex justify-between gap-2">
-                <span>رصيد الخزنة</span><b>{{ formatePrice(cashBalance) }} ج</b>
+                <span>رصيد الخزنة</span><b>{{ formatePrice(cashBalance) }}</b>
               </div>
               <div class="flex justify-between gap-2">
                 <span>الباقي المستحق</span
-                ><b class="text-amber-700">{{ formatePrice(remaining) }} ج</b>
+                ><b class="text-amber-700">{{ formatePrice(remaining) }}</b>
               </div>
               <div
                 v-if="paidNow > total"
                 class="flex justify-between gap-2 text-blue-700"
               >
                 <span>سلفة مستحقة لنا</span
-                ><b>{{ formatePrice(paidNow - total) }} ج</b>
+                ><b>{{ formatePrice(paidNow - total) }}</b>
               </div>
             </div>
             <UFormField label="المدفوع الآن" :error="paidError || undefined"
@@ -328,22 +328,22 @@
         />
         <div class="space-y-1 rounded-lg bg-gray-50 p-3 text-sm">
           <div class="flex justify-between">
-            <span>الإجمالي</span><b>{{ formatePrice(result.total) }} ج</b>
+            <span>الإجمالي</span><b>{{ formatePrice(result.total) }}</b>
           </div>
           <div class="flex justify-between">
             <span>المدفوع للفاتورة</span
-            ><b>{{ formatePrice(result.paid) }} ج</b>
+            ><b>{{ formatePrice(result.paid) }}</b>
           </div>
           <div v-if="result.advance" class="flex justify-between">
             <span>الخارج من الخزنة</span
-            ><b>{{ formatePrice(result.paid + result.advance) }} ج</b>
+            ><b>{{ formatePrice(result.paid + result.advance) }}</b>
           </div>
           <div class="flex justify-between">
-            <span>الباقي</span><b>{{ formatePrice(result.remaining) }} ج</b>
+            <span>الباقي</span><b>{{ formatePrice(result.remaining) }}</b>
           </div>
           <div v-if="result.advance" class="flex justify-between text-blue-700">
             <span>سلفة مستحقة لنا</span
-            ><b>{{ formatePrice(result.advance) }} ج</b>
+            ><b>{{ formatePrice(result.advance) }}</b>
           </div>
         </div>
         <div class="break-all text-xs text-gray-500">فاتورة الشراء:</div>
@@ -834,7 +834,7 @@ async function submit(): Promise<void> {
     await nextTick();
     stageIndex.value = stageSteps.value.length - 2;
     stageTitle.value = "جاري حفظ فاتورة المورد…";
-    stageSubtitle.value = `${items.length} صنفًا · ${formatePrice(total.value)} ج`;
+    stageSubtitle.value = `${items.length} صنفًا · ${formatePrice(total.value)}`;
     const intent = JSON.stringify({ file: fileHash.value, items, supplier: supplier.value?.id, paid: paidNow.value, reference: supplierRef.value.trim(), note: note.value.trim() });
     const intentDigest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(intent));
     const operationKey = [...new Uint8Array(intentDigest)].map((value) => value.toString(16).padStart(2, "0")).join("");

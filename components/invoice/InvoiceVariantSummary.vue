@@ -8,7 +8,7 @@
       <strong class="min-w-0 truncate text-sm text-gray-900" :title="title">{{ title }}</strong>
       <span class="text-xs text-gray-500">{{ qtyText }} {{ unitName }}</span>
       <span class="text-xs text-gray-500" dir="ltr">{{ priceText }}</span>
-      <span class="text-sm font-extrabold tabular-nums">{{ totalText }} ج</span>
+      <span class="text-sm font-extrabold tabular-nums">{{ totalText }}</span>
     </div>
     <div class="flex shrink-0 items-center gap-1" role="group" :aria-label="`إجراءات ${title}`">
       <UButton

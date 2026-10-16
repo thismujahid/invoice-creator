@@ -2,6 +2,8 @@ import { collection, doc, getDocs, limit, orderBy, query, startAfter, where, typ
 import type {
   PurchaseInvoice,
   PurchaseInvoiceItem,
+  PurchaseExpenseType,
+  PurchaseExpenseAllocationMethod,
   SupplierPayment,
   SupplierAdvance,
 } from "~/types/finance";
@@ -41,6 +43,18 @@ export interface ExecutePurchaseInput {
   invoice_number?: string | null;
   source?: "manual" | "excel_import" | "repeat";
   items: PurchaseItemInput[];
+  expenses?: Array<{
+    id: string;
+    type: PurchaseExpenseType;
+    description?: string | null;
+    amount: number;
+    allocation_method: PurchaseExpenseAllocationMethod;
+    capitalize: boolean;
+    paid: boolean;
+    recipient?: string | null;
+    allocations?: number[];
+    confirmTipCapitalization?: boolean;
+  }>;
   paidNow: number;
   note?: string | null;
 }
@@ -55,6 +69,7 @@ export interface ExecutePurchaseResult {
   remaining?: number;
   fullyPaid?: boolean;
   advance?: number;
+  purchaseOutlay?: number;
   stale?: {
     product_id: string;
     product_name: string;
@@ -123,8 +138,23 @@ export const usePurchasing = defineStore("purchasing", () => {
     const total = round2(items.reduce((s, it) => s + round2(toNum(it.quantity) * toNum(it.unit_cost)), 0));
     const paid = round2(toNum(input.paidNow));
     if (!Number.isFinite(input.paidNow) || input.paidNow < 0) return { ok: false, error: "المدفوع الآن يجب ألا يكون سالبًا." };
+    for (const [idx, expense] of (input.expenses || []).entries()) {
+      if (!expense.id || !Number.isFinite(expense.amount) || expense.amount < 0) return { ok: false, error: `مصروف ${idx + 1}: القيمة أو المعرّف غير صالح.` };
+      if (expense.type === "tip" && expense.capitalize && !expense.confirmTipCapitalization) return { ok: false, error: `مصروف ${idx + 1}: أكد إدخاله ضمن تكلفة المخزون.` };
+    }
     if (paid > total && !input.supplier_id) return { ok: false, error: "اختر المورد لتسجيل المبلغ الزائد كسلفة مستحقة لنا." };
     return executeUnitPurchase(input);
+  }
+
+  async function payPurchaseExpense(invoiceId: string, expenseId: string, idempotencyKey: string): Promise<{ ok: true; duplicate?: boolean; amount?: number } | { ok: false; error: string }> {
+    try {
+      const result = await callStaff<{ invoiceId: string; expenseId: string; idempotencyKey: string }, { ok: true; duplicate?: boolean; amount?: number }>("payPurchaseExpense", { invoiceId, expenseId, idempotencyKey });
+      await useCashbox().fetchCashbox();
+      return result;
+    } catch (error) {
+      console.error(error);
+      return { ok: false, error: error instanceof Error ? error.message : "تعذر سداد مصروف الشراء." };
+    }
   }
 
   async function paySupplierInvoice(
@@ -334,5 +364,5 @@ export const usePurchasing = defineStore("purchasing", () => {
     await updateItem("purchase_invoices", invoiceId, { pinned });
   }
 
-  return { executePurchase, paySupplierInvoice, fetchPurchaseInvoice, fetchPurchaseInvoices, fetchSupplierPayments, fetchSupplierAdvances, settleSupplierAdvance, setPurchaseInvoicePinned };
+  return { executePurchase, payPurchaseExpense, paySupplierInvoice, fetchPurchaseInvoice, fetchPurchaseInvoices, fetchSupplierPayments, fetchSupplierAdvances, settleSupplierAdvance, setPurchaseInvoicePinned };
 });

@@ -1,9 +1,9 @@
 <template>
   <ClientOnly>
   <CashierInvoices v-if="authStore.role === 'cashier'" />
-  <div v-else class="rounded-xl bg-white p-3 shadow-sm sm:p-4">
-    <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-      <h2 class="text-lg font-bold text-gray-900">الفواتير</h2>
+  <div v-else-if="authStore.role === 'admin'" class="rounded-xl bg-white p-3 shadow-sm sm:p-4">
+    <UiAppPageHeader title="الفواتير" description="سجل البيع والمرتجعات">
+      <template #actions>
       <!-- HOME delta: debts actions (pay-all + totals gate) + export. -->
       <div v-if="activeTab === 'sales'" class="flex flex-wrap gap-2">
         <UButton
@@ -25,15 +25,14 @@
           >تصدير البيانات</UButton
         >
       </div>
-    </div>
-    <div class="mb-4 flex gap-2 border-b border-gray-200 pb-2" role="tablist" aria-label="أقسام الفواتير">
-      <UButton role="tab" :aria-selected="activeTab === 'sales'" :color="activeTab === 'sales' ? 'success' : 'neutral'" :variant="activeTab === 'sales' ? 'solid' : 'soft'" @click="activeTab = 'sales'">فواتير البيع</UButton>
-      <UButton role="tab" :aria-selected="activeTab === 'returns'" :color="activeTab === 'returns' ? 'success' : 'neutral'" :variant="activeTab === 'returns' ? 'solid' : 'soft'" @click="activeTab = 'returns'">سجل المرتجعات</UButton>
-    </div>
+      </template>
+    </UiAppPageHeader>
+    <UTabs v-model="activeTab" :items="[{ label: 'فواتير البيع', value: 'sales' }, { label: 'سجل المرتجعات', value: 'returns' }]" :content="false" class="mb-4" />
     <div v-show="activeTab === 'sales'">
     <div class="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
       <UInput
         v-model="searchText"
+        aria-label="بحث في فواتير البيع"
         placeholder="بحث في كل الفواتير بالاسم أو الهاتف"
         icon="i-lucide-search"
         size="lg"
@@ -41,6 +40,7 @@
       />
       <USelect
         v-model="paid_amount_filter"
+        aria-label="تصفية الفواتير حسب الدين"
         :items="debtsFilterOptions"
         value-key="value"
         placeholder="الديون"
@@ -78,7 +78,7 @@
               {{ formatePrice(netSalesOf(invoiceStats)) }}
             </div>
             <div class="text-xs text-gray-500">صافي المبيعات بعد المرتجعات{{ selectedDate ? " في اليوم المحدد" : "" }}</div>
-            <div v-if="invoiceStats.returns_total" class="text-xs text-gray-400">الأصلي {{ formatePrice(invoiceStats.total_sales) }} ج · المرتجعات {{ formatePrice(invoiceStats.returns_total) }} ج</div>
+            <div v-if="invoiceStats.returns_total" class="text-xs text-gray-400">الأصلي {{ formatePrice(invoiceStats.total_sales) }} · المرتجعات {{ formatePrice(invoiceStats.returns_total) }}</div>
           </div>
           <UIcon
             name="i-lucide-banknote"
@@ -174,11 +174,11 @@
         <table class="w-full text-sm">
           <thead>
             <tr class="border-b border-gray-200 text-gray-500">
-              <th class="p-2 text-start font-medium">الأسم</th>
+                <th class="p-2 text-start font-medium">الاسم</th>
               <th class="p-2 text-start font-medium">الهاتف</th>
               <th class="p-2 text-start font-medium">عدد المنتجات</th>
               <th class="p-2 text-start font-medium">الإجمالي</th>
-              <th class="p-2 text-start font-medium">المتبقى</th>
+                <th class="p-2 text-start font-medium">المتبقي</th>
               <th class="p-2 text-start font-medium" title="صافي بيع البضاعة بعد الخصم والمرتجعات مطروحًا منه تكلفتها التاريخية">الربح/الخسارة</th>
               <th class="p-2 text-start font-medium">تاريخ الإنشاء</th>
               <th class="p-2 text-start font-medium">الأدوات</th>
@@ -193,83 +193,21 @@
               <td class="p-2 font-medium">
                 {{ row.name }}
                 <UBadge v-if="row.invoice.status === 'cancelled'" color="error" variant="soft" size="xs" class="ms-1">ملغاة</UBadge>
-                <UBadge v-if="row.returnBadge" color="warning" variant="soft" size="xs" class="ms-1">{{ row.returnBadge }} · {{ formatePrice(row.returnTotal) }} ج</UBadge>
+                <UBadge v-if="row.returnBadge" color="warning" variant="soft" size="xs" class="ms-1">{{ row.returnBadge }} · {{ formatePrice(row.returnTotal) }}</UBadge>
                 <UBadge v-if="row.hasPreviousBalance" color="info" variant="soft" size="xs" class="ms-1">يشمل رصيدًا سابقًا</UBadge>
               </td>
               <td class="p-2 text-gray-600" dir="ltr">{{ row.phone }}</td>
               <td class="p-2">{{ row.products_count }}</td>
-              <td class="p-2 font-semibold">{{ row.total }}<span v-if="row.returnBadge" class="block text-xs font-normal text-gray-500">الأصلي {{ row.originalTotal }}</span></td>
-              <td class="p-2 text-red-600">{{ formatePrice(row.debt) }}</td>
+              <td class="p-2 font-semibold"><UiAppMoneyDisplay :text="row.total" /><span v-if="row.returnBadge" class="block text-xs font-normal text-gray-500">الأصلي <UiAppMoneyDisplay :text="row.originalTotal" /></span></td>
+              <td class="p-2 text-red-600"><UiAppMoneyDisplay :text="formatePrice(row.debt)" /></td>
               <td class="p-2 font-semibold" :class="row.profitValue < 0 ? 'text-red-600' : 'text-emerald-600'">
-                {{ row.profitValue < 0 ? 'خسارة' : '' }} {{ formatePrice(Math.abs(row.profitValue)) }}
+                {{ row.profitValue < 0 ? 'خسارة' : '' }} <UiAppMoneyDisplay :text="formatePrice(Math.abs(row.profitValue))" />
               </td>
               <td class="p-2 text-gray-600">{{ row.created_at }}</td>
               <td class="p-2">
                 <div class="flex gap-1.5">
-                  <UTooltip
-                    v-if="row.invoice.status !== 'cancelled' && outstandingDebtOf(row.invoice) > 0"
-                    text="سداد الفاتورة بالكامل"
-                    ><UButton
-                      icon="i-lucide-hand-coins"
-                      color="success"
-                      variant="soft"
-                      size="xs"
-                      :loading="payingFullInvoiceId === row.invoice.id"
-                      :disabled="isPayingFull"
-                      aria-label="سداد الفاتورة بالكامل"
-                      @click="payFull([row.invoice])"
-                      class="flex items-center justify-center"
-                  /></UTooltip>
-                  <UTooltip text="نسخ الفاتورة"
-                    ><UButton
-                      icon="i-lucide-copy"
-                      color="success"
-                      variant="soft"
-                      size="xs"
-                      aria-label="نسخ الفاتورة"
-                      @click="copyInvoiceForEdit(row.invoice, true)"
-                      class="flex items-center justify-center"
-                  /></UTooltip>
-                  <UTooltip v-if="row.invoice.status !== 'cancelled' && !row.invoice.credit_used" text="تعديل الفاتورة"
-                    ><UButton
-                      icon="i-lucide-pencil"
-                      color="success"
-                      variant="soft"
-                      size="xs"
-                      aria-label="تعديل الفاتورة"
-                      @click="copyInvoiceForEdit(row.invoice, false)"
-                      class="flex items-center justify-center"
-                  /></UTooltip>
-                  <UTooltip text="عرض الفاتورة"
-                    ><UButton
-                      icon="i-lucide-eye"
-                      color="success"
-                      variant="soft"
-                      size="xs"
-                      aria-label="عرض الفاتورة"
-                      @click="openView(row)"
-                      class="flex items-center justify-center"
-                    /></UTooltip>
-                  <UTooltip v-if="row.invoice.status !== 'cancelled'" text="إنشاء مرتجع"
-                    ><UButton
-                      icon="i-lucide-undo-2"
-                      color="warning"
-                      variant="soft"
-                      size="xs"
-                      aria-label="إنشاء مرتجع"
-                      @click="openReturn(row.invoice)"
-                      class="flex items-center justify-center"
-                    /></UTooltip>
-                  <UTooltip v-if="row.invoice.status !== 'cancelled'" text="إلغاء الفاتورة"
-                    ><UButton
-                      icon="i-lucide-trash-2"
-                      color="error"
-                      variant="soft"
-                      size="xs"
-                      aria-label="حذف"
-                      @click="confirmDelete = row"
-                      class="flex items-center justify-center"
-                  /></UTooltip>
+                  <UButton icon="i-lucide-eye" color="neutral" variant="soft" size="sm" @click="openView(row)">عرض</UButton>
+                  <UDropdownMenu :items="invoiceActionItems(row)"><UButton icon="i-lucide-ellipsis" color="neutral" variant="ghost" size="sm" :aria-label="`إجراءات فاتورة ${row.name || ''}`">إجراءات</UButton></UDropdownMenu>
                 </div>
               </td>
             </tr>
@@ -278,7 +216,7 @@
         <UEmpty
           v-if="!paginateArray.length"
           icon="i-lucide-files"
-          title="لا يوجد فواتير مسجلة بالمستخدم الحالي حتى الأن"
+          title="لا توجد فواتير مسجلة للمستخدم الحالي حتى الآن"
         />
       </div>
       <!-- Mobile cards -->
@@ -287,91 +225,43 @@
           v-for="row in paginateArray"
           :key="row.id"
           variant="outline"
-          @click="openView(row)"
         >
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0">
               <div class="truncate font-bold">{{ row.name }}</div>
               <UBadge v-if="row.invoice.status === 'cancelled'" color="error" variant="soft" size="xs" class="mt-0.5">فاتورة ملغاة</UBadge>
-              <UBadge v-if="row.returnBadge" color="warning" variant="soft" size="xs" class="mt-0.5">{{ row.returnBadge }} · {{ formatePrice(row.returnTotal) }} ج</UBadge>
+              <UBadge v-if="row.returnBadge" color="warning" variant="soft" size="xs" class="mt-0.5">{{ row.returnBadge }} · {{ formatePrice(row.returnTotal) }}</UBadge>
               <UBadge v-if="row.hasPreviousBalance" color="info" variant="soft" size="xs" class="mt-0.5">{{ "يشمل رصيدًا سابقًا" }}</UBadge>
               <div class="text-xs text-gray-500" dir="ltr">{{ row.phone }}</div>
               <div class="mt-1 text-xs text-gray-500">
-                {{ row.created_at }} • {{ row.products_count }} منتجات
+                {{ row.created_at }} • {{ row.products_count }} {{ row.products_count === 1 ? 'منتج' : 'منتجات' }}
               </div>
-              <div class="mt-1 font-bold text-emerald-700">{{ row.total }}<span v-if="row.returnBadge" class="block text-xs font-normal text-gray-500">الأصلي {{ row.originalTotal }}</span></div>
+              <div class="mt-1 font-bold text-emerald-700"><UiAppMoneyDisplay :text="row.total" /><span v-if="row.returnBadge" class="block text-xs font-normal text-gray-500">الأصلي <UiAppMoneyDisplay :text="row.originalTotal" /></span></div>
               <div
                 v-if="row.debt"
                 class="mt-0.5 text-xs font-semibold text-red-600"
               >
-                المتبقي: {{ formatePrice(row.debt) }}
+                المتبقي: <UiAppMoneyDisplay :text="formatePrice(row.debt)" />
               </div>
               <div class="mt-0.5 text-xs font-semibold" :class="row.profitValue < 0 ? 'text-red-600' : 'text-emerald-600'">
-                {{ row.profitValue < 0 ? 'الخسارة' : 'الربح' }}: {{ formatePrice(Math.abs(row.profitValue)) }}
+                {{ row.profitValue < 0 ? 'الخسارة' : 'الربح' }}: <UiAppMoneyDisplay :text="formatePrice(Math.abs(row.profitValue))" />
               </div>
             </div>
-            <div class="flex shrink-0 gap-1.5" @click.stop>
-              <UButton
-                v-if="row.invoice.status !== 'cancelled' && outstandingDebtOf(row.invoice) > 0"
-                icon="i-lucide-hand-coins"
-                color="success"
-                variant="soft"
-                size="xs"
-                aria-label="سداد"
-                @click="payFull([row.invoice])"
-                class="flex items-center justify-center"
-              />
-              <UButton
-                icon="i-lucide-copy"
-                color="success"
-                variant="soft"
-                size="xs"
-                aria-label="نسخ"
-                @click="copyInvoiceForEdit(row.invoice, true)"
-                class="flex items-center justify-center"
-              />
-              <UButton
-                v-if="row.invoice.status !== 'cancelled' && !row.invoice.credit_used"
-                icon="i-lucide-pencil"
-                color="success"
-                variant="soft"
-                size="xs"
-                aria-label="تعديل"
-                @click="copyInvoiceForEdit(row.invoice, false)"
-                class="flex items-center justify-center"
-              />
-              <UButton
-                v-if="row.invoice.status !== 'cancelled'"
-                icon="i-lucide-undo-2"
-                color="warning"
-                variant="soft"
-                size="xs"
-                aria-label="مرتجع"
-                @click="openReturn(row.invoice)"
-                class="flex items-center justify-center"
-              />
-              <UButton
-                v-if="row.invoice.status !== 'cancelled'"
-                icon="i-lucide-trash-2"
-                color="error"
-                variant="soft"
-                size="xs"
-                aria-label="حذف"
-                @click="confirmDelete = row"
-                class="flex items-center justify-center"
-              />
+            <div class="flex shrink-0 flex-col gap-1.5">
+              <UButton icon="i-lucide-eye" color="neutral" variant="soft" size="sm" class="min-h-11" @click="openView(row)">عرض</UButton>
+              <UDropdownMenu :items="invoiceActionItems(row)"><UButton icon="i-lucide-ellipsis" color="neutral" variant="ghost" size="sm" class="min-h-11" :aria-label="`إجراءات فاتورة ${row.name || ''}`">إجراءات</UButton></UDropdownMenu>
             </div>
           </div>
         </UCard>
         <UEmpty
           v-if="!paginateArray.length"
           icon="i-lucide-files"
-          title="لا يوجد فواتير مسجلة بالمستخدم الحالي حتى الأن"
+          title="لا توجد فواتير مسجلة للمستخدم الحالي حتى الآن"
         />
       </div>
     </template>
     <div class="mt-3 flex items-center justify-between gap-2">
-      <USelect v-model="currentPerPage" :items="[25, 50, 100]" size="sm" class="w-24" />
+      <USelect v-model="currentPerPage" :items="[25, 50, 100]" aria-label="عدد الفواتير في الصفحة" size="sm" class="w-24" />
       <div class="flex items-center gap-2"><span class="text-xs text-gray-500">صفحة {{ currentPage }}</span><div class="flex gap-2" dir="ltr"><UButton size="sm" color="neutral" variant="outline" icon="i-lucide-chevron-left" aria-label="الصفحة التالية" :disabled="loading || !hasMoreInvoices" @click="nextInvoicePage" /><UButton size="sm" color="neutral" variant="outline" icon="i-lucide-chevron-right" aria-label="الصفحة السابقة" :disabled="loading || currentPage <= 1" @click="previousInvoicePage" /></div></div>
     </div>
     <!-- View invoice -->
@@ -426,25 +316,25 @@
         <template v-else>
         <div class="grid gap-2 rounded-xl bg-gray-50 p-3 text-sm sm:grid-cols-3">
           <div><span class="block text-xs text-gray-500">العميل</span><strong>{{ returnInvoice.customer_name }}</strong></div>
-          <div><span class="block text-xs text-gray-500">الدين على الفاتورة</span><strong>{{ formatePrice(outstandingDebtOf(returnInvoice)) }} ج</strong></div>
-          <div><span class="block text-xs text-gray-500">رصيد محفوظ للعميل</span><strong>{{ formatePrice(returnCreditBalance) }} ج</strong></div>
+          <div><span class="block text-xs text-gray-500">الدين على الفاتورة</span><strong>{{ formatePrice(outstandingDebtOf(returnInvoice)) }}</strong></div>
+          <div><span class="block text-xs text-gray-500">رصيد محفوظ للعميل</span><strong>{{ formatePrice(returnCreditBalance) }}</strong></div>
         </div>
         <div class="space-y-2"><h3 class="text-sm font-bold">الأصناف المراد إرجاعها</h3>
         <div v-for="r in returnRows" :key="r.key" class="grid items-center gap-2 rounded-xl border border-gray-200 p-3 sm:grid-cols-[minmax(0,1fr)_8rem_13rem_7rem]">
-          <div class="min-w-0"><div class="font-semibold">{{ formatInvoiceLineName(r.product_name, r.unit_name) }}</div><div class="text-xs text-gray-500">المتاح {{ r.maxQty }} · سعر البيع {{ formatePrice(r.unit_price) }} ج</div></div>
+          <div class="min-w-0"><div class="font-semibold">{{ formatInvoiceLineName(r.product_name, r.unit_name) }}</div><div class="text-xs text-gray-500">المتاح {{ r.maxQty }} · سعر البيع {{ formatePrice(r.unit_price) }}</div></div>
           <UFormField label="الكمية"><UInputNumber v-model="r.qty" :min="0" :max="r.maxQty" :step="r.allows_fractional ? 0.0001 : 1" size="lg" class="w-full" /></UFormField>
           <UFormField label="سيعود إلى المخزون كـ">
             <USelect :model-value="returnComponentKey(r)" :items="returnComponentOptions(r)" value-key="value" label-key="label" class="w-full" @update:model-value="(key) => setReturnComponent(r, String(key))" />
             <p v-if="returnComponentError(r)" class="mt-1 text-xs text-red-600">{{ returnComponentError(r) }}</p>
           </UFormField>
-          <div class="text-sm"><span class="block text-xs text-gray-500">قيمة المرتجع</span><strong>{{ formatePrice(previewRefund(r)) }} ج</strong></div>
+          <div class="text-sm"><span class="block text-xs text-gray-500">قيمة المرتجع</span><strong>{{ formatePrice(previewRefund(r)) }}</strong></div>
         </div></div>
         <UEmpty v-if="!returnRows.length" icon="i-lucide-undo-2" title="لا توجد أصناف قابلة للإرجاع" />
         <div class="space-y-3 rounded-xl border border-blue-100 bg-blue-50 p-3">
           <h3 class="text-sm font-bold">تسوية المرتجع</h3>
-          <div class="grid gap-2 text-sm sm:grid-cols-2"><div>إجمالي المرتجع <strong class="float-end">{{ formatePrice(returnPreviewTotal) }} ج</strong></div><div>تخفيض دين الفاتورة <strong class="float-end">{{ formatePrice(returnPreviewSplit.debtReduction) }} ج</strong></div><div v-if="returnPreviewSplit.creditRestored">إعادة رصيد استُخدم في الشراء <strong class="float-end">{{ formatePrice(returnPreviewSplit.creditRestored) }} ج</strong></div><div>المتاح للرد نقدًا أو حفظه <strong class="float-end">{{ formatePrice(returnPreviewSplit.settlement) }} ج</strong></div></div>
+          <div class="grid gap-2 text-sm sm:grid-cols-2"><div>إجمالي المرتجع <strong class="float-end">{{ formatePrice(returnPreviewTotal) }}</strong></div><div>تخفيض دين الفاتورة <strong class="float-end">{{ formatePrice(returnPreviewSplit.debtReduction) }}</strong></div><div v-if="returnPreviewSplit.creditRestored">إعادة رصيد استُخدم في الشراء <strong class="float-end">{{ formatePrice(returnPreviewSplit.creditRestored) }}</strong></div><div>المتاح للرد نقدًا أو حفظه <strong class="float-end">{{ formatePrice(returnPreviewSplit.settlement) }}</strong></div></div>
           <UFormField label="المبلغ الذي سيُرد نقدًا الآن"><UInputNumber v-model="returnCashRefund" :min="0" :max="returnPreviewSplit.settlement" :step="0.01" class="w-full" /></UFormField>
-          <p class="text-sm font-semibold text-emerald-800">سيُحفظ للعميل: {{ formatePrice(returnPreviewSplit.creditIssued + returnPreviewSplit.creditRestored) }} ج · النقد الخارج: {{ formatePrice(returnCashRefund || 0) }} ج</p>
+          <p class="text-sm font-semibold text-emerald-800">سيُحفظ للعميل: {{ formatePrice(returnPreviewSplit.creditIssued + returnPreviewSplit.creditRestored) }} · النقد الخارج: {{ formatePrice(returnCashRefund || 0) }}</p>
           <p class="text-xs text-gray-600">يمكن استخدام الرصيد في فاتورة لاحقة دون تغيير قيمة المبيعات.</p>
         </div>
         <UFormField label="ملاحظة"><UInput v-model="returnNote" placeholder="اختياري" size="lg" class="w-full" /></UFormField>
@@ -461,6 +351,7 @@
     </div>
     <ReturnJournal v-if="activeTab === 'returns'" />
   </div>
+  <div v-else role="status" aria-live="polite"><span class="sr-only">جار التحقق من الجلسة وتحميل الفواتير</span><UiAppTableSkeleton /></div>
   <template #fallback><UiAppTableSkeleton /></template>
   </ClientOnly>
 </template>
@@ -608,6 +499,10 @@ watch(searchText, () => {
   searchTimer = setTimeout(() => {
     void loadInvoices(true);
   }, 400);
+});
+onUnmounted(() => {
+  invoiceRequestGeneration += 1;
+  if (searchTimer) clearTimeout(searchTimer);
 });
 
 // HOME delta: settle debts in full (single or bulk) — preserved from home.
@@ -786,15 +681,23 @@ function invoiceFilters() {
     search: searchText.value.trim() || undefined,
   };
 }
+let invoiceRequestGeneration = 0;
 async function loadInvoices(reset = false) {
+  const generation = ++invoiceRequestGeneration;
   loading.value = true;
   loadError.value = "";
   try {
     if (reset) { currentPage.value = 1; invoiceCursors.value = [null]; }
     const page = await invoicesStore.fetchInvoicePage(invoiceFilters(), invoiceCursors.value[currentPage.value - 1] ?? null, currentPerPage.value);
+    if (generation !== invoiceRequestGeneration) return;
+    if (page.error) {
+      loadError.value = page.error;
+      return;
+    }
     invoicesStore.list = page.items;
     try {
       const records = await returnsApi.fetchForInvoices(page.items.map((invoice) => invoice.id || ""));
+      if (generation !== invoiceRequestGeneration) return;
       const totals: Record<string, number> = {};
       const profits: Record<string, number> = {};
       for (const record of records) {
@@ -807,6 +710,7 @@ async function loadInvoices(reset = false) {
       returnTotals.value = totals;
       returnProfitAdjustments.value = profits;
     } catch (error) {
+      if (generation !== invoiceRequestGeneration) return;
       console.error(error);
       returnTotals.value = {};
       returnProfitAdjustments.value = {};
@@ -816,7 +720,7 @@ async function loadInvoices(reset = false) {
     if (page.cursor) invoiceCursors.value[currentPage.value] = page.cursor;
     if (page.error) loadError.value = page.error;
   } finally {
-    loading.value = false;
+    if (generation === invoiceRequestGeneration) loading.value = false;
   }
 }
 async function nextInvoicePage(): Promise<void> { if (!hasMoreInvoices.value || loading.value) return; currentPage.value += 1; await loadInvoices(); }
@@ -847,6 +751,24 @@ type InvoiceRow = {
   invoice: Invoice;
   created_at_object: Date;
 };
+function invoiceActionItems(row: InvoiceRow) {
+  const active = row.invoice.status !== "cancelled";
+  return [
+    ...(active && outstandingDebtOf(row.invoice) > 0
+      ? [{ label: "سداد الفاتورة بالكامل", icon: "i-lucide-hand-coins", disabled: isPayingFull.value, onSelect: () => { void payFull([row.invoice]); } }]
+      : []),
+    { label: "نسخ الفاتورة", icon: "i-lucide-copy", onSelect: () => copyInvoiceForEdit(row.invoice, true) },
+    ...(active && !row.invoice.credit_used
+      ? [{ label: "تعديل الفاتورة", icon: "i-lucide-pencil", onSelect: () => copyInvoiceForEdit(row.invoice, false) }]
+      : []),
+    ...(active
+      ? [
+          { label: "إنشاء مرتجع", icon: "i-lucide-undo-2", onSelect: () => openReturn(row.invoice) },
+          { label: "إلغاء الفاتورة", icon: "i-lucide-ban", color: "error" as const, onSelect: () => { confirmDelete.value = row; } },
+        ]
+      : []),
+  ];
+}
 function returnBadgeFor(inv: Invoice): string {
   if (inv.status === "cancelled") return "فاتورة ملغاة";
   if (inv.return_status === "full") return "مرتجع كلي";
@@ -914,7 +836,8 @@ async function handleSuccess(isSuccess: boolean) {
     authStore.snackBarText = res;
     authStore.snackBarColor = "success";
   } catch (err) {
-    authStore.snackBarText = String(err);
+    console.error(err);
+    authStore.snackBarText = "تعذر تصدير الفواتير. تحقق من الاتصال ثم أعد المحاولة.";
     authStore.snackBarColor = "error";
   } finally {
     exporting.value = false;

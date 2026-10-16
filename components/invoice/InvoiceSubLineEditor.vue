@@ -13,7 +13,7 @@
         icon="i-lucide-check"
         class="min-h-6"
         @click="emit('done')"
-        ><span>حفظ</span></UButton
+        ><span>تم تعديل البند</span></UButton
       >
       <template v-if="canRemove">
         <UButton
@@ -108,7 +108,7 @@
           <span class="block text-xs text-gray-400">{{ unavailableHint }}</span>
         </template>
       </UFormField>
-      <UFormField v-if="showUnitPicker" label="الوحدة">
+      <UFormField v-if="showUnitPicker" label="الوحدة" data-field="unit">
         <USelectMenu
           :model-value="selectedUnit ?? undefined"
           :items="units"
@@ -119,7 +119,11 @@
           @update:model-value="(unit) => emit('pick-unit', unit)"
         />
       </UFormField>
-      <UFormField v-if="form.product_id" :label="qtyLabel">
+      <UFormField
+        v-if="form.product_id"
+        :label="qtyLabel"
+        :error="qtyError || exceedMessage || packageMessage || undefined"
+      >
         <div class="flex items-center gap-1.5" data-field="qty">
           <UInput
             :model-value="qtyValue"
@@ -127,6 +131,7 @@
             inputmode="numeric"
             class="min-w-0 flex-1 text-center"
             :ui="{ base: 'text-center' }"
+            :aria-invalid="!!(qtyError || exceedMessage || packageMessage)"
             @update:model-value="(v) => emit('qty-input', String(v ?? ''))"
             @blur="emit('qty-blur')"
             @keydown.enter="emit('qty-enter')"
@@ -156,21 +161,7 @@
           </UInput>
         </div>
         <template #hint>
-          <span v-if="qtyError" class="block text-xs font-bold text-red-600">{{
-            qtyError
-          }}</span>
-          <span
-            v-else-if="exceedMessage"
-            class="block text-xs font-bold text-red-600"
-            >{{ exceedMessage }}</span
-          >
-          <span
-            v-else-if="packageMessage"
-            class="block text-xs font-bold text-red-600"
-            >{{ packageMessage }}</span
-          >
-          <span
-            v-else-if="stockAvailableText"
+          <span v-if="stockAvailableText && !(qtyError || exceedMessage || packageMessage)"
             class="block text-xs text-gray-400"
             >{{ stockAvailableText }}</span
           >
@@ -194,7 +185,7 @@
           <span
             v-if="showCost && unitCostText"
             class="block text-xs text-gray-500"
-            >تكلفة الوحدة: {{ unitCostText }} ج</span
+            >تكلفة الوحدة: {{ unitCostText }}</span
           >
           <span
             v-if="priceHint !== null"

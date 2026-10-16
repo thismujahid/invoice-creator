@@ -7,6 +7,7 @@ const makeOperations = require("../../functions/inventoryOperations.cjs");
 function harness() {
   const documents = new Map<string, Record<string, unknown>>();
   let counter = 0;
+  let currentRole = "admin";
   const ref = (path: string) => ({ path, id: path.split("/").at(-1)! });
   const db = {
     doc: ref,
@@ -32,8 +33,8 @@ function harness() {
       return result;
     },
   };
-  const ops = makeOperations({ db, authorize: async () => "admin", operationRef: (request: { data: { requestId: string } }) => ref(`operations/${request.data.requestId}`) });
-  return { documents, purchase: (data: Record<string, unknown>) => ops.executeInventoryPurchase.run({ auth: { uid: "test-admin" }, data }), save: (data: Record<string, unknown>) => ops.saveInventoryProduct.run({ auth: { uid: "test-admin" }, data }) };
+  const ops = makeOperations({ db, authorize: async () => currentRole, operationRef: (request: { data: { requestId: string } }) => ref(`operations/${request.data.requestId}`) });
+  return { documents, setRole: (role: string) => { currentRole = role; }, purchase: (data: Record<string, unknown>) => ops.executeInventoryPurchase.run({ auth: { uid: "test-user" }, data }), payExpense: (data: Record<string, unknown>) => ops.payPurchaseExpense.run({ auth: { uid: "test-user" }, data }), save: (data: Record<string, unknown>) => ops.saveInventoryProduct.run({ auth: { uid: "test-user" }, data }) };
 }
 
 const variant = (name: string) => ({ variant_name: name, base_unit_id: "kg", units: [{ id: "kg", name: "كيلو", factor: 1, stock_kind: "loose", selling_price: 12, purchase_price: 10 }], inventory_alerts: { loose: { reorder_point: 2 } } });
@@ -72,6 +73,117 @@ describe("atomic product family save with transaction double", () => {
     const size = documents.size;
     await expect(save({ requestId: key + "x", family_id: result.family_id, family_name: "مكرونة", uses_variants: true, variants: [{ ...variant("معوجة"), product_id: result.id }] })).rejects.toThrow("تغيّرت أنواع المنتج");
     expect(documents.size).toBe(size);
+  });
+});
+
+describe("atomic purchase expenses", () => {
+  it("capitalizes the 600 EGP delivery example once and leaves supplier payable at goods subtotal", async () => {
+    const { save, purchase, documents } = harness();
+    const productIds: string[] = [];
+    for (const [index, name] of ["رخيص", "غالي", "متوسط"].entries()) {
+      const result = await save({ requestId: `${key.slice(0, 30)}${index}`, family_name: name, uses_variants: true, variants: [variant(name)] });
+      productIds.push(result.id);
+    }
+    documents.set("cashbox/current", { balance: 100 });
+    documents.set("suppliers/supplier-1", { name: "المورد الأول" });
+    const expenses = [{ id: "expense-delivery-1", type: "delivery", description: "توصيل", amount: 10, allocation_method: "value", capitalize: true, paid: true }];
+    const result = await purchase({ idempotencyKey: key, paidNow: 0, supplier_id: "supplier-1", items: [
+      { product_id: productIds[0], unit_id: "kg", quantity: 1, unit_cost: 5, pricing: { mode: "keep" } },
+      { product_id: productIds[1], unit_id: "kg", quantity: 1, unit_cost: 300, pricing: { mode: "keep" } },
+      { product_id: productIds[2], unit_id: "kg", quantity: 5, unit_cost: 59, pricing: { mode: "keep" } },
+    ], expenses });
+    const invoice = documents.get(`purchase_invoices/${key}`)!;
+    const invoiceItems = invoice.items as Array<Record<string, number>>;
+    expect(invoice.total_amount).toBe(600);
+    expect(invoiceItems.map((item) => item.capitalized_expense_amount)).toEqual([0.08, 5, 4.92]);
+    expect(invoiceItems.map((item) => item.effective_unit_cost)).toEqual([5.08, 305, 59.984]);
+    expect(productIds.map((id) => documents.get(`products/${id}`)?.cost_price)).toEqual([5.08, 305, 59.984]);
+    expect(invoice.capitalized_expense_total).toBe(10);
+    expect(invoice.purchase_outlay_total).toBe(610);
+    expect(result.total).toBe(600);
+    expect((documents.get("supplier_summaries/supplier-1")?.outstanding_payable as { operand: number }).operand).toBe(600);
+    expect(documents.get("cashbox/current")?.balance).toBe(90);
+    expect([...documents.entries()].filter(([path, data]) => path.startsWith("cash_transactions/") && data.type === "purchase_expense")).toHaveLength(1);
+    expect(documents.get(`purchase_expense_payments/${key}:expense-delivery-1`)?.amount).toBe(10);
+    const count = documents.size;
+    expect((await purchase({ idempotencyKey: key, paidNow: 0, supplier_id: "supplier-1", items: [
+      { product_id: productIds[0], unit_id: "kg", quantity: 1, unit_cost: 5, pricing: { mode: "keep" } },
+      { product_id: productIds[1], unit_id: "kg", quantity: 1, unit_cost: 300, pricing: { mode: "keep" } },
+      { product_id: productIds[2], unit_id: "kg", quantity: 5, unit_cost: 59, pricing: { mode: "keep" } },
+    ], expenses })).duplicate).toBe(true);
+    expect(documents.size).toBe(count);
+  });
+
+  it("does not capitalize non-capitalized expenses and does not reduce cash for unpaid expenses", async () => {
+    const { save, purchase, documents } = harness();
+    const product = await save({ requestId: `${key}-noncap`, family_name: "شاي", uses_variants: true, variants: [variant("أخضر")] });
+    documents.set("cashbox/current", { balance: 50 });
+    await purchase({ idempotencyKey: `${key}-noncap-purchase`, paidNow: 0, items: [{ product_id: product.id, unit_id: "kg", quantity: 2, unit_cost: 10, pricing: { mode: "keep" } }], expenses: [{ id: "expense-storage-1", type: "custom", description: "تخزين", amount: 4, allocation_method: "equal", capitalize: false, paid: false }] });
+    expect(documents.get(`products/${product.id}`)?.cost_price).toBe(10);
+    const invoice = documents.get(`purchase_invoices/${key}-noncap-purchase`)!;
+    expect(invoice.total_amount).toBe(20);
+    expect(invoice.non_capitalized_expense_total).toBe(4);
+    expect(invoice.remaining_amount).toBe(20);
+    expect(documents.get("cashbox/current")?.balance).toBe(50);
+    expect([...documents.entries()].filter(([path]) => path.startsWith("cash_transactions/"))).toHaveLength(0);
+  });
+
+  it("pays an unpaid third-party expense idempotently without changing supplier payable", async () => {
+    const { save, purchase, payExpense, documents } = harness();
+    const product = await save({ requestId: `${key}-payment`, family_name: "أرز", uses_variants: true, variants: [variant("مصري")] });
+    documents.set("cashbox/current", { balance: 25 });
+    documents.set("suppliers/supplier-2", { name: "المورد الثاني" });
+    const invoiceId = `${key}-payment-invoice`;
+    await purchase({ idempotencyKey: invoiceId, paidNow: 0, supplier_id: "supplier-2", items: [{ product_id: product.id, unit_id: "kg", quantity: 1, unit_cost: 20, pricing: { mode: "keep" } }], expenses: [{ id: "expense-driver-01", type: "delivery", amount: 5, allocation_method: "value", capitalize: true, paid: false, recipient: "السائق" }] });
+    const paymentKey = `${key}-expense-payment`;
+    const payment = { invoiceId, expenseId: "expense-driver-01", idempotencyKey: paymentKey };
+    expect(await payExpense(payment)).toEqual({ ok: true, amount: 5 });
+    expect(documents.get("cashbox/current")?.balance).toBe(20);
+    expect(documents.get(`purchase_invoices/${invoiceId}`)?.remaining_amount).toBe(20);
+    expect((documents.get(`purchase_invoices/${invoiceId}`)?.expenses as Array<Record<string, unknown>>)[0]?.payment_status).toBe("paid");
+    expect(await payExpense(payment)).toEqual({ ok: true, duplicate: true, amount: 5 });
+    expect(documents.get("cashbox/current")?.balance).toBe(20);
+    expect([...documents.entries()].filter(([path, data]) => path.startsWith("cash_transactions/") && data.purchase_expense_id === "expense-driver-01")).toHaveLength(1);
+    expect((documents.get("supplier_summaries/supplier-2")?.outstanding_payable as { operand: number }).operand).toBe(20);
+  });
+
+  it("blends capitalized expenses with historical stock and aggregates repeated lines for the same SKU", async () => {
+    const { save, purchase, documents } = harness();
+    const product = await save({ requestId: `${key}-avco-expense`, family_name: "عدس", uses_variants: true, variants: [variant("أحمر")] });
+    await purchase({ idempotencyKey: `${key}-avco-first`, paidNow: 0, items: [{ product_id: product.id, unit_id: "kg", quantity: 2, unit_cost: 10, pricing: { mode: "keep" } }] });
+    await purchase({ idempotencyKey: `${key}-avco-second`, paidNow: 0, items: [
+      { product_id: product.id, unit_id: "kg", quantity: 1, unit_cost: 10, pricing: { mode: "keep" } },
+      { product_id: product.id, unit_id: "kg", quantity: 3, unit_cost: 10, pricing: { mode: "keep" } },
+    ], expenses: [{ id: "expense-landed-01", type: "handling", amount: 4, allocation_method: "equal", capitalize: true, paid: false }] });
+    expect(documents.get(`products/${product.id}`)?.cost_price).toBe(64 / 6);
+    expect(documents.get(`products/${product.id}`)?.inventory).toEqual({ loose_base_quantity: 6, closed_packages: {} });
+    const invoice = documents.get(`purchase_invoices/${key}-avco-second`)!;
+    expect((invoice.items as Array<Record<string, number>>).map((item) => item.capitalized_expense_amount)).toEqual([2, 2]);
+    expect((invoice.items as Array<Record<string, number>>).map((item) => item.effective_unit_cost)).toEqual([12, 32 / 3]);
+    expect((invoice.items as Array<Record<string, number>>).reduce((sum, item) => sum + item.capitalized_expense_amount!, 0)).toBe(4);
+  });
+
+  it("restricts third-party expense settlement to admin callers", async () => {
+    const { save, purchase, payExpense, setRole, documents } = harness();
+    const product = await save({ requestId: `${key}-auth-expense`, family_name: "فول", uses_variants: true, variants: [variant("بلدي")] });
+    documents.set("cashbox/current", { balance: 20 });
+    const invoiceId = `${key}-auth-invoice`;
+    await purchase({ idempotencyKey: invoiceId, paidNow: 0, items: [{ product_id: product.id, unit_id: "kg", quantity: 1, unit_cost: 10, pricing: { mode: "keep" } }], expenses: [{ id: "expense-auth-0001", type: "delivery", amount: 2, allocation_method: "value", capitalize: true, paid: false }] });
+    const count = documents.size;
+    setRole("cashier");
+    await expect(payExpense({ invoiceId, expenseId: "expense-auth-0001", idempotencyKey: `${key}-auth-payment` })).rejects.toThrow("Admin access");
+    expect(documents.size).toBe(count);
+    expect(documents.get("cashbox/current")?.balance).toBe(20);
+  });
+
+  it("rejects insufficient combined supplier and paid-expense cash before writing", async () => {
+    const { save, purchase, documents } = harness();
+    const product = await save({ requestId: `${key}-cash`, family_name: "قهوة", uses_variants: true, variants: [variant("مطحونة")] });
+    documents.set("cashbox/current", { balance: 10 });
+    const count = documents.size;
+    await expect(purchase({ idempotencyKey: `${key}-cash-purchase`, paidNow: 8, items: [{ product_id: product.id, unit_id: "kg", quantity: 10, unit_cost: 1, pricing: { mode: "keep" } }], expenses: [{ id: "expense-fee-0001", type: "delivery", amount: 3, allocation_method: "value", capitalize: true, paid: true }] })).rejects.toThrow("يتجاوز رصيد الخزنة");
+    expect(documents.size).toBe(count);
+    expect(documents.get("cashbox/current")?.balance).toBe(10);
   });
 });
 

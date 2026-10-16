@@ -103,9 +103,13 @@ async function saveCustomer() {
   try {
     let id = customerForm.value.id;
     if (customerForm.value.id) {
-      await customersStore.updateCustomer(customerForm.value.id, {
+      const updated = await customersStore.updateCustomer(customerForm.value.id, {
         ...customerForm.value,
       });
+      if (updated === null) {
+        submitError.value = "تعذر حفظ تعديل العميل. تحقق من الاتصال ثم أعد المحاولة.";
+        return;
+      }
     } else {
       const res = (await customersStore.addCustomer({
         ...customerForm.value,
@@ -120,8 +124,11 @@ async function saveCustomer() {
     customerForm.value = { name: "", phone: null };
     closeDialog();
   } catch (err) {
-    submitError.value = String(err);
-    notify(String(err), "error");
+    console.error(err);
+    submitError.value = err instanceof Error && err.message !== "Sign in first."
+      ? err.message
+      : "تعذر حفظ العميل. تحقق من الاتصال ثم أعد المحاولة.";
+    notify(submitError.value, "error");
   } finally {
     saving.value = false;
   }
@@ -129,7 +136,7 @@ async function saveCustomer() {
 watch(
   () => props.edit,
   () => {
-    if (props.edit) customerForm.value = { ...props.edit };
+    customerForm.value = props.edit ? { ...props.edit } : { name: "", phone: null };
   },
   { immediate: true },
 );

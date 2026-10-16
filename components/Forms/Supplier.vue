@@ -1,5 +1,5 @@
 <template>
-  <span class="inline-flex" @click="openDialog">
+  <span v-if="$slots.default" class="inline-flex" @click="openDialog">
     <slot />
   </span>
   <UiAppDialog
@@ -134,7 +134,11 @@ async function saveSupplier() {
     };
     let id = supplierForm.value.id;
     if (supplierForm.value.id) {
-      await suppliersStore.updateSupplier(supplierForm.value.id, payload);
+      const updated = await suppliersStore.updateSupplier(supplierForm.value.id, payload);
+      if (updated === null) {
+        submitError.value = "تعذر حفظ تعديل المورد. تحقق من الاتصال ثم أعد المحاولة.";
+        return;
+      }
     } else {
       const res = (await suppliersStore.addSupplier(payload)) as { id?: string } | null;
       id = res?.id;
@@ -146,9 +150,9 @@ async function saveSupplier() {
     );
     supplierForm.value = { name: "", phone: null, address: null, notes: null };
     closeDialog();
-  } catch (err) {
-    submitError.value = String(err);
-    notify(String(err), "error");
+  } catch {
+    submitError.value = "تعذر حفظ المورد. تحقق من الاتصال ثم أعد المحاولة.";
+    notify(submitError.value, "error");
   } finally {
     saving.value = false;
   }
@@ -156,7 +160,9 @@ async function saveSupplier() {
 watch(
   () => props.edit,
   () => {
-    if (props.edit) supplierForm.value = { ...props.edit };
+    supplierForm.value = props.edit
+      ? { ...props.edit }
+      : { name: "", phone: null, address: null, notes: null };
   },
   { immediate: true },
 );
@@ -166,6 +172,9 @@ watch(
     if (v) {
       submitError.value = "";
       errors.value = {};
+      supplierForm.value = props.edit
+        ? { ...props.edit }
+        : { name: "", phone: null, address: null, notes: null };
     }
   },
 );

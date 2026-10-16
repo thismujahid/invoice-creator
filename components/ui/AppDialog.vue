@@ -7,6 +7,7 @@
   <ClientOnly>
     <USlideover
       v-if="isMobile"
+      side="bottom"
       :open="open"
       :title="title"
       :description="description"
@@ -57,11 +58,19 @@ const emit = defineEmits(["update:open", "close"]);
 
 // Nuxt UI merges `ui` classes over theme defaults (tailwind-merge),
 // so only the z-index utilities are overridden.
+const layerClasses: Record<number, string> = {
+  30: "z-30!",
+  60: "z-60!",
+  70: "z-70!",
+  80: "z-80!",
+  700: "z-[700]!",
+};
 const layerUi = computed(() => {
-  const content = [props.width, props.zIndex ? `z-[${props.zIndex}]!` : ""].filter(Boolean).join(" ");
+  const layer = props.zIndex ? layerClasses[props.zIndex] : undefined;
+  const content = [props.width, layer].filter(Boolean).join(" ");
   if (!content && !props.zIndex) return undefined;
   return {
-    ...(props.zIndex ? { overlay: `z-[${props.zIndex}]!` } : {}),
+    ...(layer ? { overlay: layer } : {}),
     content: content || undefined,
   };
 });
@@ -69,9 +78,14 @@ const layerUi = computed(() => {
 const isMobile = ref(false);
 onMounted(() => {
   const mq = window.matchMedia("(max-width: 639px)");
-  const sync = () => (isMobile.value = mq.matches);
-  sync();
+  isMobile.value = mq.matches;
+  const sync = () => {
+    if (!props.open) isMobile.value = mq.matches;
+  };
   mq.addEventListener("change", sync);
   onUnmounted(() => mq.removeEventListener("change", sync));
+});
+watch(() => props.open, (open) => {
+  if (!open && import.meta.client) isMobile.value = window.matchMedia("(max-width: 639px)").matches;
 });
 </script>

@@ -278,7 +278,7 @@ export const useInvoicesStore = defineStore("invoices", () => {
       return snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as object) }) as Invoice);
     } catch (error) {
       console.error("Unable to load invoices for explicit export:", error);
-      return [];
+      throw error;
     }
   }
 

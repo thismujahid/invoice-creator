@@ -3,6 +3,7 @@ const { FieldValue } = require("firebase-admin/firestore");
 const { createHash } = require("node:crypto");
 const unitPricingPromise = import("./shared/unitPricing.mjs");
 const inventoryCorePromise = import("./shared/inventoryCore.mjs");
+const purchaseExpenseAllocationPromise = import("./shared/purchaseExpenseAllocation.mjs");
 
 const MAX_UNITS = 40;
 const MAX_PURCHASE_ITEMS = 100;
@@ -515,6 +516,7 @@ function makeOperations({ db, authorize, operationRef }) {
 
   const executeInventoryPurchase = async (request) => {
     const core = await inventoryCorePromise;
+    const expenseEngine = await purchaseExpenseAllocationPromise;
     const input = request.data || {};
     const key = text(input.idempotencyKey, 80);
     const items = input.items;
@@ -575,8 +577,57 @@ function makeOperations({ db, authorize, operationRef }) {
         const lineTotal = core.roundMoney(item.quantity * item.unitCost);
         return { ...item, product, unit, factor, baseQuantity, lineTotal, baseCost: lineTotal / baseQuantity };
       });
+      let normalizedExpenses;
+      try {
+        normalizedExpenses = expenseEngine.normalizePurchaseExpenses(input.expenses || [], prepared.map((entry) => ({
+          lineValue: entry.lineTotal,
+          quantity: entry.quantity,
+          baseQuantity: entry.baseQuantity,
+          baseUnitName: String(entry.product.base_unit_name || "").trim(),
+        })));
+      } catch (error) {
+        const messages = {
+          EXPENSES_INVALID: "لا يمكن تسجيل أكثر من 30 مصروفًا في الفاتورة.",
+          EXPENSE_AMOUNT_INVALID: "مبلغ كل مصروف يجب أن يكون موجبًا وبحد أقصى منزلتين عشريتين.",
+          EXPENSE_TYPE_INVALID: "نوع أحد مصاريف الشراء غير صالح.",
+          EXPENSE_DESCRIPTION_REQUIRED: "أدخل وصف المصروف المخصص أو الإكرامية.",
+          EXPENSE_CAPITALIZATION_INVALID: "حدد ما إذا كان المصروف يدخل في تكلفة المخزون.",
+          EXPENSE_PAYMENT_STATE_INVALID: "حدد حالة سداد كل مصروف.",
+          EXPENSE_TIP_CAPITALIZATION_CONFIRMATION_REQUIRED: "أكد رسملة الإكرامية قبل إضافتها إلى تكلفة المخزون.",
+          EXPENSE_LINES_REQUIRED: "أضف صنفًا واحدًا على الأقل قبل توزيع مصروف الشراء.",
+          EXPENSE_QUANTITY_INVALID: "كمية أحد أصناف التوزيع غير صالحة.",
+          EXPENSE_ELIGIBLE_LINES_REQUIRED: "لا توجد أسطر شراء مؤهلة لتوزيع هذا المصروف.",
+          EXPENSE_MANUAL_ALLOCATIONS_INVALID: "أدخل توزيعًا يدويًا لكل سطر شراء.",
+          EXPENSE_MANUAL_INELIGIBLE_LINE: "لا يمكن توزيع مبلغ على سطر بكمية صفر.",
+          EXPENSE_MANUAL_TOTAL_MISMATCH: "يجب أن يساوي مجموع التوزيع اليدوي مبلغ المصروف.",
+          EXPENSE_ALLOCATION_BASIS_ZERO: "تعذر توزيع المصروف لأن أساس التوزيع يساوي صفرًا.",
+          EXPENSE_QUANTITY_UNITS_INCOMPARABLE: "وحدات الأصناف الأساسية غير متجانسة؛ استخدم التوزيع بالقيمة أو بالتساوي.",
+          EXPENSE_ALLOCATION_METHOD_INVALID: "طريقة توزيع أحد المصاريف غير صالحة.",
+          EXPENSE_ALLOCATION_TOTAL_MISMATCH: "مجموع توزيع المصروف لا يطابق قيمته.",
+        };
+        invalid(messages[error.message] || "بيانات مصاريف الشراء أو توزيعها غير صالحة.");
+      }
+      const capitalizedByLine = prepared.map((_, lineIndex) => normalizedExpenses.reduce((sum, expense) => sum + (expense.capitalize ? Number(expense.allocations[lineIndex]?.allocated_amount || 0) : 0), 0));
+      const paidExpensesTotal = core.roundMoney(normalizedExpenses.reduce((sum, expense) => sum + (expense.paid ? expense.amount : 0), 0));
+      const allExpensesTotal = core.roundMoney(normalizedExpenses.reduce((sum, expense) => sum + expense.amount, 0));
+      const capitalizedExpensesTotal = core.roundMoney(normalizedExpenses.reduce((sum, expense) => sum + (expense.capitalize ? expense.amount : 0), 0));
+      const nonCapitalizedExpensesTotal = core.roundMoney(allExpensesTotal - capitalizedExpensesTotal);
+      const totalCashOutflow = core.roundMoney(paidRequested + paidExpensesTotal);
+      if (totalCashOutflow > balance + 0.005) unavailable("إجمالي المدفوع للمورد ومصاريف الشراء يتجاوز رصيد الخزنة المتاح.");
+      const expenseIds = normalizedExpenses.map((expense) => expense.id);
+      if (expenseIds.some((id) => !/^[a-zA-Z0-9:_-]{8,120}$/.test(id)) || new Set(expenseIds).size !== expenseIds.length) invalid("معرّفات مصاريف الشراء غير صالحة أو مكررة.");
+      if (normalizedExpenses.some((expense) => expense.allocation_method === "manual" && expense.allocations.length !== prepared.length)) invalid("توزيع المصروف اليدوي لا يطابق أسطر الفاتورة.");
+      const purchaseExpenses = normalizedExpenses.map((expense) => ({
+        ...expense,
+        payment_status: expense.paid ? "paid" : "unpaid",
+        payment_id: expense.paid ? `${key}:${expense.id}` : null,
+      }));
+      const preparedWithCosts = prepared.map((entry, lineIndex) => {
+        const landed = expenseEngine.effectivePurchaseLine(entry.lineTotal, entry.quantity, entry.baseQuantity, capitalizedByLine[lineIndex]);
+        return { ...entry, lineIndex, capitalizedExpense: capitalizedByLine[lineIndex], ...landed };
+      });
       for (const id of ids) {
-        const entries = prepared.filter((entry) => entry.productId === id);
+        const entries = preparedWithCosts.filter((entry) => entry.productId === id);
         const basis = entries.find((entry) => entry.raw.pricing?.averageBasis)?.raw.pricing.averageBasis;
         if (basis) {
           const product = original.get(id);
@@ -589,7 +640,7 @@ function makeOperations({ db, authorize, operationRef }) {
       const movementDocs = [];
       const invoiceItems = [];
       let seq = 0;
-      for (const entry of prepared) {
+      for (const entry of preparedWithCosts) {
         const id = entry.productId;
         const current = updatedProducts.get(id) || { ...products.get(id).data, inventory: core.normalizeInventory(products.get(id).data.inventory), units: [...products.get(id).data.units] };
         const physical = core.addPurchase(current.inventory, current, entry.unitId, entry.quantity);
@@ -600,7 +651,7 @@ function makeOperations({ db, authorize, operationRef }) {
         unit.purchase_price_history = [`${entry.unitCost}-${Date.now()}`, ...history].slice(0, 20).join(",");
         const pricing = entry.raw.pricing || { mode: "auto" };
         if (!["auto", "keep", "custom", "proposed"].includes(pricing.mode)) invalid("طريقة تحديث السعر غير صالحة.");
-        current.last_purchase_base_cost = entry.unitCost / entry.factor;
+        current.last_purchase_base_cost = entry.effectiveBaseUnitCost;
         current.units[unitIndex] = unit;
         updatedProducts.set(id, current);
         const label = productLabel(entry.product);
@@ -609,23 +660,24 @@ function makeOperations({ db, authorize, operationRef }) {
           family_id: entry.product.family_id || null, family_name: entry.product.family_name || null,
           variant_name: entry.product.variant_name || null, variant_key: entry.product.variant_key || null,
           pack_size_name: entry.product.pack_size_name || null, inventory_mode: entry.product.inventory_mode === "independent" ? "independent" : "convertible",
-          quantity: entry.quantity, unit_cost: entry.unitCost, unit_id: unit.id, unit_name: unit.name, unit_factor: entry.factor, stock_kind: unit.stock_kind, allows_fractional: unit.allows_fractional === true, base_quantity: entry.baseQuantity, base_unit_cost: entry.baseCost, line_total: entry.lineTotal
+          quantity: entry.quantity, unit_cost: entry.unitCost, unit_id: unit.id, unit_name: unit.name, unit_factor: entry.factor, stock_kind: unit.stock_kind, allows_fractional: unit.allows_fractional === true, base_quantity: entry.baseQuantity, base_unit_cost: entry.baseCost, line_total: entry.lineTotal,
+          capitalized_expense_amount: entry.capitalizedExpense, effective_line_total: entry.effectiveLineTotal, effective_unit_cost: entry.effectiveUnitCost, effective_base_unit_cost: entry.effectiveBaseUnitCost,
         });
         movementDocs.push({
           ref: db.collection("inventory_transactions").doc(), data: {
             type: "purchase", direction: "in", product_id: id, product_name: label, quantity: entry.baseQuantity,
             unit_quantity: entry.quantity, unit_id: unit.id, unit_name: unit.name, unit_factor: entry.factor, base_quantity: entry.baseQuantity,
-            unit_cost: entry.baseCost, purchase_invoice_id: key, operation_id: key, note: text(input.note, 500) || null,
+            unit_cost: entry.effectiveBaseUnitCost, purchase_invoice_id: key, operation_id: key, note: text(input.note, 500) || null,
             component_deltas: physical.changes, opened_packages: [], seq: seq++,
           }
         });
       }
       for (const id of ids) {
-        const entries = prepared.filter((entry) => entry.productId === id);
+        const entries = preparedWithCosts.filter((entry) => entry.productId === id);
         const product = original.get(id);
         const oldQuantity = core.inventoryTotal(product.inventory, product.units || []);
         const addedQuantity = entries.reduce((sum, entry) => sum + entry.baseQuantity, 0);
-        const addedValue = entries.reduce((sum, entry) => sum + entry.lineTotal, 0);
+        const addedValue = entries.reduce((sum, entry) => sum + entry.effectiveLineTotal, 0);
         let average;
         try {
           average = core.movingAverage(oldQuantity, product.cost_price, addedQuantity, addedValue);
@@ -643,7 +695,7 @@ function makeOperations({ db, authorize, operationRef }) {
             for (const [unitId, decision] of Object.entries(decisions)) {
               const lastEntry = entries.filter((entry) => entry.unitId === unitId).at(-1);
               if (!lastEntry) continue;
-              const priced = repriceUnits(product, lastEntry.unitCost / lastEntry.factor, { [unitId]: decision });
+              const priced = repriceUnits(product, lastEntry.effectiveUnitCost / lastEntry.factor, { [unitId]: decision });
               prices.set(unitId, priced.find((unit) => unit.id === unitId));
             }
           } catch { invalid("تعذر حساب أسعار البيع. راجع التكلفة والأسعار المدخلة."); }
@@ -669,7 +721,9 @@ function makeOperations({ db, authorize, operationRef }) {
         request_fingerprint: fingerprint, supplier_name: supplierName, supplier_id: supplierId, supplier_ref: supplierRefText,
         invoice_number: text(input.invoice_number, 100) || null, source: input.source || "manual", pinned: false, items: invoiceItems,
         product_ids: productIds, total_amount: total, paid_amount: paid, advance_amount: advance, remaining_amount: remaining,
-        status, payment_ids: [], note: text(input.note, 500) || null, created_by: request.auth.uid, created_at: now,
+        status, payment_ids: [], expenses: purchaseExpenses, capitalized_expense_total: capitalizedExpensesTotal,
+        non_capitalized_expense_total: nonCapitalizedExpensesTotal, purchase_outlay_total: core.roundMoney(total + allExpensesTotal),
+        note: text(input.note, 500) || null, created_by: request.auth.uid, created_at: now,
       });
       for (const id of ids) {
         const update = updatedProducts.get(id);
@@ -683,17 +737,69 @@ function makeOperations({ db, authorize, operationRef }) {
       }
       for (const movement of movementDocs) tx.create(movement.ref, { ...movement.data, created_by: request.auth.uid, created_at: now });
       if (advance > 0) tx.set(db.doc(`supplier_advances/${key}`), { supplier_id: supplierId, supplier_name: supplierName, purchase_invoice_id: key, amount: advance, remaining_amount: advance, created_by: request.auth.uid, created_at: now });
+      if (totalCashOutflow > 0) {
+        tx.update(db.doc("cashbox/current"), { balance: core.roundMoney(balance - totalCashOutflow), updated_at: now });
+      }
       if (paidRequested > 0) {
-        tx.update(db.doc("cashbox/current"), { balance: core.roundMoney(balance - paidRequested), updated_at: now });
         tx.create(db.collection("cash_transactions").doc(), { type: "inventory_purchase", direction: "out", amount: core.roundMoney(paidRequested), purchase_invoice_id: key, reference_type: "supplier_invoice", reference_id: key, reference_label: `فاتورة توريد من ${supplierName || "مورد غير مسمى"}`, note: text(input.note, 500) || null, created_by: request.auth.uid, created_at: now });
+      }
+      for (const expense of purchaseExpenses.filter((item) => item.paid)) {
+        tx.create(db.doc(`purchase_expense_payments/${expense.payment_id}`), { purchase_invoice_id: key, purchase_expense_id: expense.id, amount: expense.amount, recipient: expense.recipient, payment_source: "purchase_creation", created_by: request.auth.uid, created_at: now });
+        tx.create(db.collection("cash_transactions").doc(), { type: "purchase_expense", direction: "out", amount: expense.amount, purchase_invoice_id: key, purchase_expense_id: expense.id, reference_type: "supplier_invoice", reference_id: key, reference_label: expense.description || "مصروف شراء إضافي", note: expense.recipient ? `المستلم: ${expense.recipient}` : null, created_by: request.auth.uid, created_at: now });
       }
       if (supplierId) tx.set(db.doc(`supplier_summaries/${supplierId}`), {
         supplier_id: supplierId, supplier_name: supplierName || supplierSnap.data().name,
         invoice_count: FieldValue.increment(1), total_purchases: FieldValue.increment(total),
         outstanding_payable: FieldValue.increment(remaining), advance_receivable: FieldValue.increment(advance), updated_at: now,
       }, { merge: true });
-      const result = { ok: true, id: key, total, paid, remaining, fullyPaid: remaining <= 0, advance };
+      const result = { ok: true, id: key, total, paid, remaining, fullyPaid: remaining <= 0, advance, purchaseOutlay: core.roundMoney(total + allExpensesTotal) };
       return result;
+    });
+  };
+
+  const payPurchaseExpense = async (request) => {
+    const input = request.data || {};
+    const invoiceId = text(input.invoiceId, 128);
+    const expenseId = text(input.expenseId, 120);
+    const key = text(input.idempotencyKey, 120);
+    if (!invoiceId || !expenseId || !/^[a-zA-Z0-9:_-]{16,120}$/.test(key)) invalid("بيانات سداد المصروف غير صالحة.");
+    const invoiceRef = db.doc(`purchase_invoices/${invoiceId}`);
+    const paymentRef = db.doc(`purchase_expense_payments/${key}`);
+    return db.runTransaction(async (tx) => {
+      const role = await authorize(request, tx);
+      if (role !== "admin") throw new HttpsError("permission-denied", "Admin access is required.");
+      const [invoiceSnap, paymentSnap, cashSnap] = await Promise.all([
+        tx.get(invoiceRef), tx.get(paymentRef), tx.get(db.doc("cashbox/current")),
+      ]);
+      if (paymentSnap.exists) {
+        const payment = paymentSnap.data();
+        if (payment.purchase_invoice_id !== invoiceId || payment.purchase_expense_id !== expenseId) unavailable("مفتاح السداد مستخدم لعملية أخرى.");
+        return { ok: true, duplicate: true, amount: Number(payment.amount) };
+      }
+      if (!invoiceSnap.exists) unavailable("فاتورة الشراء غير موجودة.");
+      const invoice = invoiceSnap.data();
+      const expenses = Array.isArray(invoice.expenses) ? [...invoice.expenses] : [];
+      const index = expenses.findIndex((expense) => expense.id === expenseId);
+      if (index < 0) unavailable("مصروف الشراء غير موجود.");
+      const expense = expenses[index];
+      if (expense.paid || expense.payment_status === "paid") unavailable("مصروف الشراء مسدد بالفعل.");
+      const amount = Number(expense.amount);
+      if (!Number.isFinite(amount) || amount <= 0) invalid("قيمة المصروف غير صالحة.");
+      if (!cashSnap.exists) unavailable("لا يمكن السداد قبل تهيئة الخزنة.");
+      const balance = Number(cashSnap.data()?.balance || 0);
+      if (amount - balance > 0.005) unavailable("رصيد الخزنة لا يكفي لسداد المصروف.");
+      const now = FieldValue.serverTimestamp();
+      expenses[index] = { ...expense, paid: true, payment_status: "paid", payment_id: key };
+      tx.update(invoiceRef, { expenses });
+      tx.update(db.doc("cashbox/current"), { balance: Math.round((balance - amount) * 100) / 100, updated_at: now });
+      tx.create(paymentRef, { purchase_invoice_id: invoiceId, purchase_expense_id: expenseId, amount, recipient: expense.recipient || null, created_by: request.auth.uid, created_at: now });
+      tx.create(db.doc(`cash_transactions/purchase-expense-${key}`), {
+        type: "purchase_expense", direction: "out", amount, purchase_invoice_id: invoiceId,
+        purchase_expense_id: expenseId, reference_type: "supplier_invoice", reference_id: invoiceId,
+        reference_label: expense.description || "مصروف شراء إضافي", note: expense.recipient ? `المستلم: ${expense.recipient}` : null,
+        created_by: request.auth.uid, created_at: now,
+      });
+      return { ok: true, amount };
     });
   };
 
@@ -705,6 +811,7 @@ function makeOperations({ db, authorize, operationRef }) {
     deleteInventoryProduct: onCall(deleteInventoryProduct),
     adjustInventoryBucket: onCall(adjustInventoryBucket),
     executeInventoryPurchase: onCall(executeInventoryPurchase),
+    payPurchaseExpense: onCall(payPurchaseExpense),
   };
 }
 

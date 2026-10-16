@@ -99,8 +99,8 @@ async function readFrom<T extends { id?: string }>(module: string, filters: Filt
     const snapshot = await getDocs(filteredQuery(module, filters));
     return snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as object) }) as T);
   } catch (error) {
-    console.error("Error reading from Firestore:", error);
-    return [];
+    console.error(`Error reading ${module} from Firestore:`, error);
+    throw error;
   }
 }
 

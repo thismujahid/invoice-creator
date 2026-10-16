@@ -1,6 +1,5 @@
 <template>
-  <UApp dir="rtl">
-    <UToaster />
+  <UApp :locale="ar" dir="rtl">
     <NuxtLoadingIndicator color="#10b981" />
     <NuxtLayout>
       <NuxtRouteAnnouncer />
@@ -9,6 +8,8 @@
   </UApp>
 </template>
 <script setup lang="ts">
+import { ar } from "@nuxt/ui/locale";
+
 useSeoMeta({ title: "قريتي" });
 useHead({
   htmlAttrs: { dir: "rtl", lang: "ar" },
@@ -22,7 +23,7 @@ useHead({
     },
     {
       rel: "stylesheet",
-      href: "https://fonts.googleapis.com/css2?family=Baloo+Bhaijaan+2:wght@400..800&display=swap",
+      href: "https://fonts.googleapis.com/css2?family=Baloo+Bhaijaan+2:wght@400..800&family=Noto+Sans+Arabic:wght@400;500;600;700&display=swap",
       media: "all",
     },
   ],
@@ -54,19 +55,9 @@ body {
   margin: 0;
   direction: rtl;
 }
-html,
-body {
-  font-family: "Baloo Bhaijaan 2", serif;
-}
-
 .printable-area {
   display: none;
 }
-/* Same mechanism as home branch: hide the whole app shell in print and
-   show only #printableArea (filled by useDownloadPDF before window.print).
-   Mapped from Vuetify originals:
-   .invoice-creator-app -> #app-shell | .v-btn -> .no-print
-   .v-alert -> .no-print | .v-overlay-container -> [role=dialog] + [data-slot=overlay/viewport] */
 @media print {
   html,
   body {

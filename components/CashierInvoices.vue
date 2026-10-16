@@ -1,30 +1,11 @@
 <template>
   <div class="rounded-xl bg-white p-3 shadow-sm sm:p-4" dir="rtl">
-    <div
-      class="mb-4 flex gap-2 border-b border-gray-200 pb-2"
-      role="tablist"
-      aria-label="أقسام الفواتير"
-    >
-      <UButton
-        role="tab"
-        :aria-selected="activeTab === 'sales'"
-        :color="activeTab === 'sales' ? 'success' : 'neutral'"
-        :variant="activeTab === 'sales' ? 'solid' : 'soft'"
-        @click="activeTab = 'sales'"
-        >فواتير البيع</UButton
-      ><UButton
-        role="tab"
-        :aria-selected="activeTab === 'returns'"
-        :color="activeTab === 'returns' ? 'success' : 'neutral'"
-        :variant="activeTab === 'returns' ? 'solid' : 'soft'"
-        @click="activeTab = 'returns'"
-        >سجل المرتجعات</UButton
-      >
-    </div>
+    <UiAppPageHeader title="الفواتير" description="فواتير البيع والمرتجعات المسموح لك بعرضها" />
+    <UTabs v-model="activeTab" :items="[{ label: 'فواتير البيع', value: 'sales' }, { label: 'سجل المرتجعات', value: 'returns' }]" :content="false" class="mb-4" />
     <CashierReturnJournal v-if="activeTab === 'returns'" />
     <div v-show="activeTab === 'sales'">
       <div class="mb-3 flex items-center justify-between gap-2">
-        <h2 class="text-lg font-bold text-gray-900">الفواتير</h2>
+        <h2 class="text-base font-semibold text-slate-800">فواتير البيع</h2>
         <div class="flex flex-wrap gap-2">
           <UButton
             v-if="payableItems.length"
@@ -119,17 +100,17 @@
                     variant="soft"
                     size="xs"
                     class="ms-1"
-                    >{{ item.return_status === "full" ? "مرتجع كامل" : "مرتجع جزئي" }} · {{ formatePrice(item.return_total) }} ج</UBadge
+                    >{{ item.return_status === "full" ? "مرتجع كامل" : "مرتجع جزئي" }} · {{ formatePrice(item.return_total) }}</UBadge
                   >
                 </td>
                 <td class="p-2" dir="ltr">{{ item.customer_phone ?? "—" }}</td>
                 <td class="p-2">{{ formatDate(item.date) }}</td>
                 <td class="p-2">{{ item.product_count }}</td>
                 <td class="p-2">
-                  {{ formatePrice(item.total - item.return_total) }} ج<span
+                  {{ formatePrice(item.total - item.return_total) }}<span
                     v-if="item.return_status"
                     class="block text-xs text-gray-500"
-                    >الأصلي {{ formatePrice(item.total) }} ج</span
+                    >الأصلي {{ formatePrice(item.total) }}</span
                   >
                 </td>
                 <td class="p-2">
@@ -141,9 +122,8 @@
                       ),
                     )
                   }}
-                  ج
                 </td>
-                <td class="p-2">{{ formatePrice(item.remaining) }} ج</td>
+                <td class="p-2">{{ formatePrice(item.remaining) }}</td>
                 <td class="p-2">
                   <div class="flex gap-1.5">
                     <UTooltip
@@ -235,7 +215,7 @@
                         ? "مرتجع كامل"
                         : "مرتجع جزئي"
                     }}
-                    · {{ formatePrice(item.return_total) }} ج</UBadge
+                    · {{ formatePrice(item.return_total) }}</UBadge
                   >
                 </div>
                 <div class="text-xs text-gray-500" dir="ltr">
@@ -302,7 +282,7 @@
               </div>
             </div>
             <div class="mt-2 text-sm">
-              الصافي: {{ formatePrice(item.total - item.return_total) }} ج ·
+              الصافي: {{ formatePrice(item.total - item.return_total) }} ·
               النقد المحصل:
               {{
                 formatePrice(
@@ -312,7 +292,7 @@
                   ),
                 )
               }}
-              ج · المتبقي: {{ formatePrice(item.remaining) }} ج
+              · المتبقي: {{ formatePrice(item.remaining) }}
             </div>
           </UCard>
         </div>
@@ -370,12 +350,12 @@
               <div>
                 <span class="block text-xs text-gray-500"
                   >الدين على الفاتورة</span
-                ><strong>{{ formatePrice(returnRemaining) }} ج</strong>
+                ><strong>{{ formatePrice(returnRemaining) }}</strong>
               </div>
               <div>
                 <span class="block text-xs text-gray-500"
                   >رصيد العميل المحفوظ</span
-                ><strong>{{ formatePrice(returnCreditBalance) }} ج</strong>
+                ><strong>{{ formatePrice(returnCreditBalance) }}</strong>
               </div>
             </div>
             <div class="space-y-2">
@@ -391,7 +371,7 @@
                   }}</strong>
                   <div class="text-xs text-gray-500">
                     المتاح {{ row.maxQty }} {{ row.unit_name }} · سعر البيع
-                    {{ formatePrice(row.unit_price) }} ج
+                    {{ formatePrice(row.unit_price) }}
                   </div>
                 </div>
                 <UFormField label="الكمية"
@@ -414,7 +394,7 @@
                         round2(row.unit_price * row.qty * returnRatio),
                       )
                     }}
-                    ج</strong
+                   </strong
                   >
                 </div>
               </div>
@@ -431,25 +411,25 @@
                 <div>
                   إجمالي المرتجع
                   <strong class="float-end"
-                    >{{ formatePrice(returnTotal) }} ج</strong
+                    >{{ formatePrice(returnTotal) }}</strong
                   >
                 </div>
                 <div>
                   تخفيض الدين
                   <strong class="float-end"
-                    >{{ formatePrice(returnDebtReduction) }} ج</strong
+                    >{{ formatePrice(returnDebtReduction) }}</strong
                   >
                 </div>
                 <div v-if="returnCreditRestored">
                   إعادة رصيد مستخدم
                   <strong class="float-end"
-                    >{{ formatePrice(returnCreditRestored) }} ج</strong
+                    >{{ formatePrice(returnCreditRestored) }}</strong
                   >
                 </div>
                 <div>
                   المتاح للنقد أو الرصيد
                   <strong class="float-end"
-                    >{{ formatePrice(returnSettlement) }} ج</strong
+                    >{{ formatePrice(returnSettlement) }}</strong
                   >
                 </div>
               </div>
@@ -469,7 +449,7 @@
                       Math.max(0, round2(returnSettlement - returnCashRefund)),
                   )
                 }}
-                ج · نقد خارج: {{ formatePrice(returnCashRefund) }} ج
+                · نقد خارج: {{ formatePrice(returnCashRefund) }}
               </p>
               <p class="text-xs text-gray-600">
                 يمكن استخدام الرصيد في فاتورة لاحقة كسداد.
@@ -864,7 +844,7 @@ async function submitReturn(): Promise<void> {
     });
     returnTarget.value = null;
     notify(
-      `تم تسجيل المرتجع — تخفيض الدين: ${formatePrice(result.debtReduction)} ج، نقدي: ${formatePrice(result.cashRefund)} ج، رصيد للعميل: ${formatePrice(result.creditIssued + result.creditRestored)} ج.`,
+      `تم تسجيل المرتجع — تخفيض الدين: ${formatePrice(result.debtReduction)}، نقدي: ${formatePrice(result.cashRefund)}، رصيد للعميل: ${formatePrice(result.creditIssued + result.creditRestored)}.`,
       "success",
     );
     useProductsStore().invalidateCache();

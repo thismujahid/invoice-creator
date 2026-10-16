@@ -1,11 +1,15 @@
 <template>
   <div class="rounded-xl bg-white p-3 shadow-sm sm:p-4">
-    <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-      <h2 class="text-lg font-bold text-gray-900">الخزنة</h2>
+    <UiAppPageHeader title="الخزنة" description="الرصيد الحالي وحركات النقد">
+      <template #actions>
       <div class="flex flex-wrap items-center gap-2">
-        <span v-if="cashbox.initialized && !cashbox.loading" class="flex items-center gap-1 text-xs text-gray-400">
+        <span v-if="cashbox.syncState === 'live'" class="flex items-center gap-1 text-xs text-emerald-700">
           <span class="inline-block size-2 rounded-full bg-emerald-500"></span>مباشر
         </span>
+        <span v-else-if="cashbox.syncState === 'cache'" class="text-xs text-amber-700">بيانات مخزنة مؤقتًا</span>
+        <span v-else-if="cashbox.syncState === 'snapshot'" class="text-xs text-slate-600">آخر قراءة</span>
+        <span v-else-if="cashbox.syncState === 'error'" class="text-xs text-red-700">تعذر تحديث الخزنة</span>
+        <UButton v-if="cashbox.syncState === 'error' && cashbox.initialized" size="sm" color="error" variant="soft" @click="cashbox.ensureCashboxSubscription()">إعادة الاتصال</UButton>
         <div v-if="cashbox.initialized" class="flex flex-wrap gap-2">
           <UButton
             icon="i-lucide-plus"
@@ -22,9 +26,13 @@
           >
         </div>
       </div>
-    </div>
+      </template>
+    </UiAppPageHeader>
 
     <UiAppStatsSkeleton v-if="cashbox.loading" />
+    <UAlert v-else-if="cashbox.syncState === 'error' && !cashbox.initialized" color="error" variant="soft" title="تعذر تحميل الخزنة" description="تحقق من الاتصال ثم أعد المحاولة." class="mb-3">
+      <template #actions><UButton color="error" variant="soft" @click="cashbox.ensureCashboxSubscription()">إعادة المحاولة</UButton></template>
+    </UAlert>
     <!-- Onboarding: opening balance once -->
     <UCard
       v-else-if="!cashbox.initialized"
@@ -77,14 +85,14 @@
       <div class="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-4">
         <UCard variant="outline">
           <div class="text-lg font-bold text-emerald-700 sm:text-xl">
-            {{ formatePrice(cashbox.balance) }}
+            <UiAppMoneyDisplay :text="formatePrice(cashbox.balance)" />
           </div>
           <div class="text-xs text-gray-500">النقدية الحالية</div>
           <div v-if="cashbox.initialized && cashbox.balance <= 0" class="mt-1 text-xs text-gray-400">مهيأة بصفر — ليست غير مهيأة</div>
         </UCard>
         <UCard variant="outline">
           <div class="text-lg font-bold text-blue-700 sm:text-xl">
-            {{ summariesReady ? formatePrice(receivablesTotal) : "…" }}
+            <UiAppMoneyDisplay :text="summariesReady ? formatePrice(receivablesTotal) : '…'" />
           </div>
           <div class="text-xs text-gray-500">المستحق لنا</div>
           <div v-if="summariesReady" class="mt-1 space-y-0.5 border-t border-gray-100 pt-1 text-xs text-gray-500">
@@ -95,7 +103,7 @@
         </UCard>
         <UCard variant="outline">
           <div class="text-lg font-bold text-red-600 sm:text-xl">
-            {{ summariesReady ? formatePrice(payablesTotal) : "…" }}
+            <UiAppMoneyDisplay :text="summariesReady ? formatePrice(payablesTotal) : '…'" />
           </div>
           <div class="text-xs text-gray-500">المستحق علينا (موردين)</div>
           <div v-if="summariesReady && unlinkedPayables > 0" class="mt-1 border-t border-gray-100 pt-1 text-xs text-amber-700">
@@ -104,7 +112,7 @@
         </UCard>
         <UCard variant="outline">
           <div class="text-lg font-bold sm:text-xl">
-            {{ products.inventoryReady ? formatePrice(agg.costValue) : "…" }}
+            <UiAppMoneyDisplay :text="products.inventoryReady ? formatePrice(agg.costValue) : '…'" />
           </div>
           <div class="text-xs text-gray-500">المخزون بالتكلفة</div>
           <div v-if="inventoryValuationNote && products.inventoryReady" class="mt-1 text-xs text-amber-700">{{ inventoryValuationNote }}</div>
@@ -127,42 +135,43 @@
 
       <div class="mb-2 mt-5 flex flex-wrap items-center justify-between gap-2">
         <h3 class="text-sm font-bold text-gray-800">أداء البيع</h3>
-        <USelect v-model="reportPeriod" :items="reportPeriodOptions" value-key="value" label-key="label" size="sm" class="w-40" />
+        <USelect v-model="reportPeriod" :items="reportPeriodOptions" value-key="value" label-key="label" aria-label="فترة أداء البيع" size="sm" class="w-40" />
       </div>
       <p class="mb-2 text-xs text-gray-500">المبيعات والربح للفترة المختارة؛ النقدية والديون والمخزون أرصدة حالية.</p>
       <UAlert v-if="summaryError || reportError" color="error" variant="soft" class="mb-3" title="تعذر تحميل بعض المؤشرات. أعد فتح الصفحة." />
       <UAlert v-else-if="!statsLoading && !statsReady" color="warning" variant="soft" class="mb-3" title="ملخصات الفواتير غير مهيأة. استخدم تصحيح الحسابات من أدوات الإدارة." />
       <div class="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
         <UCard variant="outline">
-          <div class="text-lg font-bold text-emerald-700 sm:text-xl">{{ reportReady ? formatePrice(netSales) : "…" }}</div>
+          <div class="text-lg font-bold text-emerald-700 sm:text-xl"><UiAppMoneyDisplay :text="reportReady ? formatePrice(netSales) : '…'" /></div>
           <div class="text-xs text-gray-500">صافي المبيعات بعد المرتجعات</div>
           <div v-if="reportReady" class="mt-1 text-xs text-gray-400">{{ reportStats.invoices }} فاتورة · {{ reportStats.returnsCount }} مرتجع</div>
         </UCard>
         <UCard variant="outline">
-          <div class="text-lg font-bold sm:text-xl" :class="reportStats.profit < 0 ? 'text-red-600' : 'text-emerald-700'">{{ reportReady ? formatePrice(reportStats.profit) : "…" }}</div>
+          <div class="text-lg font-bold sm:text-xl" :class="reportStats.profit < 0 ? 'text-red-600' : 'text-emerald-700'"><UiAppMoneyDisplay :text="reportReady ? formatePrice(reportStats.profit) : '…'" /></div>
           <div class="text-xs text-gray-500">مجمل ربح البضاعة بعد المرتجعات</div>
           <div class="mt-1 text-xs text-gray-400">قبل الإيجار والرواتب والمصروفات</div>
         </UCard>
         <UCard variant="outline">
-          <div class="text-lg font-bold text-blue-700 sm:text-xl">{{ products.inventoryReady ? formatePrice(sellableInventory.expectedProfit) : "…" }}</div>
+          <div class="text-lg font-bold text-blue-700 sm:text-xl"><UiAppMoneyDisplay :text="products.inventoryReady ? formatePrice(sellableInventory.expectedProfit) : '…'" /></div>
           <div class="text-xs text-gray-500">ربح محتمل من المخزون الحالي</div>
           <div class="mt-1 text-xs text-gray-400">ليس ضمن ربح الفترة · بأسعار وتكلفة كل وحدة متاحة للبيع</div>
           <div v-if="forecastNote && products.inventoryReady" class="mt-1 text-xs text-amber-700">{{ forecastNote }}</div>
         </UCard>
         <UCard variant="outline">
-          <div class="text-lg font-bold sm:text-xl" :class="cashGap < 0 ? 'text-red-600' : 'text-emerald-700'">{{ summariesReady ? formatePrice(cashGap) : "…" }}</div>
+          <div class="text-lg font-bold sm:text-xl" :class="cashGap < 0 ? 'text-red-600' : 'text-emerald-700'"><UiAppMoneyDisplay :text="summariesReady ? formatePrice(cashGap) : '…'" /></div>
           <div class="text-xs text-gray-500">النقدية بعد سداد الموردين الآن</div>
-          <div v-if="summariesReady && cashGap < 0" class="mt-1 text-xs text-gray-500">العجز الفوري: {{ formatePrice(-cashGap) }} ج</div>
+          <div v-if="summariesReady && cashGap < 0" class="mt-1 text-xs text-gray-500">العجز الفوري: {{ formatePrice(-cashGap) }}</div>
         </UCard>
       </div>
       <UAlert v-if="businessHealth && reportReady && summariesReady" :color="businessHealth.color" variant="soft" class="mb-3" :title="businessHealth.title" :description="businessHealth.description" />
-      <p v-if="summariesReady" class="mb-3 text-xs text-gray-500">النقدية + المستحق لنا − المستحق للموردين = <b :class="collectionGap < 0 ? 'text-red-600' : 'text-emerald-700'">{{ formatePrice(collectionGap) }} ج</b> بافتراض تحصيل جميع المستحقات. الديون ليست ربحًا، والمخزون ليس نقدًا جاهزًا.</p>
+      <p v-if="summariesReady" class="mb-3 text-xs text-gray-500">النقدية + المستحق لنا − المستحق للموردين = <b :class="collectionGap < 0 ? 'text-red-600' : 'text-emerald-700'">{{ formatePrice(collectionGap) }}</b> بافتراض تحصيل جميع المستحقات. الديون ليست ربحًا، والمخزون ليس نقدًا جاهزًا.</p>
 
       <div class="mb-2 mt-4 flex flex-wrap items-center justify-between gap-2">
         <p class="text-xs font-bold text-gray-400">سجل العمليات</p>
         <div class="flex flex-wrap items-center gap-2">
           <USelect
             v-model="periodPreset"
+            aria-label="فترة سجل العمليات"
             :items="periodPresets"
             value-key="value"
             label-key="label"
@@ -177,6 +186,7 @@
           />
           <USelect
             v-model="typeFilter"
+            aria-label="نوع حركة الخزنة"
             :items="typeOptions"
             value-key="value"
             size="sm"
@@ -201,16 +211,16 @@
           <div class="text-xs text-gray-500">رصيد بداية الفترة</div>
         </UCard>
         <UCard variant="outline">
-          <div class="text-base font-bold text-emerald-700 sm:text-lg">+{{ formatePrice(periodIn) }}</div>
+          <div class="text-base font-bold text-emerald-700 sm:text-lg"><UiAppMoneyDisplay :text="`+${formatePrice(periodIn)}`" /></div>
           <div class="text-xs text-gray-500">إجمالي المقبوضات</div>
         </UCard>
         <UCard variant="outline">
-          <div class="text-base font-bold text-red-600 sm:text-lg">−{{ formatePrice(periodOut) }}</div>
+          <div class="text-base font-bold text-red-600 sm:text-lg"><UiAppMoneyDisplay :text="`−${formatePrice(periodOut)}`" /></div>
           <div class="text-xs text-gray-500">إجمالي المدفوعات</div>
         </UCard>
         <UCard variant="outline">
           <div class="text-base font-bold sm:text-lg" :class="periodNet >= 0 ? 'text-emerald-700' : 'text-red-600'">
-            {{ periodNet >= 0 ? "+" : "−" }}{{ formatePrice(Math.abs(periodNet)) }}
+            <UiAppMoneyDisplay :text="`${periodNet >= 0 ? '+' : '−'}${formatePrice(Math.abs(periodNet))}`" />
           </div>
           <div class="text-xs text-gray-500">صافي الحركة</div>
         </UCard>
@@ -229,6 +239,9 @@
         title="توجد عمليات جديدة"
         :actions="[{ label: 'عرض الأحدث', color: 'info', variant: 'soft', onClick: backToLatest }]"
       />
+      <UAlert v-if="txnError" color="error" variant="soft" class="mb-2" title="تعذر تحديث سجل العمليات" :description="txnList.length ? 'الحركات المعروضة من آخر قراءة ناجحة.' : 'تحقق من الاتصال ثم أعد المحاولة.'">
+        <template #actions><UButton size="sm" color="error" variant="soft" :loading="txnLoading" @click="retryTxnPage">إعادة المحاولة</UButton></template>
+      </UAlert>
       <UiAppTableSkeleton v-if="txnLoading && !txnList.length" />
       <template v-else>
         <div class="hidden overflow-x-auto md:block">
@@ -278,8 +291,7 @@
                     t.direction === 'in' ? 'text-emerald-600' : 'text-red-600'
                   "
                 >
-                  {{ t.direction === "in" ? "+" : "−"
-                  }}{{ formatePrice(t.amount) }}
+                  <UiAppMoneyDisplay :text="`${t.direction === 'in' ? '+' : '−'}${formatePrice(t.amount)}`" />
                 </td>
                 <td class="p-2">
                   <UBadge
@@ -303,7 +315,7 @@
             </tbody>
           </table>
           <UEmpty
-            v-if="!paged.length"
+            v-if="!paged.length && !txnError"
             icon="i-lucide-vault"
             title="لا توجد عمليات مسجلة"
           />
@@ -338,13 +350,12 @@
                 "
                 dir="ltr"
               >
-                {{ t.direction === "in" ? "+" : "−"
-                }}{{ formatePrice(t.amount) }}
+                <UiAppMoneyDisplay :text="`${t.direction === 'in' ? '+' : '−'}${formatePrice(t.amount)}`" />
               </div>
             </div>
           </UCard>
           <UEmpty
-            v-if="!paged.length"
+            v-if="!paged.length && !txnError"
             icon="i-lucide-vault"
             title="لا توجد عمليات مسجلة"
           />
@@ -1134,11 +1145,11 @@ const businessHealth = computed<{ color: "error" | "warning" | "success" | "info
   if (!reportReady.value || !summariesReady.value) return null;
   const profit = reportStats.value.profit;
   const expenseNote = "المؤشر يعرض مجمل ربح البضاعة فقط؛ لا يشمل مصروفات التشغيل أو احتمال تعثر التحصيل.";
-  if (profit < 0) return { color: "error", title: "المبيعات حققت خسارة إجمالية في الفترة", description: `خسارة البضاعة ${formatePrice(-profit)} ج. ${expenseNote}` };
-  if (collectionGap.value < 0) return { color: "error", title: "التزامات الموردين تتجاوز النقد والمستحق لنا", description: `العجز ${formatePrice(-collectionGap.value)} ج حتى بافتراض تحصيل المستحقات بالكامل. ${expenseNote}` };
-  if (cashGap.value < 0) return { color: "warning", title: "السيولة الحالية لا تكفي لسداد الموردين", description: `يلزم تحصيل ${formatePrice(-cashGap.value)} ج أو أكثر لتغطية المستحق للموردين. ${expenseNote}` };
+  if (profit < 0) return { color: "error", title: "المبيعات حققت خسارة إجمالية في الفترة", description: `خسارة البضاعة ${formatePrice(-profit)}. ${expenseNote}` };
+  if (collectionGap.value < 0) return { color: "error", title: "التزامات الموردين تتجاوز النقد والمستحق لنا", description: `العجز ${formatePrice(-collectionGap.value)} حتى بافتراض تحصيل المستحقات بالكامل. ${expenseNote}` };
+  if (cashGap.value < 0) return { color: "warning", title: "السيولة الحالية لا تكفي لسداد الموردين", description: `يلزم تحصيل ${formatePrice(-cashGap.value)} أو أكثر لتغطية المستحق للموردين. ${expenseNote}` };
   if (netSales.value <= 0) return { color: "info", title: "لا توجد مبيعات كافية للحكم على أداء الفترة", description: expenseNote };
-  if (profit > 0) return { color: "success", title: "ربح بضاعة موجب والسيولة تغطي الموردين", description: `مجمل الربح ${formatePrice(profit)} ج خلال الفترة المختارة. ${expenseNote}` };
+  if (profit > 0) return { color: "success", title: "ربح بضاعة موجب والسيولة تغطي الموردين", description: `مجمل الربح ${formatePrice(profit)} خلال الفترة المختارة. ${expenseNote}` };
   return { color: "info", title: "المبيعات لا تحقق ربحًا إجماليًا في الفترة", description: expenseNote };
 });
 const inventoryValuationNote = computed(() => {
@@ -1341,12 +1352,15 @@ async function exportPeriod(): Promise<void> {
 const TXN_PAGE_SIZE = 25;
 const txnList = ref<CashTransaction[]>([]);
 const txnLoading = ref(true);
+const txnError = ref(false);
 const txnPage = ref(1);
 const txnHasMore = ref(false);
 const txnCursors = ref<(QueryDocumentSnapshot | null)[]>([null]);
 const newOpsAvailable = ref(false);
 let liveTxnUnsub: Unsubscribe | null = null;
+let txnGeneration = 0;
 function stopLiveTxns(): void {
+  txnGeneration += 1;
   liveTxnUnsub?.();
   liveTxnUnsub = null;
 }
@@ -1359,37 +1373,51 @@ function txnBaseQuery() {
 function startLiveTxns(): void {
   if (!import.meta.client) return;
   stopLiveTxns();
+  const generation = ++txnGeneration;
   txnLoading.value = true;
+  txnError.value = false;
   liveTxnUnsub = onSnapshot(query(txnBaseQuery(), fsLimit(TXN_PAGE_SIZE + 1)),
     (snap) => {
+      if (generation !== txnGeneration) return;
       const docs = snap.docs.slice(0, TXN_PAGE_SIZE);
       txnList.value = docs.map((d) => ({ id: d.id, ...(d.data() as object) }) as CashTransaction);
       txnHasMore.value = snap.docs.length > TXN_PAGE_SIZE;
       if (docs.length && txnHasMore.value) txnCursors.value[txnPage.value] = docs.at(-1) ?? null;
       txnLoading.value = false;
     },
-    () => { txnLoading.value = false; });
+    (error) => {
+      if (generation !== txnGeneration) return;
+      console.error(error);
+      txnError.value = true;
+      txnLoading.value = false;
+    });
 }
 async function loadTxnPage(): Promise<void> {
+  const generation = ++txnGeneration;
   txnLoading.value = true;
+  txnError.value = false;
   try {
     let q = txnBaseQuery();
     const cursor = txnCursors.value[txnPage.value - 1];
     if (cursor) q = query(q, startAfter(cursor));
     const snap = await getDocs(query(q, fsLimit(TXN_PAGE_SIZE + 1)));
+    if (generation !== txnGeneration) return;
     const docs = snap.docs.slice(0, TXN_PAGE_SIZE);
     txnList.value = docs.map((d) => ({ id: d.id, ...(d.data() as object) }) as CashTransaction);
     txnHasMore.value = snap.docs.length > TXN_PAGE_SIZE;
     if (docs.length && txnHasMore.value) txnCursors.value[txnPage.value] = docs.at(-1) ?? null;
   } catch (e) {
+    if (generation !== txnGeneration) return;
     console.error(e);
+    txnError.value = true;
   } finally {
-    txnLoading.value = false;
+    if (generation === txnGeneration) txnLoading.value = false;
   }
 }
 function goTxnPage(n: number): void {
   if (n < 1 || txnLoading.value) return;
   txnPage.value = n;
+  txnList.value = [];
   newOpsAvailable.value = false;
   if (n === 1) startLiveTxns();
   else {
@@ -1399,12 +1427,18 @@ function goTxnPage(n: number): void {
 }
 function backToLatest(): void {
   txnPage.value = 1;
+  txnList.value = [];
   txnCursors.value = [null];
   newOpsAvailable.value = false;
   startLiveTxns();
 }
+function retryTxnPage(): void {
+  if (txnPage.value === 1) startLiveTxns();
+  else void loadTxnPage();
+}
 watch([typeFilter, periodStart], () => {
   txnPage.value = 1;
+  txnList.value = [];
   txnCursors.value = [null];
   newOpsAvailable.value = false;
   startLiveTxns();
@@ -1442,6 +1476,7 @@ function refLabel(t: CashTransaction): string {
   const raw = String(t.reference_label || "").trim();
   const name =
     resolvedReferenceNames.value[t.id || ""] || extractReferenceName(raw);
+  if (t.type === "purchase_expense") return name ? `مصروف شراء إضافي · ${name}` : "مصروف شراء إضافي";
   if (
     t.type === "invoice_sale" ||
     t.type === "invoice_payment" ||

@@ -6,16 +6,21 @@ export const useCustomersStore = defineStore("customers", () => {
   const { readFrom, updateItem, db, serverTimestamp } = useFirebase();
   const list = ref<Customer[]>([]);
   const loaded = ref(false);
+  const fetchError = ref<string | null>(null);
   const lastFetchedAt = ref(0);
 
   const fetchCustomers = async (filters?: Record<string, string | number | boolean | Date | null | undefined>, force = false): Promise<boolean> => {
     const filtered = !!filters && Object.values(filters).some((value) => value !== undefined && value !== null && value !== "");
     if (!filtered && !force && loaded.value && Date.now() - lastFetchedAt.value < 30_000) return true;
-    if (useAuth().role === "cashier") {
-      const result = await callStaff<Record<string, never>, { items: Customer[] }>("getCashierCustomers", {});
-      list.value = result.items;
-    } else {
-      list.value = await readFrom<Customer>("customers", filters ?? {});
+    try {
+      const items = useAuth().role === "cashier"
+        ? (await callStaff<Record<string, never>, { items: Customer[] }>("getCashierCustomers", {})).items
+        : await readFrom<Customer>("customers", filters ?? {});
+      list.value = items;
+      fetchError.value = null;
+    } catch {
+      fetchError.value = "تعذر تحميل العملاء. تحقق من الاتصال ثم أعد المحاولة.";
+      return false;
     }
     if (!filtered) { loaded.value = true; lastFetchedAt.value = Date.now(); }
     return true;
@@ -59,5 +64,5 @@ export const useCustomersStore = defineStore("customers", () => {
     }
   };
 
-  return { list, loaded, lastFetchedAt, fetchCustomers, addCustomer, updateCustomer, deleteCustomer };
+  return { list, loaded, fetchError, lastFetchedAt, fetchCustomers, addCustomer, updateCustomer, deleteCustomer };
 });

@@ -5,9 +5,9 @@
     <UiAppCardsSkeleton v-if="loading && !items.length" layout="list" :count="3" />
     <div v-else class="grid gap-2">
       <UCard v-for="item in items" :key="item.id" variant="outline">
-        <div class="flex flex-wrap justify-between gap-2"><div><strong>{{ item.customer_name }}</strong><div class="text-xs text-gray-500">{{ formatDate(item.created_at) }} · فاتورة {{ item.invoice_id }}</div></div><b class="text-amber-700">{{ formatePrice(item.total_refund) }} ج</b></div>
+        <div class="flex flex-wrap justify-between gap-2"><div><strong>{{ item.customer_name }}</strong><div class="text-xs text-gray-500">{{ formatDate(item.created_at) }} · فاتورة {{ item.invoice_id }}</div></div><b class="text-amber-700">{{ formatePrice(item.total_refund) }}</b></div>
         <div class="mt-2 text-sm text-gray-600">{{ item.items.map((line) => `${line.quantity} × ${formatInvoiceLineName(line.product_name, line.unit_name)}`).join('، ') }}</div>
-        <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs"><span>تخفيض الدين: {{ formatePrice(item.debt_reduction) }} ج</span><span>نقد مردود: {{ formatePrice(item.cash_refund) }} ج</span><span>رصيد للعميل: {{ formatePrice((item.credit_issued || 0) + (item.credit_restored || 0)) }} ج</span></div>
+        <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs"><span>تخفيض الدين: {{ formatePrice(item.debt_reduction) }}</span><span>نقد مردود: {{ formatePrice(item.cash_refund) }}</span><span>رصيد للعميل: {{ formatePrice((item.credit_issued || 0) + (item.credit_restored || 0)) }}</span></div>
         <div class="mt-2 flex gap-2"><UButton size="xs" color="neutral" variant="link" @click="selected = item">التفاصيل</UButton><CustomerCreditPayout :customer-id="item.customer_id" :customer-name="item.customer_name" /></div>
       </UCard>
       <UEmpty v-if="!items.length" title="لا توجد مرتجعات" />

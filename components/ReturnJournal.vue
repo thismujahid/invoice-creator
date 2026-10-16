@@ -10,10 +10,10 @@
       <UCard v-for="entry in entries" :key="`${entry.kind}-${entry.record.id}`" variant="outline">
         <div class="flex flex-wrap items-start justify-between gap-2 text-sm">
           <div><UBadge color="warning" variant="soft">{{ entry.kind === 'customer' ? 'مرتجع عميل' : 'مرتجع مورد' }}</UBadge><span class="ms-2 font-semibold">{{ entry.name }}</span><p class="mt-1 text-xs text-gray-500">{{ formatDateTime(entry.record.created_at) }} · {{ entry.invoiceId }}</p></div>
-          <b>{{ formatePrice(entry.total) }} ج</b>
+          <b>{{ formatePrice(entry.total) }}</b>
         </div>
         <p class="mt-2 text-xs text-gray-600">{{ entry.items }}</p>
-        <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs"><span>{{ entry.kind === 'customer' ? 'تخفيض الدين' : 'تخفيض مستحق المورد' }}: {{ formatePrice(entry.offset) }} ج</span><span>{{ entry.kind === 'customer' ? 'نقد خرج' : 'رصيد نشأ لنا' }}: {{ formatePrice(entry.other) }} ج</span><span v-if="entry.kind === 'customer'">رصيد للعميل: {{ formatePrice((entry.record.credit_issued || 0) + (entry.record.credit_restored || 0)) }} ج</span><span v-if="entry.kind === 'supplier'">نقد حُصّل لاحقًا: {{ formatePrice(entry.record.cash_received || 0) }} ج</span><span v-if="entry.kind === 'supplier' && entry.record.cost_variance !== undefined">فرق تكلفة: {{ formatePrice(entry.record.cost_variance) }} ج</span></div>
+        <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs"><span>{{ entry.kind === 'customer' ? 'تخفيض الدين' : 'تخفيض مستحق المورد' }}: {{ formatePrice(entry.offset) }}</span><span>{{ entry.kind === 'customer' ? 'نقد خرج' : 'رصيد نشأ لنا' }}: {{ formatePrice(entry.other) }}</span><span v-if="entry.kind === 'customer'">رصيد للعميل: {{ formatePrice((entry.record.credit_issued || 0) + (entry.record.credit_restored || 0)) }}</span><span v-if="entry.kind === 'supplier'">نقد حُصّل لاحقًا: {{ formatePrice(entry.record.cash_received || 0) }}</span><span v-if="entry.kind === 'supplier' && entry.record.cost_variance !== undefined">فرق تكلفة: {{ formatePrice(entry.record.cost_variance) }}</span></div>
         <div class="mt-2 flex gap-2"><UButton size="xs" color="neutral" variant="link" @click="selectedEntry = entry">تفاصيل المرتجع</UButton><UButton size="xs" color="neutral" variant="link" @click="viewInvoice(entry)">عرض الفاتورة</UButton><CustomerCreditPayout v-if="entry.kind === 'customer'" :customer-id="entry.record.customer_id" :customer-name="entry.name" /></div>
       </UCard>
       <UEmpty v-if="!entries.length" title="لا توجد مرتجعات مسجلة" />

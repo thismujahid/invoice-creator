@@ -4,20 +4,21 @@
     router integration never sees a missing <NuxtPage /> (NUXT_E4011). -->
   <div>
     <div id="printableArea" class="printable-area"></div>
-    <div id="app-shell" class="flex min-h-dvh flex-col bg-gray-50" dir="rtl">
+    <div id="app-shell" class="flex min-h-dvh flex-col bg-slate-50" dir="rtl">
+      <a href="#main-content" class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:right-2 focus:z-50 focus:rounded-md focus:bg-white focus:px-4 focus:py-2">تخطي إلى المحتوى</a>
       <!-- Top bar -->
       <header
         class="sticky top-0 z-40 border-b border-gray-200 bg-white/90 backdrop-blur"
       >
         <div
-          class="mx-auto flex h-14 w-full max-w-6xl items-center gap-2 px-3 sm:px-4"
+          class="mx-auto flex h-14 w-full max-w-400 items-center gap-2 px-3 sm:px-4"
         >
-          <h1 class="min-w-0 flex-1 truncate text-base font-bold text-gray-900">
+          <div class="min-w-0 flex-1 truncate text-base font-bold text-gray-900">
             قريتي
             <span v-if="currentPageTitle" class="font-normal text-gray-500"
               >| {{ currentPageTitle }}</span
             >
-          </h1>
+          </div>
           <span class="hidden shrink-0 text-xs text-gray-400 md:block">{{
             todayLine
           }}</span>
@@ -43,28 +44,42 @@
 
       <!-- Body: desktop nav rail (right in RTL) + page -->
       <div
-        class="mx-auto flex w-full max-w-6xl min-w-0 flex-1 items-start gap-3 px-3 py-4 md:px-4"
+        class="mx-auto flex w-full max-w-400 min-w-0 flex-1 items-start gap-4 px-3 py-4 md:px-4"
       >
         <aside
           v-if="showChrome"
-          class="sticky top-18 bottom-none z-20 hidden w-38 shrink-0 flex-col items-center rounded-lg border border-gray-200 bg-white py-3 md:py-0 shadow-sm sm:flex"
+          class="sticky top-18 z-20 hidden shrink-0 flex-col rounded-lg border border-slate-200 bg-white p-2 lg:flex"
+          :class="sidebarCollapsed ? 'w-16' : 'w-60'"
           aria-label="التنقل الرئيسي"
         >
           <UButton
-            v-for="item in tabItems"
+            color="neutral"
+            variant="ghost"
+            :icon="sidebarCollapsed ? 'i-lucide-panel-right-open' : 'i-lucide-panel-right-close'"
+            :aria-label="sidebarCollapsed ? 'توسيع القائمة الجانبية' : 'طي القائمة الجانبية'"
+            :aria-expanded="!sidebarCollapsed"
+            class="mb-2 self-end"
+            @click="sidebarCollapsed = !sidebarCollapsed"
+          />
+          <template v-for="group in navigationGroups" :key="group.label">
+            <p v-if="!sidebarCollapsed && group.items.length" class="px-3 pt-3 pb-1 text-xs font-semibold text-slate-500">{{ group.label }}</p>
+          <UButton
+            v-for="item in group.items"
             :key="item.to"
             :icon="item.icon"
             :variant="isActiveTab(item.to) ? 'solid' : 'ghost'"
             :color="isActiveTab(item.to) ? 'success' : 'neutral'"
             :aria-label="item.label"
+            :aria-current="isActiveTab(item.to) ? 'page' : undefined"
             class="flex w-full flex-row items-center justify-start"
             @click="navigateTo(item.to)"
           >
-            {{ item.label }}</UButton
+            <span v-if="!sidebarCollapsed">{{ item.label }}</span></UButton
           >
+          </template>
         </aside>
 
-        <main class="min-w-0 flex-1">
+        <main id="main-content" class="min-w-0 flex-1" tabindex="-1">
           <slot />
         </main>
       </div>
@@ -103,30 +118,18 @@
         </template>
       </UiAppDialog>
 
+      <USlideover v-model:open="moreOpen" side="bottom" title="المزيد" description="انتقل إلى أحد أقسام التطبيق">
+        <template #body>
+          <nav aria-label="بقية الأقسام" class="space-y-1">
+            <UButton v-for="item in secondaryItems" :key="item.to" :icon="item.icon" color="neutral" variant="ghost" block class="justify-start" @click="goSecondary(item.to)">{{ item.label }}</UButton>
+          </nav>
+        </template>
+      </USlideover>
       <nav
         v-if="showChrome"
-        class="fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur sm:hidden"
+        class="fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden"
         aria-label="التنقل السريع"
       >
-        <div
-          v-if="moreOpen && secondaryItems.length"
-          class="absolute inset-x-3 bottom-full mb-2 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg"
-        >
-          <button
-            v-for="item in secondaryItems"
-            :key="item.to"
-            class="flex w-full items-center gap-2 px-3 py-2.5 text-sm"
-            :class="
-              isActiveTab(item.to)
-                ? 'font-bold text-emerald-600'
-                : 'text-gray-700'
-            "
-            @click="goSecondary(item.to)"
-          >
-            <UIcon :name="item.icon" class="size-5 shrink-0" />
-            {{ item.label }}
-          </button>
-        </div>
         <div class="grid grid-cols-4">
           <button
             v-for="item in primaryItems"
@@ -161,7 +164,7 @@
       <div
         v-if="showChrome"
         aria-hidden="true"
-        class="h-[calc(3.5rem+env(safe-area-inset-bottom))] sm:hidden"
+        class="h-[calc(3.5rem+env(safe-area-inset-bottom))] lg:hidden"
       />
     </div>
   </div>
@@ -236,6 +239,12 @@ const PRIMARY_TOS = ["/", "/invoices", "/debts"];
 const primaryItems = computed(() => tabItems.value.filter((t) => PRIMARY_TOS.includes(t.to as string)));
 const secondaryItems = computed(() => tabItems.value.filter((t) => !PRIMARY_TOS.includes(t.to as string)));
 const moreOpen = ref(false);
+const sidebarCollapsed = ref(false);
+const navigationGroups = computed(() => [
+  { label: "المبيعات", items: tabItems.value.filter((item) => ["/", "/invoices", "/debts", "/customers"].includes(item.to)) },
+  { label: "المخزون والمشتريات", items: tabItems.value.filter((item) => ["/products", "/suppliers", "/supplier-invoices"].includes(item.to)) },
+  { label: "المالية", items: tabItems.value.filter((item) => ["/cashbox", "/cashier-cashbox"].includes(item.to)) },
+]);
 const moreActive = computed(() =>
   secondaryItems.value.some((t) => isActiveTab(t.to as string)),
 );

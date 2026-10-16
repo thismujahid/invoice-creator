@@ -1,7 +1,7 @@
 <template>
   <div class="rounded-xl bg-white p-3 shadow-sm sm:p-4" dir="rtl">
-    <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-      <h2 class="text-lg font-bold text-gray-900">دفتر الديون</h2>
+    <UiAppPageHeader title="دفتر الديون" description="حسابات العملاء المتاحة لدور الكاشير">
+      <template #actions>
       <div class="flex gap-2">
         <UButton
           icon="i-lucide-refresh-cw"
@@ -18,7 +18,8 @@
           >إضافة سلفة</UButton
         >
       </div>
-    </div>
+      </template>
+    </UiAppPageHeader>
     <div
       v-if="customerFilter.id"
       class="mb-3 flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm"
@@ -98,7 +99,7 @@
                 >
               </td>
               <td class="p-2 font-semibold">
-                {{ formatePrice(row.invoiceDebt) }} ج × {{ row.unpaidCount }}
+                {{ formatePrice(row.invoiceDebt) }} × {{ row.unpaidCount }}
               </td>
               <td class="p-2">{{ formatePrice(row.loanDebt) }}</td>
               <td class="p-2 font-bold text-emerald-700">
@@ -230,7 +231,7 @@
             <div>
               الفواتير:
               <b dir="ltr"
-                >{{ formatePrice(row.invoiceDebt) }} ج ×
+                >{{ formatePrice(row.invoiceDebt) }} ×
                 {{ row.unpaidCount }}</b
               >
             </div>
@@ -269,7 +270,6 @@
                   Math.abs(round2(row.totalDebt - row.creditBalance)),
                 )
               }}
-              ج
             </div>
           </div>
         </UCard>
@@ -282,11 +282,12 @@
       <div class="mt-3 flex items-center justify-between gap-2">
         <USelect
           v-model="perPage"
+          aria-label="عدد العملاء في الصفحة"
           :items="[10, 25, 50, 100]"
           size="sm"
           class="w-24"
         />
-        <UPagination
+        <UiAppPagination
           v-model:page="page"
           :total="filtered.length"
           :items-per-page="perPage"
@@ -336,14 +337,12 @@
             ></template
           ></UAlert
         >
+        <UButton size="sm" color="neutral" variant="soft" @click="customerOpen = true">إضافة عميل جديد</UButton>
         <FormsCustomer
           v-model="customerOpen"
           :refresher="refreshCustomers"
           @done="onCustomerCreated"
-          ><UButton size="sm" color="neutral" variant="soft"
-            >إضافة عميل جديد</UButton
-          ></FormsCustomer
-        >
+        />
         <UFormField label="مبلغ السلفة" required
           ><UInputNumber
             v-model="loanAmount"
@@ -374,10 +373,10 @@
       :z-index="30"
       ><div v-if="payTarget" class="space-y-3">
         <div class="rounded-lg bg-gray-50 p-2 text-sm">
-          إجمالي الدين: <b>{{ formatePrice(payTarget.totalDebt) }} ج</b>
+          إجمالي الدين: <b>{{ formatePrice(payTarget.totalDebt) }}</b>
         </div>
         <div v-if="mustSettleFirst" class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
-          <div class="mb-2">للعميل رصيد {{ formatePrice(payTarget.creditBalance) }} ج. سوِّ الدين من الرصيد أولًا، ثم سجّل أي دفعة نقدية متبقية.</div>
+          <div class="mb-2">للعميل رصيد {{ formatePrice(payTarget.creditBalance) }}. سوِّ الدين من الرصيد أولًا، ثم سجّل أي دفعة نقدية متبقية.</div>
           <CustomerCreditSettlement
             :customer-id="payTarget.customer_id"
             :customer-name="payTarget.name"

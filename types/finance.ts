@@ -23,6 +23,7 @@ export type CashTransactionType =
   | "inventory_adjustment"
   | "supplier_return"
   | "supplier_payment"
+  | "purchase_expense"
   | "supplier_advance_refund";
 
 export type CashDirection = "in" | "out";
@@ -38,6 +39,7 @@ export interface CashTransaction {
   loan_id?: string | null;
   product_id?: string | null;
   purchase_invoice_id?: string | null;
+  purchase_expense_id?: string | null;
   debt_payment_id?: string | null;
   reference_type?: "invoice" | "supplier_invoice" | "loan" | "return" | "customer_credit" | "product" | "manual" | null;
   reference_id?: string | null;
@@ -63,6 +65,7 @@ export const CASH_TYPE_LABELS: Record<CashTransactionType, string> = {
   inventory_adjustment: "تسوية مخزون",
   supplier_return: "استرجاع منتجات للمورد",
   supplier_payment: "سداد مورد",
+  purchase_expense: "مصروف شراء",
   supplier_advance_refund: "استرداد سلفة مورد",
 };
 
@@ -122,6 +125,32 @@ export interface PurchaseInvoiceItem {
   base_quantity?: number | null;
   base_unit_cost?: number | null;
   line_total: number;
+  capitalized_expense_amount?: number;
+  effective_line_total?: number;
+  effective_unit_cost?: number;
+  effective_base_unit_cost?: number;
+}
+
+export type PurchaseExpenseType = "delivery" | "loading" | "handling" | "custom" | "tip";
+export type PurchaseExpenseAllocationMethod = "value" | "quantity" | "equal" | "manual";
+
+export interface PurchaseExpenseAllocation {
+  line_index: number;
+  allocated_amount: number;
+}
+
+export interface PurchaseExpense {
+  id: string;
+  type: PurchaseExpenseType;
+  description: string | null;
+  amount: number;
+  allocation_method: PurchaseExpenseAllocationMethod;
+  capitalize: boolean;
+  paid: boolean;
+  payment_status: "paid" | "unpaid";
+  payment_id: string | null;
+  recipient: string | null;
+  allocations: PurchaseExpenseAllocation[];
 }
 
 export type SupplierInvoiceStatus = "unpaid" | "partial" | "paid";
@@ -136,6 +165,10 @@ export interface PurchaseInvoice {
   source?: "manual" | "excel_import" | "repeat";
   pinned?: boolean;
   items: PurchaseInvoiceItem[];
+  expenses?: PurchaseExpense[];
+  capitalized_expense_total?: number;
+  non_capitalized_expense_total?: number;
+  purchase_outlay_total?: number;
   total_amount: number;
   paid_amount: number;
   remaining_amount: number;

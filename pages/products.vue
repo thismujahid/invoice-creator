@@ -1,7 +1,8 @@
 <template>
   <div class="rounded-xl bg-white p-3 shadow-sm sm:p-4">
-    <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-      <h2 class="text-lg font-bold text-gray-900">المنتجات</h2>
+    <UiAppPageHeader title="المنتجات" description="الأصناف والأنواع والوحدات والمخزون">
+      <template #actions>
+      <UBadge v-if="productsStore.inventorySyncState === 'cache'" color="warning" variant="soft">بيانات مخزنة مؤقتًا</UBadge>
       <div class="flex flex-wrap items-center gap-2">
         <UButton
           v-if="isAdmin"
@@ -31,7 +32,8 @@
           >
         </FormsProduct>
       </div>
-    </div>
+      </template>
+    </UiAppPageHeader>
     <UAlert
       v-if="productsStore.syncError || loadError"
       color="error"
@@ -49,8 +51,8 @@
       :products="productsStore.list"
       :show-cost="false"
     />
-    <ProductsPurchaseImportDialog
-      v-if="isAdmin"
+    <LazyProductsPurchaseImportDialog
+      v-if="isAdmin && importOpen"
       v-model:open="importOpen"
       :products="productsStore.list"
       :cash-balance="cashBalance"
@@ -59,11 +61,13 @@
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
       <UInput
         v-model="searchText"
+        aria-label="بحث عن منتج أو نوع أو عبوة"
         placeholder="بحث"
         icon="i-lucide-search"
         size="lg"
         class="w-full sm:max-w-xs"
       />
+      <USelect v-model="sortBy" :items="sortOptions" value-key="value" label-key="label" aria-label="ترتيب المنتجات" class="w-full sm:w-44" />
       <UButton
         v-if="isAdmin"
         :color="showArchived ? 'warning' : 'neutral'"
@@ -75,14 +79,14 @@
       <div v-if="isAdmin" class="flex flex-wrap items-center gap-2">
         <UButton
           v-if="
-            prodsList.length > 0 &&
-            selectProducts.length < prodsList.length
+            matchingProductIds.length > 0 &&
+            !matchingProductIds.every((id) => selectProducts.includes(id))
           "
           icon="i-lucide-check-check"
           color="neutral"
           variant="soft"
           @click="selectAllFiltered"
-          >تحديد الكل ({{ prodsList.length }})</UButton
+          >تحديد كل الأصناف المطابقة في كل الصفحات ({{ matchingProductIds.length }})</UButton
         >
         <template v-if="selectProducts.length > 0">
           <template v-if="!showArchived">
@@ -155,45 +159,67 @@
       <div class="hidden overflow-x-auto md:block">
         <table class="w-full text-sm">
           <thead><tr class="border-b text-gray-500">
-            <th v-if="isAdmin" class="w-10 p-3"></th>
-            <th class="p-3 text-start">اسم المنتج</th><th class="p-3 text-start">الكمية المتاحة</th><th class="p-3 text-start">الأسعار</th><th v-if="isAdmin" class="p-3 text-start">الإجراءات</th>
+            <th v-if="isAdmin" scope="col" aria-label="تحديد المنتجات" class="w-10 p-3"></th>
+            <th scope="col" class="p-3 text-start">اسم المنتج</th><th scope="col" class="p-3 text-start">الكمية المتاحة</th><th scope="col" class="p-3 text-start">الأسعار</th><th v-if="isAdmin" scope="col" class="p-3 text-start">الإجراءات</th>
           </tr></thead>
           <tbody>
-            <tr v-for="p in paginateArray" :key="p.id" class="border-b border-gray-100">
-              <td v-if="isAdmin" class="p-3"><UCheckbox :model-value="groupSelected(p.variants)" @update:model-value="toggleGroup(p.variants)" /></td>
-              <td class="p-3 font-semibold">{{ p.name }}</td>
-              <td class="p-3"><span v-if="!p.complex">{{ stockQuantityLabel(p.variants[0]!) }}</span><UButton v-else variant="soft" color="neutral" icon="i-lucide-boxes" @click="showDetails(p.id, 'quantities')">عرض الكميات</UButton></td>
-              <td class="p-3"><span v-if="!p.complex">{{ simplePrice(p.variants[0]!) }}</span><UButton v-else variant="soft" color="neutral" icon="i-lucide-tags" @click="showDetails(p.id, 'prices')">عرض الأسعار</UButton></td>
+            <template v-for="p in paginateArray" :key="p.id">
+            <tr class="border-b border-gray-100">
+              <td v-if="isAdmin" class="p-3"><UCheckbox :aria-label="`تحديد جميع وحدات ${p.name}`" :model-value="groupSelected(p.variants)" @update:model-value="toggleGroup(p.variants)" /></td>
+              <td class="p-3 font-semibold">
+                <UButton v-if="p.complex" color="neutral" variant="ghost" :icon="expandedGroupId === p.id ? 'i-lucide-chevron-down' : 'i-lucide-chevron-left'" :aria-expanded="expandedGroupId === p.id" :aria-label="`${expandedGroupId === p.id ? 'طي' : 'عرض'} أنواع ووحدات ${p.name}`" @click="expandedGroupId = expandedGroupId === p.id ? null : p.id">{{ p.name }}</UButton>
+                <span v-else>{{ p.name }}</span>
+                <UBadge v-if="shortageByFamily.get(p.id)?.out" color="error" variant="soft" size="xs" class="ms-2">وحدات نافدة: {{ shortageByFamily.get(p.id)?.out }}</UBadge>
+                <UBadge v-if="lowOnlyCount(p.id)" color="warning" variant="soft" size="xs" class="ms-2">وحدات منخفضة: {{ lowOnlyCount(p.id) }}</UBadge>
+              </td>
+              <td class="p-3"><span v-if="!p.complex">{{ stockQuantityLabel(p.variants[0]!) }}</span><span v-else class="text-slate-500">{{ p.variants.length }} نوع/عبوة · افتح الصف للتفاصيل</span></td>
+              <td class="p-3"><span v-if="!p.complex">{{ simplePrice(p.variants[0]!) }}</span><span v-else class="text-slate-500">حسب النوع والوحدة</span></td>
               <td v-if="isAdmin" class="p-3"><div class="flex flex-wrap gap-2">
                 <template v-if="showArchived">
                   <UButton size="sm" variant="soft" color="success" icon="i-lucide-archive-restore" :loading="unarchivingId === p.id" @click="confirmUnarchive(p)">إلغاء الأرشفة</UButton>
                 </template>
                 <template v-else>
-                  <UButton size="sm" variant="soft" @click="editProduct({ id: p.variants[0]?.id })">تعديل</UButton>
                   <UButton size="sm" variant="soft" color="info" @click="chooseVariant(p.id, 'purchase')">شراء</UButton>
-                  <UButton size="sm" variant="soft" color="neutral" @click="chooseVariant(p.id, 'adjust')">جرد</UButton>
-                  <UButton size="sm" variant="soft" color="warning" @click="confirmDelete = { id: p.variants[0]?.id, name: p.name, ids: p.variants.flatMap(v => v.id ? [v.id] : []) }">أرشفة</UButton>
+                  <UDropdownMenu :items="productActionItems(p)"><UButton size="sm" variant="soft" color="neutral" icon="i-lucide-ellipsis">المزيد</UButton></UDropdownMenu>
                 </template>
               </div></td>
             </tr>
+            <tr v-if="expandedGroupId === p.id" class="border-b border-slate-200 bg-slate-50/70">
+              <td :colspan="isAdmin ? 5 : 3" class="p-3">
+                <div class="grid gap-3 lg:grid-cols-2">
+                  <section v-for="type in groupProductsByVariant(p.variants)" :key="type.key" class="rounded-lg border border-slate-200 bg-white p-3">
+                    <h3 v-if="p.variants[0]?.uses_variants !== false" class="mb-2 font-semibold text-slate-900">{{ type.name }}</h3>
+                    <div v-for="variant in type.products" :key="variant.id" class="mb-3 last:mb-0">
+                      <h4 v-if="variant.inventory_mode === 'independent'" class="font-medium text-slate-700">{{ variant.pack_size_name }}</h4>
+                      <p class="text-xs text-slate-600">المخزون الفعلي: {{ stockQuantityLabel(variant) }}</p>
+                      <div v-for="unit in unitsForProduct(variant).filter((item) => !item.archived)" :key="unit.id" class="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-slate-100 pt-2 text-xs">
+                        <strong>{{ unit.name }}</strong>
+                        <span>متاح {{ unitStockDisplay(variant, unit) }} {{ unit.name }}</span>
+                        <span>بيع <UiAppMoneyDisplay v-if="unit.selling_price != null" :text="formatePrice(unit.selling_price)" /><span v-else>غير محدد</span></span>
+                        <span v-if="isAdmin">متوسط تكلفة <UiAppMoneyDisplay v-if="unitAverageCost(variant, unit) != null" :text="formatePrice(unitAverageCost(variant, unit))" /><span v-else>غير متاح</span></span>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              </td>
+            </tr>
+            </template>
           </tbody>
         </table>
       </div>
       <div class="space-y-3 md:hidden">
         <UCard v-for="p in paginateArray" :key="p.id">
-          <div class="flex items-center gap-2"><UCheckbox v-if="isAdmin" :model-value="groupSelected(p.variants)" @update:model-value="toggleGroup(p.variants)" /><h3 class="font-bold">{{ p.name }}</h3></div>
+          <div class="flex flex-wrap items-center gap-2"><UCheckbox v-if="isAdmin" :aria-label="`تحديد جميع وحدات ${p.name}`" class="min-h-11 min-w-11 items-center justify-center" :model-value="groupSelected(p.variants)" @update:model-value="toggleGroup(p.variants)" /><h3 class="font-bold">{{ p.name }}</h3><UBadge v-if="shortageByFamily.get(p.id)?.out" color="error" variant="soft" size="xs">وحدات نافدة: {{ shortageByFamily.get(p.id)?.out }}</UBadge><UBadge v-if="lowOnlyCount(p.id)" color="warning" variant="soft" size="xs">وحدات منخفضة: {{ lowOnlyCount(p.id) }}</UBadge></div>
           <div class="mt-3 flex flex-wrap gap-2">
             <span v-if="!p.complex" class="text-sm">{{ stockQuantityLabel(p.variants[0]!) }} · سعر البيع {{ simplePrice(p.variants[0]!) }}</span>
-            <UButton v-if="p.complex" color="neutral" variant="soft" @click="showDetails(p.id, 'quantities')">عرض الكميات</UButton>
-            <UButton v-if="p.complex" color="neutral" variant="soft" @click="showDetails(p.id, 'prices')">عرض الأسعار</UButton>
+            <UButton v-if="p.complex" color="neutral" variant="soft" class="min-h-11" @click="showDetails(p.id, 'quantities')">عرض الكميات</UButton>
+            <UButton v-if="p.complex" color="neutral" variant="soft" class="min-h-11" @click="showDetails(p.id, 'prices')">عرض الأسعار</UButton>
             <template v-if="isAdmin && showArchived">
-              <UButton variant="soft" color="success" icon="i-lucide-archive-restore" :loading="unarchivingId === p.id" @click="confirmUnarchive(p)">إلغاء الأرشفة</UButton>
+              <UButton variant="soft" color="success" icon="i-lucide-archive-restore" class="min-h-11" :loading="unarchivingId === p.id" @click="confirmUnarchive(p)">إلغاء الأرشفة</UButton>
             </template>
             <template v-else-if="isAdmin">
-              <UButton variant="soft" @click="editProduct({ id: p.variants[0]?.id })">تعديل</UButton>
-              <UButton color="info" variant="soft" @click="chooseVariant(p.id, 'purchase')">شراء</UButton>
-              <UButton color="neutral" variant="soft" @click="chooseVariant(p.id, 'adjust')">جرد</UButton>
-              <UButton color="warning" variant="soft" @click="confirmDelete = { id: p.variants[0]?.id, name: p.name, ids: p.variants.flatMap(v => v.id ? [v.id] : []) }">أرشفة</UButton>
+              <UButton color="info" variant="soft" class="min-h-11" @click="chooseVariant(p.id, 'purchase')">شراء</UButton>
+              <UDropdownMenu :items="productActionItems(p)"><UButton color="neutral" variant="soft" icon="i-lucide-ellipsis" class="min-h-11">المزيد</UButton></UDropdownMenu>
             </template>
           </div>
         </UCard>
@@ -210,7 +236,7 @@
             <p v-if="detailMode === 'quantities'" class="text-sm text-gray-500">المخزون الفعلي: {{ stockQuantityLabel(variant) }}</p>
             <div v-for="unit in unitsForProduct(variant).filter(unit => !unit.archived)" :key="unit.id" class="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 py-2">
               <span class="font-semibold">{{ unit.name }}</span>
-              <div v-if="detailMode === 'prices'" class="text-sm"><p>سعر البيع: {{ unit.selling_price == null ? 'غير محدد' : `${formatePrice(unit.selling_price)} ج` }}</p><p v-if="isAdmin" class="text-gray-500">تكلفة التسعير: {{ unitReferenceCost(variant, unit) == null ? 'غير متاح' : `${formatePrice(unitReferenceCost(variant, unit))} ج` }}</p><p v-if="isAdmin" class="text-gray-500">متوسط المخزون: {{ unitAverageCost(variant, unit) == null ? 'غير متاح' : `${formatePrice(unitAverageCost(variant, unit))} ج` }}</p></div>
+              <div v-if="detailMode === 'prices'" class="text-sm"><p>سعر البيع: {{ unit.selling_price == null ? 'غير محدد' : `${formatePrice(unit.selling_price)}` }}</p><p v-if="isAdmin" class="text-gray-500">تكلفة التسعير: {{ unitReferenceCost(variant, unit) == null ? 'غير متاح' : `${formatePrice(unitReferenceCost(variant, unit))}` }}</p><p v-if="isAdmin" class="text-gray-500">متوسط المخزون: {{ unitAverageCost(variant, unit) == null ? 'غير متاح' : `${formatePrice(unitAverageCost(variant, unit))}` }}</p></div>
               <span v-else>متاح {{ unitStockDisplay(variant, unit) }} {{ unit.name }}</span>
             </div>
           </div>
@@ -223,11 +249,12 @@
     <div class="mt-3 flex items-center justify-between gap-2">
       <USelect
         v-model="currentPerPage"
+        aria-label="عدد مجموعات المنتجات في الصفحة"
         :items="[10, 25, 50, 100, 150]"
         size="sm"
         class="w-24"
       />
-      <UPagination
+      <UiAppPagination
         v-model:page="currentPage"
         :total="familyRows.length"
         :items-per-page="currentPerPage"
@@ -429,7 +456,7 @@
         >
           <UFormField
             label="متوسط التكلفة الجديد"
-            :hint="`سعر التكلفة القديم: ${formatePrice(purchaseOldUnitAvg)} ج`"
+            :hint="`سعر التكلفة القديم: ${formatePrice(purchaseOldUnitAvg)}`"
           >
             <UInputNumber
               :model-value="suggestedAvgUnit"
@@ -442,7 +469,7 @@
           </UFormField>
           <div class="space-y-1 text-xs">
             <p class="font-semibold">أسعار البيع بعد الشراء</p>
-            <p v-for="unit in automaticPrices.filter(unit => !unit.archived && unit.can_sell !== false)" :key="unit.id">{{ unit.name }}: {{ unit.selling_price == null ? 'يلزم تحديد السعر يدويًا' : `${formatePrice(unit.selling_price)} ج` }}</p>
+            <p v-for="unit in automaticPrices.filter(unit => !unit.archived && unit.can_sell !== false)" :key="unit.id">{{ unit.name }}: {{ unit.selling_price == null ? 'يلزم تحديد السعر يدويًا' : `${formatePrice(unit.selling_price)}` }}</p>
           </div>
           <UCheckbox v-if="purchaseUnitSellable" v-model="purchasePriceEnabled" label="تعديل سعر بيع هذه الوحدة يدويًا" />
           <UFormField
@@ -451,7 +478,7 @@
             :hint="
               purchaseUnitOldPrice === null
                 ? 'لم يُسعر من قبل'
-                : `سعر البيع القديم: ${formatePrice(purchaseUnitOldPrice)} ج`
+                : `سعر البيع القديم: ${formatePrice(purchaseUnitOldPrice)}`
             "
             :error="purchasePriceError || undefined"
           >
@@ -467,33 +494,29 @@
         </div>
         <div class="space-y-1 rounded-lg bg-gray-50 p-3 text-sm">
           <div class="flex justify-between">
-            <span>إجمالي الشراء</span><b>{{ formatePrice(purchaseTotal) }} ج</b>
+            <span>إجمالي الشراء</span><b>{{ formatePrice(purchaseTotal) }}</b>
           </div>
           <div class="flex justify-between">
-            <span>رصيد الخزنة</span><b>{{ formatePrice(cashBalance) }} ج</b>
+            <span>رصيد الخزنة</span><b>{{ formatePrice(cashBalance) }}</b>
           </div>
-          <div class="flex items-center justify-between gap-2">
-            <span>المدفوع الآن</span>
+          <UFormField label="المدفوع الآن" :error="purchasePaidError || undefined">
             <UInputNumber
               :model-value="purchasePaid"
               :min="0"
               :max="cashBalance"
               :step="0.01"
               size="sm"
-              class="w-40"
+              class="w-full"
               @update:model-value="setPurchasePaid"
             />
-          </div>
-          <p v-if="purchasePaidError" class="text-xs text-red-600">
-            {{ purchasePaidError }}
-          </p>
+          </UFormField>
           <div class="flex justify-between">
             <span>الباقي المستحق</span
             ><b class="text-amber-700"
               >{{
                 formatePrice(Math.max(0, purchaseTotal - (purchasePaid ?? 0)))
               }}
-              ج</b
+             </b
             >
           </div>
           <div
@@ -501,7 +524,7 @@
             class="flex justify-between text-blue-700"
           >
             <span>سلفة مستحقة لنا</span
-            ><b>{{ formatePrice((purchasePaid ?? 0) - purchaseTotal) }} ج</b>
+            ><b>{{ formatePrice((purchasePaid ?? 0) - purchaseTotal) }}</b>
           </div>
         </div>
         <!-- Cost blending + selling price: compact card, shown only when the
@@ -653,7 +676,8 @@
 
 <script setup lang="ts">
 import { repriceUnits, unitReferenceCost } from "~/functions/shared/unitPricing.mjs";
-import { groupProductVariants, groupProductsByVariant, productSkuLabel } from "~/utils/productVariants";
+import { groupProductVariants, groupProductsByVariant, productFamilyKey, productSkuLabel } from "~/utils/productVariants";
+import { shortageUnitRowsOf } from "~/composables/finance";
 import type { Invoice, Product } from "~/types";
 import type { ProductUnit } from "~/types";
 import type { Supplier } from "~/types/finance";
@@ -786,8 +810,17 @@ async function refreshAfterPurchase(): Promise<void> {
   await Promise.all([productsStore.fetchProducts(), cashbox.fetchCashbox()]);
 }
 
+const sortBy = ref<"recent" | "name" | "stock">("recent");
+const sortOptions = [
+  { label: "الأحدث", value: "recent" },
+  { label: "اسم المنتج", value: "name" },
+  { label: "حالة المخزون", value: "stock" },
+];
 // FLAG [B4-FIXED]: no mutation inside computed; watcher resets page.
 watch(searchText, () => {
+  currentPage.value = 1;
+});
+watch(sortBy, () => {
   currentPage.value = 1;
 });
 watch(showArchived, () => {
@@ -795,28 +828,53 @@ watch(showArchived, () => {
   selectProducts.value = [];
 });
 
-const prodsList = computed<Product[]>(() => {
-  const q = searchText.value?.trim().toLowerCase();
-  const source = showArchived.value
-    ? productsStore.list.filter((prod) => prod.is_active === false)
-    : productsStore.list.filter((prod) => prod.is_active !== false);
-  if (!q) return [...source];
-  return source.filter((prod) =>
-    prod.name?.toLowerCase().includes(q),
-  );
-});
 const familyRows = computed(() => {
   const query = searchText.value?.trim().toLocaleLowerCase();
   const activeList = showArchived.value ? productsStore.list.filter((p) => p.is_active === false) : productsStore.list.filter((p) => p.is_active !== false);
   return groupProductVariants([...activeList].sort((a, b) => (toDateSafe(b.date)?.getTime() ?? 0) - (toDateSafe(a.date)?.getTime() ?? 0)))
     .filter((group) => !query || group.name.toLocaleLowerCase().includes(query) || group.variants.some((variant) => variant.variant_name?.toLocaleLowerCase().includes(query) || variant.pack_size_name?.toLocaleLowerCase().includes(query)))
-    .map((group) => ({ ...group, complex: group.variants.length > 1 || group.variants.some((variant) => unitsForProduct(variant).filter((unit) => !unit.archived).length > 1) }));
+    .map((group) => ({ ...group, complex: group.variants.length > 1 || group.variants.some((variant) => unitsForProduct(variant).filter((unit) => !unit.archived).length > 1) }))
+    .sort((left, right) => sortBy.value === "name"
+      ? left.name.localeCompare(right.name, "ar")
+      : sortBy.value === "stock"
+        ? inventoryPriority(left.id) - inventoryPriority(right.id) || left.name.localeCompare(right.name, "ar")
+        : 0);
 });
+const matchingProductIds = computed(() => familyRows.value.flatMap((group) => group.variants)
+  .map((product) => product.id)
+  .filter((id): id is string => !!id));
+const expandedGroupId = ref<string | null>(null);
+const shortageByFamily = computed(() => {
+  const totals = new Map<string, { count: number; out: number }>();
+  for (const row of shortageUnitRowsOf(productsStore.activeProducts)) {
+    const key = productFamilyKey(row.product);
+    const entry = totals.get(key) ?? { count: 0, out: 0 };
+    entry.count += 1;
+    if (row.current <= 0) entry.out += 1;
+    totals.set(key, entry);
+  }
+  return totals;
+});
+function inventoryPriority(familyId: string): number {
+  const entry = shortageByFamily.value.get(familyId);
+  return entry?.out ? 0 : entry?.count ? 1 : 2;
+}
+function lowOnlyCount(familyId: string): number {
+  const entry = shortageByFamily.value.get(familyId);
+  return entry ? entry.count - entry.out : 0;
+}
 function simplePrice(product: Product): string {
   const unit = unitsForProduct(product).find((unit) => !unit.archived);
-  return unit?.selling_price == null ? "غير محدد" : `${formatePrice(unit.selling_price)} ج`;
+  return unit?.selling_price == null ? "غير محدد" : `${formatePrice(unit.selling_price)}`;
 }
 const paginateArray = computed(() => familyRows.value.slice((currentPage.value - 1) * currentPerPage.value, currentPage.value * currentPerPage.value));
+function productActionItems(group: (typeof familyRows.value)[number]) {
+  return [
+    { label: "تعديل المنتج", icon: "i-lucide-pencil", onSelect: () => editProduct({ id: group.variants[0]?.id }) },
+    { label: "جرد المخزون", icon: "i-lucide-clipboard-list", onSelect: () => chooseVariant(group.id, "adjust") },
+    { label: "أرشفة المنتج", icon: "i-lucide-archive", color: "warning" as const, onSelect: () => { confirmDelete.value = { id: group.variants[0]?.id, name: group.name, ids: group.variants.flatMap((variant) => variant.id ? [variant.id] : []) }; } },
+  ];
+}
 const detailsOpen = ref(false);
 const detailMode = ref<"prices" | "quantities">("prices");
 const detailId = ref("");
@@ -853,9 +911,7 @@ function toggleGroup(variants: Product[]): void {
 }
 /** Select every product matching the current search (across all pages). */
 function selectAllFiltered(): void {
-  selectProducts.value = familyRows.value.flatMap((group) => group.variants)
-    .map((p) => p.id)
-    .filter((id): id is string => !!id);
+  selectProducts.value = matchingProductIds.value;
 }
 const bulkSelectedProducts = computed(() => {
   const selected = new Set(selectProducts.value);
@@ -1147,7 +1203,7 @@ async function doPurchase(): Promise<void> {
     }
     if (res.remaining !== undefined && res.remaining > 0) {
       notifyToast(
-        `تم تسجيل فاتورة شراء بباقٍ مستحق ${formatePrice(res.remaining)} ج.`,
+        `تم تسجيل فاتورة شراء بباقٍ مستحق ${formatePrice(res.remaining)}.`,
         "success",
       );
     } else {

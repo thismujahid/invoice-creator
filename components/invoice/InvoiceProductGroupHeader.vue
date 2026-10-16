@@ -1,9 +1,15 @@
 <template>
-  <header
-    @click="emit('toggle')"
-    class="mb-2 flex flex-wrap cursor-pointer items-center gap-2"
-  >
+  <header class="mb-2 flex flex-wrap items-center gap-2">
     <div class="flex min-w-0 flex-1 items-center gap-2">
+      <UButton
+        size="sm"
+        color="neutral"
+        variant="ghost"
+        :icon="collapsed ? 'i-lucide-chevron-left' : 'i-lucide-chevron-down'"
+        :aria-label="collapsed ? `توسيع ${title}` : `طي ${title}`"
+        :aria-expanded="!collapsed"
+        @click="emit('toggle')"
+      />
       <div>
         <h3
           class="min-w-0 flex-1 truncate text-sm font-extrabold text-slate-800"
@@ -17,7 +23,7 @@
       </div>
     </div>
 
-    <div class="flex shrink-0 items-center gap-1.5">
+    <div v-if="!hideActions" class="flex shrink-0 items-center gap-1.5">
       <UButton
         size="sm"
         color="info"
@@ -51,7 +57,7 @@
         @click.stop="emit('move-down')"
       />
       <UButton
-        v-if="!confirming"
+        v-if="canDelete && !confirming"
         size="sm"
         color="error"
         variant="soft"
@@ -61,7 +67,7 @@
         class="flex min-h-6 min-w-6 items-center justify-center"
         @click.stop="arm"
       />
-      <span v-else class="flex items-center gap-1">
+      <span v-else-if="canDelete" class="flex items-center gap-1">
         <UButton size="sm" color="error" class="min-h-6" @click.stop="confirm"
           >تأكيد حذف {{ subLineCount }} بنود؟</UButton
         >

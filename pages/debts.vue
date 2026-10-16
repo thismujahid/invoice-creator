@@ -1,8 +1,8 @@
 <template>
-  <CashierDebtDesk v-if="!isAdmin" />
-  <div v-else class="rounded-xl bg-white p-3 shadow-sm sm:p-4">
-    <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-      <h2 class="text-lg font-bold text-gray-900">دفتر الديون</h2>
+  <CashierDebtDesk v-if="hydrated && authRole === 'cashier'" />
+  <div v-else-if="isAdmin" class="rounded-xl bg-white p-3 shadow-sm sm:p-4">
+    <UiAppPageHeader title="دفتر الديون" description="التزامات العملاء والسلف والأرصدة">
+      <template #actions>
       <div class="flex flex-wrap gap-2">
         <UButton
           icon="i-lucide-printer"
@@ -19,14 +19,17 @@
           >إضافة سلفة</UButton
         >
       </div>
-    </div>
+      </template>
+    </UiAppPageHeader>
     <UInput
       v-model="searchText"
+      aria-label="بحث في دفتر الديون"
       placeholder="بحث بالاسم أو الهاتف"
       icon="i-lucide-search"
       size="lg"
       class="mb-3 w-full sm:max-w-xs"
     />
+    <UAlert v-if="bookError" color="error" variant="soft" :title="bookError" class="mb-3"><template #actions><UButton color="error" variant="soft" @click="reload">إعادة المحاولة</UButton></template></UAlert>
     <template v-if="loading">
       <UiAppStatsSkeleton :count="4" />
       <UiAppTableSkeleton />
@@ -36,21 +39,21 @@
       <div class="mb-3 grid grid-cols-2 gap-2 lg:grid-cols-4">
         <UCard variant="outline">
           <div class="text-lg font-bold text-red-600 sm:text-xl">
-            {{ formatePrice(displayed.invoiceDebts) }}
+            <UiAppMoneyDisplay :text="formatePrice(displayed.invoiceDebts)" />
           </div>
           <div class="text-xs text-gray-500">ديون الفواتير المعروضة</div>
         </UCard>
         <UCard variant="outline">
           <div class="text-lg font-bold text-red-600 sm:text-xl">
-            {{ formatePrice(displayed.loanDebts) }}
+            <UiAppMoneyDisplay :text="formatePrice(displayed.loanDebts)" />
           </div>
-          <div class="text-xs text-gray-500">إجمالي السلف</div>
+          <div class="text-xs text-gray-500">سلف العملاء المعروضة</div>
         </UCard>
         <UCard variant="outline">
           <div class="text-lg font-bold text-red-700 sm:text-xl">
-            {{ formatePrice(displayed.totalDebts) }}
+            <UiAppMoneyDisplay :text="formatePrice(displayed.totalDebts)" />
           </div>
-          <div class="text-xs text-gray-500">إجمالي ديون الفواتير والسلف</div>
+          <div class="text-xs text-gray-500">إجمالي عليه قبل التسوية</div>
         </UCard>
         <UCard variant="outline">
           <div class="text-lg font-bold sm:text-xl">
@@ -70,8 +73,8 @@
               >
                 الفواتير وقيمتها
               </th>
-              <th class="p-2 text-start font-medium">سلف</th>
-              <th class="p-2 text-start font-medium">له</th>
+              <th class="p-2 text-start font-medium">سلف عليه</th>
+              <th class="p-2 text-start font-medium">رصيد له</th>
               <th
                 class="p-2 text-start font-medium"
                 title="الصافي المتوقع عند خصم رصيد العميل"
@@ -82,7 +85,7 @@
                 class="p-2 text-start font-medium"
                 title="إجمالي الفواتير والسلف قبل التسوية"
               >
-                عام
+                إجمالي عليه
               </th>
               <th class="p-2 text-start font-medium">الأدوات</th>
             </tr>
@@ -102,11 +105,11 @@
                 >
               </td>
               <td class="p-2 font-semibold">
-                {{ formatePrice(c.invoiceDebt) }} ج × {{ c.unpaidCount }}
+                <UiAppMoneyDisplay :text="formatePrice(c.invoiceDebt)" /> × {{ c.unpaidCount }}
               </td>
-              <td class="p-2">{{ formatePrice(c.loanDebt) }}</td>
+              <td class="p-2"><UiAppMoneyDisplay :text="formatePrice(c.loanDebt)" /></td>
               <td class="p-2 font-bold text-emerald-700">
-                {{ formatePrice(c.creditBalance) }}
+                <UiAppMoneyDisplay :text="formatePrice(c.creditBalance)" />
               </td>
               <td
                 class="p-2 font-bold"
@@ -125,12 +128,10 @@
                       ? "له"
                       : "متوازن"
                 }}
-                {{
-                  formatePrice(Math.abs(round2(c.totalDebt - c.creditBalance)))
-                }}
+                <UiAppMoneyDisplay :text="formatePrice(Math.abs(round2(c.totalDebt - c.creditBalance)))" />
               </td>
               <td class="p-2 font-bold text-red-600">
-                {{ formatePrice(c.totalDebt) }}
+                <UiAppMoneyDisplay :text="formatePrice(c.totalDebt)" />
               </td>
               <td class="p-2">
                 <div class="flex gap-1.5">
@@ -188,7 +189,6 @@
           v-for="c in paged"
           :key="c.key"
           variant="outline"
-          @click="openDetails(c)"
         >
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0">
@@ -197,10 +197,7 @@
                 {{ c.phone ?? "" }}
               </div>
             </div>
-            <div
-              class="flex max-w-[7.5rem] shrink-0 flex-wrap justify-end gap-1.5"
-              @click.stop
-            >
+            <div class="flex max-w-[7.5rem] shrink-0 flex-wrap justify-end gap-1.5">
               <UButton
                 icon="i-lucide-history"
                 color="neutral"
@@ -208,7 +205,7 @@
                 size="xs"
                 aria-label="سجل عمليات العميل"
                 @click="openDetails(c)"
-                class="flex items-center justify-center"
+                class="flex min-h-11 min-w-11 items-center justify-center"
               />
               <UButton
                 icon="i-lucide-hand-coins"
@@ -217,7 +214,7 @@
                 size="xs"
                 aria-label="تسديد دفعة"
                 @click="openPay(c)"
-                class="flex items-center justify-center"
+                class="flex min-h-11 min-w-11 items-center justify-center"
               />
               <CustomerCreditSettlement
                 :customer-id="c.customer_id"
@@ -234,28 +231,24 @@
                 size="xs"
                 aria-label="إضافة سلفة"
                 @click="openLoan(c)"
-                class="flex items-center justify-center"
+                class="flex min-h-11 min-w-11 items-center justify-center"
               />
             </div>
           </div>
           <div class="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
             <div>
               الفواتير:
-              <b dir="ltr"
-                >{{ formatePrice(c.invoiceDebt) }} ج × {{ c.unpaidCount }}</b
-              >
+              <b><UiAppMoneyDisplay :text="formatePrice(c.invoiceDebt)" /> × {{ c.unpaidCount }}</b>
             </div>
             <div>
-              سلف: <b>{{ formatePrice(c.loanDebt) }}</b>
+              سلف عليه: <b><UiAppMoneyDisplay :text="formatePrice(c.loanDebt)" /></b>
             </div>
             <div>
-              له:
-              <b class="text-emerald-700">{{
-                formatePrice(c.creditBalance)
-              }}</b>
+              رصيد له:
+              <b class="text-emerald-700"><UiAppMoneyDisplay :text="formatePrice(c.creditBalance)" /></b>
             </div>
             <div>
-              عام: <b class="text-red-600">{{ formatePrice(c.totalDebt) }}</b>
+              إجمالي عليه: <b class="text-red-600"><UiAppMoneyDisplay :text="formatePrice(c.totalDebt)" /></b>
             </div>
             <div
               class="col-span-2 font-bold"
@@ -275,10 +268,7 @@
                     ? "له"
                     : "متوازن"
               }}
-              {{
-                formatePrice(Math.abs(round2(c.totalDebt - c.creditBalance)))
-              }}
-              ج
+              <UiAppMoneyDisplay :text="formatePrice(Math.abs(round2(c.totalDebt - c.creditBalance)))" />
             </div>
           </div>
         </UCard>
@@ -292,11 +282,12 @@
     <div class="mt-3 flex items-center justify-between gap-2">
       <USelect
         v-model="currentPerPage"
+        aria-label="عدد العملاء في الصفحة"
         :items="[10, 25, 50, 100]"
         size="sm"
         class="w-24"
       />
-      <UPagination
+      <UiAppPagination
         v-model:page="currentPage"
         :total="filtered.length"
         :items-per-page="currentPerPage"
@@ -428,9 +419,7 @@
         <div class="rounded-lg bg-gray-50 p-2.5 text-sm">
           <div class="flex items-center justify-between gap-2">
             <span class="text-gray-500">إجمالي الدين الحالي</span>
-            <span class="font-bold text-red-600"
-              >{{ formatePrice(payTarget.totalDebt) }} ج</span
-            >
+            <span class="font-bold text-red-600"><UiAppMoneyDisplay :text="formatePrice(payTarget.totalDebt)" /></span>
           </div>
         </div>
         <div
@@ -438,7 +427,7 @@
           class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm"
         >
           <div class="mb-2">
-            للعميل رصيد {{ formatePrice(payTarget.creditBalance) }} ج. سوِّ
+            للعميل رصيد <UiAppMoneyDisplay :text="formatePrice(payTarget.creditBalance)" />. سوِّ
             الدين من الرصيد أولًا، ثم سجّل أي دفعة نقدية متبقية.
           </div>
           <CustomerCreditSettlement
@@ -542,23 +531,19 @@
         >
           <div class="flex items-center justify-between gap-2">
             <span class="font-normal text-gray-500">إجمالي الدين</span>
-            <span>{{ formatePrice(payTarget.totalDebt) }}</span>
+            <span><UiAppMoneyDisplay :text="formatePrice(payTarget.totalDebt)" /></span>
           </div>
           <div class="flex items-center justify-between gap-2">
             <span class="font-normal text-gray-500">المبلغ المدفوع</span>
-            <span class="text-emerald-700">{{
-              formatePrice(payAmount || 0)
-            }}</span>
+            <span class="text-emerald-700"><UiAppMoneyDisplay :text="formatePrice(payAmount || 0)" /></span>
           </div>
           <div class="flex items-center justify-between gap-2">
             <span class="font-normal text-gray-500">المبلغ الموزع</span>
-            <span>{{ formatePrice(payAllocated) }}</span>
+            <span><UiAppMoneyDisplay :text="formatePrice(payAllocated)" /></span>
           </div>
           <div class="flex items-center justify-between gap-2">
             <span class="font-normal text-gray-500">المتبقي بعد السداد</span>
-            <span class="text-red-600">{{
-              formatePrice(payTarget.totalDebt - payAllocated)
-            }}</span>
+            <span class="text-red-600"><UiAppMoneyDisplay :text="formatePrice(payTarget.totalDebt - payAllocated)" /></span>
           </div>
         </div>
         <p v-if="payError" class="text-sm font-semibold text-red-600">
@@ -593,6 +578,10 @@
       <DebtsStatement :book="statementBook" :invoices-by-key="statementMap" />
     </div>
   </div>
+  <div v-else role="status" aria-live="polite">
+    <span class="sr-only">جار التحقق من الجلسة وتحميل دفتر الديون</span>
+    <UiAppTableSkeleton />
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -603,11 +592,9 @@ import { toDateSafe } from "~/types";
 import { doc } from "firebase/firestore";
 
 definePageMeta({ title: "دفتر الديون" });
-// Hydration gate (see pages/index.vue): role is null on the server, so an
-// ungated `v-if="!isAdmin"` renders the cashier branch during SSR and the
-// admin branch on first client render -> hydration mismatch / 500.
 const hydrated = ref(false);
-const isAdmin = computed(() => hydrated.value && useAuth().role === "admin");
+const authRole = computed(() => useAuth().role);
+const isAdmin = computed(() => hydrated.value && authRole.value === "admin");
 const route = useRoute();
 const { formatePrice, useDownloadPDF } = useHelpers();
 const { round2, loanStatusOf, normalizePhone, normalizeName } = useFinance();
@@ -617,6 +604,7 @@ const { notify } = useAppToast();
 const { db, getDoc } = useFirebase();
 
 const loading = ref(true);
+const bookError = ref("");
 const book = ref<CustomerDebt[]>([]);
 const statementBook = computed(() =>
   book.value.filter((customer) => customer.totalDebt > 0),
@@ -997,6 +985,7 @@ async function submitPay(): Promise<void> {
 
 async function reload(): Promise<void> {
   loading.value = true;
+  bookError.value = "";
   try {
     book.value = await debts.fetchDebtsBook();
     if (selected.value)
@@ -1013,6 +1002,8 @@ async function reload(): Promise<void> {
       );
       if (target) selected.value = target;
     }
+  } catch {
+    bookError.value = "تعذر تحميل دفتر الديون. تحقق من الاتصال ثم أعد المحاولة.";
   } finally {
     loading.value = false;
   }

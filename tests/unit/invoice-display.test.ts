@@ -11,6 +11,8 @@ import {
 } from "../../utils/invoiceDisplay";
 import { invoiceLinesSubtotal } from "../../utils/invoiceExport";
 import { invoiceTotals, outstandingDebtOf, round2 } from "../../composables/finance";
+import { formatePrice } from "../../composables/helpers";
+import { usePriceFormat } from "../../composables/usePriceFormat";
 
 let seq = 0;
 function line(overrides: Partial<InvoiceProductLine> = {}): InvoiceProductLine {
@@ -258,5 +260,18 @@ describe("invoice display rows (reference presentation)", () => {
     expect(formatInvoiceTimeAMPM({ date: d })).toBe("02:30 PM");
     expect(formatInvoiceDateDMY({})).toBe("—");
     expect(formatInvoiceTimeAMPM({})).toBe("—");
+  });
+
+  it("omits whole-amount decimals and keeps two digits for fractional prices", () => {
+    expect(usePriceFormat().formatPrice(26.5)).toBe("26.50");
+    expect(formatePrice(null)).toBe("0");
+    expect(formatePrice(26)).toBe("26");
+    expect(formatePrice(26.5)).toBe("26.50");
+    expect(formatePrice("26.50")).toBe("26.50");
+    expect(formatePrice(26.05)).toBe("26.05");
+    expect(formatePrice(-0.001)).toBe("0");
+    expect(formatePrice(1234567)).toBe("1,234,567");
+    expect(formatePrice(1234567.5)).toBe("1,234,567.50");
+    expect(formatePrice(-234.5)).toBe("-234.50");
   });
 });

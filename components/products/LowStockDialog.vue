@@ -142,7 +142,7 @@ const orderRows = computed<OrderRow[]>(() => shortageUnitRowsOf(props.products).
     key, product, unit, bucket, name: product.name,
     componentLabel: bucket === "package" ? `عبوات مغلقة · ${unit.name}` : `${product.inventory_mode === "independent" ? "عبوات مفردة" : "كمية مفتوحة"} · ${unit.name}`,
     current, reorderPoint: reorder_point, targetLevel: goal, orderQty,
-    costLabel: average === null ? "—" : `${formatePrice(average)} ج`,
+    costLabel: average === null ? "—" : `${formatePrice(average)}`,
     statusLabel: negative ? "رصيد سالب" : out ? "نافد" : "أقل من المؤشر",
     qtyClass: negative || out ? "text-red-700" : "text-amber-700",
     badgeColor: negative || out ? "error" as const : "warning" as const,

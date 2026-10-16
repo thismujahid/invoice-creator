@@ -12,13 +12,13 @@
     <UiAppDialog v-model:open="open" :title="`تسوية رصيد ${customerName}`">
       <div class="space-y-3 text-sm" dir="rtl">
         <div class="grid grid-cols-2 gap-2">
-          <div class="rounded-lg bg-emerald-50 p-3">له رصيد: <b>{{ formatePrice(creditBalance) }} ج</b></div>
-          <div class="rounded-lg bg-red-50 p-3">عليه دين: <b>{{ formatePrice(totalDebt) }} ج</b></div>
+          <div class="rounded-lg bg-emerald-50 p-3">له رصيد: <b>{{ formatePrice(creditBalance) }}</b></div>
+          <div class="rounded-lg bg-red-50 p-3">عليه دين: <b>{{ formatePrice(totalDebt) }}</b></div>
         </div>
-        <div class="rounded-lg bg-amber-50 p-3 font-semibold">قيمة التسوية: {{ formatePrice(amount) }} ج</div>
+        <div class="rounded-lg bg-amber-50 p-3 font-semibold">قيمة التسوية: {{ formatePrice(amount) }}</div>
         <div class="space-y-1">
           <div v-for="item in allocations" :key="`${item.type}-${item.reference_id}`" class="flex justify-between gap-2 rounded border p-2">
-            <span>{{ item.type === 'invoice' ? 'فاتورة' : 'سلفة' }}</span><b>{{ formatePrice(item.amount) }} ج</b>
+            <span>{{ item.type === 'invoice' ? 'فاتورة' : 'سلفة' }}</span><b>{{ formatePrice(item.amount) }}</b>
           </div>
         </div>
         <p class="text-xs text-gray-500">سيُخصم المبلغ من رصيد العميل وديونه، دون حركة نقدية في الخزنة.</p>
@@ -87,7 +87,7 @@ async function settle(): Promise<void> {
       allocations: allocations.value,
     });
     open.value = false;
-    notify(`تمت تسوية ${formatePrice(amount.value)} ج من رصيد العميل دون حركة في الخزنة.`, "success");
+    notify(`تمت تسوية ${formatePrice(amount.value)} من رصيد العميل دون حركة في الخزنة.`, "success");
     emit("settled");
   } catch {
     error.value = "تعذرت التسوية. حدّث دفتر الديون وتحقق من الرصيد ثم حاول مرة أخرى.";

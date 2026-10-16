@@ -6,11 +6,18 @@ export const useSuppliersStore = defineStore("suppliers", () => {
   const { readFrom, countFrom, updateItem, deleteItem, db, serverTimestamp } = useFirebase();
   const list = ref<Supplier[]>([]);
   const loaded = ref(false);
+  const fetchError = ref<string | null>(null);
   const lastFetchedAt = ref(0);
 
   async function fetchSuppliers(force = false): Promise<void> {
     if (!force && loaded.value && Date.now() - lastFetchedAt.value < 30_000) return;
-    list.value = (await readFrom<Supplier>("suppliers")) ?? [];
+    try {
+      list.value = await readFrom<Supplier>("suppliers");
+      fetchError.value = null;
+    } catch {
+      fetchError.value = "تعذر تحميل الموردين. تحقق من الاتصال ثم أعد المحاولة.";
+      return;
+    }
     list.value.sort((a, b) => a.name.localeCompare(b.name, "ar"));
     loaded.value = true;
     lastFetchedAt.value = Date.now();
@@ -47,5 +54,5 @@ export const useSuppliersStore = defineStore("suppliers", () => {
     return deleted;
   }
 
-  return { list, loaded, lastFetchedAt, fetchSuppliers, addSupplier, updateSupplier, deleteSupplier };
+  return { list, loaded, fetchError, lastFetchedAt, fetchSuppliers, addSupplier, updateSupplier, deleteSupplier };
 });

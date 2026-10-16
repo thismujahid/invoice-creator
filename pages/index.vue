@@ -9,6 +9,7 @@
   >
     <div class="invoice-creator-view" id="editor-area">
       <div class="flex flex-col gap-3">
+        <UiAppPageHeader :title="invoiceData.id ? 'تعديل فاتورة' : 'إنشاء فاتورة'" description="اختر العميل ثم أضف الأصناف وراجع الإجمالي" />
         <div v-if="invoiceData.id" class="flex flex-wrap justify-end gap-2">
           <UButton
             color="success"
@@ -21,8 +22,133 @@
         </div>
 
         <InvoiceDesktopLayout>
+          <template #customer>
+            <div class="rounded-xl border border-slate-200 bg-white p-3">
+                <div
+                  class="flex items-center gap-2 text-sm font-bold text-slate-700"
+                >
+                  <UIcon name="i-lucide-user-round-search" class="size-4" />
+                  العميل
+                </div>
+                <USelectMenu
+                  :model-value="
+                    (selectedCustomer() ?? null) as Customer | undefined
+                  "
+                  :items="customerMenuItems"
+                  label-key="name"
+                  by="id"
+                  size="lg"
+                  v-model:search-term="customerSearch"
+                  :search-input="{
+                    placeholder: 'بحث عن عميل...',
+                    icon: 'i-lucide-search',
+                  }"
+                  :ignore-filter="true"
+                  placeholder="اختر العميل"
+                  aria-label="اختيار العميل"
+                  :loading="loadingCustomers"
+                  class="w-full"
+                  @update:model-value="onPickCustomer"
+                />
+                <UAlert v-if="customers.fetchError" color="error" variant="soft" :title="customers.fetchError" class="mt-2">
+                  <template #actions><UButton color="error" variant="soft" @click="loadCustomers">إعادة المحاولة</UButton></template>
+                </UAlert>
+                <UAlert
+                  variant="subtle"
+                  color="warning"
+                  description="جاري تحميل محفظة العميل..."
+                  icon="svg-spinners:ring-resize"
+                  class="p-1 mt-2"
+                  v-if="loadingDebt || creditLoading"
+                >
+                </UAlert>
+                <div
+                  v-else-if="(creditBalance || customerDebt) && !balanceError"
+                  class="space-y-2 mt-2"
+                >
+                  <div class="grid grid-cols-2 gap-2">
+                    <div
+                      class="rounded-lg border border-emerald-100 bg-white p-2.5"
+                    >
+                      <div class="text-xs text-slate-500">العميل له</div>
+                      <div
+                        class="mt-1 text-base font-bold tabular-nums text-emerald-700"
+                      >
+                        <UiAppMoneyDisplay :text="formatePrice(creditBalance)" />
+                      </div>
+                    </div>
+                    <div
+                      class="rounded-lg border border-rose-100 bg-white p-2.5"
+                    >
+                      <div class="text-xs text-slate-500">العميل عليه</div>
+                      <div
+                        class="mt-1 text-base font-bold tabular-nums text-rose-700"
+                      >
+                        <UiAppMoneyDisplay :text="formatePrice(customerDebt)" />
+                      </div>
+                    </div>
+                  </div>
+                  <div
+                    v-if="
+                      invoiceData.customer_id &&
+                      creditAvailableAfterSettlement > 0
+                    "
+                    class="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600"
+                  >
+                    <span v-if="creditBalance > 0 && customerDebt > 0">
+                      تسوية تلقائية عند الحفظ:
+                      {{ formatePrice(Math.min(creditBalance, customerDebt)) }}
+                      من الرصيد مقابل الدين.
+                    </span>
+                    <label for="invoice-customer-credit">استخدام الرصيد:</label>
+                    <UInputNumber
+                      id="invoice-customer-credit"
+                      :model-value="invoiceData.credit_used"
+                      :min="0"
+                      :max="
+                        Math.min(creditAvailableAfterSettlement, totalOfInvoice)
+                      "
+                      :step="0.01"
+                      size="xs"
+                      class="w-28"
+                      @update:model-value="setCreditUsed"
+                    />
+                  </div>
+                </div>
+                <p v-else-if="invoiceData.customer_id && !balanceError" class="mt-2 text-xs text-slate-600">لا دين أو رصيد متاح لهذا العميل.</p>
+              </div>
+              <FormsCustomer
+                v-model="showCustomerModal"
+                :refresher="loadCustomers"
+                @done="onPickCustomer"
+              />
+              <div
+                v-if="!invoiceData.id && invoiceData.customer_id"
+                class="mt-2"
+                aria-live="polite"
+              >
+                <div
+                  v-if="balanceError"
+                  class="flex mb-2 items-center justify-between gap-2 rounded-xl border border-red-200 bg-white p-3 text-sm text-red-600"
+                >
+                  <span>تعذر تحميل الأرصدة.</span>
+                  <UButton
+                    size="xs"
+                    color="error"
+                    variant="soft"
+                    icon="i-lucide-refresh-cw"
+                    :loading="creditLoading || loadingDebt"
+                    @click="retryBalances"
+                    >إعادة المحاولة</UButton
+                  >
+                </div>
+              </div>
+          </template>
           <template #main>
             <section aria-label="المنتجات">
+              <UAlert v-if="products.syncError" color="error" variant="soft" title="تعذر تحميل المنتجات" class="mb-3">
+                <template #actions><UButton color="error" variant="soft" @click="retryInvoiceProducts">إعادة المحاولة</UButton></template>
+              </UAlert>
               <div
                 class="mb-2 flex md:flex-row flex-col items-center justify-between gap-2"
               >
@@ -51,7 +177,7 @@
                   >الوحدات قليلة الكمية ({{ shortageCount }})</UButton
                 >
               </div>
-              <div v-if="!loadingProds" class="max-h-[60vh] overflow-auto">
+              <div v-if="!loadingProds">
                 <p
                   v-if="!hasProductContent"
                   class="rounded-lg border border-dashed border-slate-200 bg-white px-3 py-4 text-center text-sm text-slate-500"
@@ -214,125 +340,10 @@
               </div>
             </section>
           </template>
-          <template #sidebar>
-            <div>
-              <div class="rounded-xl mb-2 border border-slate-200 bg-white p-3">
-                <div
-                  class="flex items-center gap-2 text-sm font-bold text-slate-700"
-                >
-                  <UIcon name="i-lucide-user-round-search" class="size-4" />
-                  العميل
-                </div>
-                <USelectMenu
-                  :model-value="
-                    (selectedCustomer() ?? null) as Customer | undefined
-                  "
-                  :items="customerMenuItems"
-                  label-key="name"
-                  by="id"
-                  size="lg"
-                  v-model:search-term="customerSearch"
-                  :search-input="{
-                    placeholder: 'بحث عن عميل...',
-                    icon: 'i-lucide-search',
-                  }"
-                  :ignore-filter="true"
-                  placeholder="اختر العميل"
-                  aria-label="اختيار العميل"
-                  :loading="loadingCustomers"
-                  class="w-full"
-                  @update:model-value="onPickCustomer"
-                />
-                <UAlert
-                  variant="subtle"
-                  color="warning"
-                  description="جاري تحميل محفظة العميل..."
-                  icon="svg-spinners:ring-resize"
-                  class="p-1 mt-2"
-                  v-if="loadingDebt || creditLoading"
-                >
-                </UAlert>
-                <div
-                  v-else-if="creditBalance || customerDebt"
-                  class="space-y-2 mt-2"
-                >
-                  <div class="grid grid-cols-2 gap-2">
-                    <div
-                      class="rounded-lg border border-emerald-100 bg-white p-2.5"
-                    >
-                      <div class="text-xs text-slate-500">العميل له</div>
-                      <div
-                        class="mt-1 text-base font-bold tabular-nums text-emerald-700"
-                      >
-                        {{ formatePrice(creditBalance) }} ج
-                      </div>
-                    </div>
-                    <div
-                      class="rounded-lg border border-rose-100 bg-white p-2.5"
-                    >
-                      <div class="text-xs text-slate-500">العميل عليه</div>
-                      <div
-                        class="mt-1 text-base font-bold tabular-nums text-rose-700"
-                      >
-                        {{ formatePrice(customerDebt) }} ج
-                      </div>
-                    </div>
-                  </div>
-                  <div
-                    v-if="
-                      invoiceData.customer_id &&
-                      creditAvailableAfterSettlement > 0
-                    "
-                    class="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600"
-                  >
-                    <span v-if="creditBalance > 0 && customerDebt > 0">
-                      تسوية تلقائية عند الحفظ:
-                      {{ formatePrice(Math.min(creditBalance, customerDebt)) }}
-                      ج من الرصيد مقابل الدين.
-                    </span>
-                    <label for="invoice-customer-credit">استخدام الرصيد:</label>
-                    <UInputNumber
-                      id="invoice-customer-credit"
-                      :model-value="invoiceData.credit_used"
-                      :min="0"
-                      :max="
-                        Math.min(creditAvailableAfterSettlement, totalOfInvoice)
-                      "
-                      :step="0.01"
-                      size="xs"
-                      class="w-28"
-                      @update:model-value="setCreditUsed"
-                    />
-                  </div>
-                </div>
-              </div>
-              <FormsCustomer
-                v-model="showCustomerModal"
-                :refresher="loadCustomers"
-                @done="onPickCustomer"
-              />
-              <div
-                v-if="!invoiceData.id && invoiceData.customer_id"
-                aria-live="polite"
-              >
-                <div
-                  v-if="balanceError"
-                  class="flex mb-2 items-center justify-between gap-2 rounded-xl border border-red-200 bg-white p-3 text-sm text-red-600"
-                >
-                  <span>تعذر تحميل الأرصدة.</span>
-                  <UButton
-                    size="xs"
-                    color="error"
-                    variant="soft"
-                    icon="i-lucide-refresh-cw"
-                    :loading="creditLoading || loadingDebt"
-                    @click="retryBalances"
-                    >إعادة المحاولة</UButton
-                  >
-                </div>
-              </div>
+          <template #payment>
               <section
                 v-if="!loadingProds"
+                id="invoice-payment-section"
                 aria-label="الخصم والدفع"
                 class="rounded-xl border border-slate-200 bg-white p-3"
               >
@@ -439,7 +450,6 @@
                   </UFormField>
                 </div>
               </section>
-            </div>
           </template>
         </InvoiceDesktopLayout>
 
@@ -468,45 +478,45 @@
     <!-- Sticky action bar: icon-only actions + live total.
     Fixed above the mobile bottom nav, normal sticky bar on desktop. -->
     <div
-      class="fixed inset-x-0 bottom-0 z-30 mb-[calc(3.5rem+env(safe-area-inset-bottom))] border-t border-gray-200 bg-white/95 backdrop-blur sm:mb-0 sm:pb-0"
+      class="fixed inset-x-0 bottom-0 z-30 mb-[calc(3.5rem+env(safe-area-inset-bottom))] border-t border-gray-200 bg-white/95 backdrop-blur lg:mb-0 lg:pb-0"
     >
       <div
-        class="mx-auto flex w-full max-w-6xl items-center gap-2 px-3 py-2 sm:px-4"
+        class="mx-auto flex w-full max-w-400 items-center gap-2 px-3 py-2 sm:px-4"
       >
         <div class="min-w-0 flex-1 text-start leading-tight">
           <div class="truncate text-xs text-gray-500">الإجمالي</div>
           <div class="truncate text-lg font-bold tabular-nums text-gray-900">
-            {{ formatePrice(totalOfInvoice) }}
+            <bdi dir="ltr">{{ formatePrice(totalOfInvoice) }}</bdi>
           </div>
         </div>
         <UButton
           icon="i-lucide-save"
           color="success"
           size="lg"
-          class="min-h-11 min-w-11 justify-center"
+          class="min-h-11 min-w-11 justify-center text-xs sm:text-sm"
           :loading="saving"
           aria-label="حفظ وفاتورة جديدة"
           @click="saveAndNew"
-          ><span class="hidden sm:inline">حفظ وجديد</span></UButton
+          >حفظ وجديد</UButton
         >
         <UButton
           icon="i-lucide-printer"
           color="neutral"
           variant="soft"
           size="lg"
-          class="min-h-11 min-w-11 justify-center"
+          class="min-h-11 min-w-11 justify-center text-xs sm:text-sm"
           :loading="saving"
           :disabled="saving"
           aria-label="حفظ وطباعة"
           @click="saveAndPrint"
-          ><span class="hidden sm:inline">حفظ وطباعة</span></UButton
+          >حفظ وطباعة</UButton
         >
         <UButton
           icon="i-lucide-eye"
           color="neutral"
           variant="soft"
           size="lg"
-          class="min-h-11 min-w-11 justify-center"
+          class="hidden min-h-11 min-w-11 justify-center lg:inline-flex"
           aria-label="معاينة الفاتورة"
           @click="previewOpen = true"
           ><span class="hidden sm:inline">معاينة</span></UButton
@@ -517,15 +527,38 @@
           color="error"
           variant="soft"
           size="lg"
-          class="min-h-11 min-w-11 justify-center"
+          class="hidden min-h-11 min-w-11 justify-center lg:inline-flex"
           aria-label="تصفير الفاتورة"
           @click="resetConfirmOpen = true"
           ><span class="hidden sm:inline">تصفير</span></UButton
         >
       </div>
+      <div class="flex justify-center gap-2 border-t border-slate-100 px-3 py-1 lg:hidden">
+        <UButton color="neutral" variant="ghost" size="sm" icon="i-lucide-receipt" @click="mobileSummaryOpen = true">الملخص والدفع</UButton>
+        <UDropdownMenu :items="mobileInvoiceActions"><UButton color="neutral" variant="ghost" size="sm" icon="i-lucide-ellipsis">إجراءات أخرى</UButton></UDropdownMenu>
+      </div>
       <div class="h-[env(safe-area-inset-bottom)] sm:hidden" />
     </div>
     <div aria-hidden="true" class="h-24" />
+
+    <USlideover v-model:open="mobileSummaryOpen" side="bottom" title="ملخص الفاتورة" description="راجع الإجمالي وانتقل إلى الخصم والدفع" @after:leave="onSummaryClosed">
+      <template #body>
+        <InvoiceSummarySidebar
+          :show-heading="false"
+          :gross-text="formatePrice(calcTotal(invoiceData))"
+          :show-discount="true"
+          :discount-label="invoiceData.discount_percentage ? 'نسبة مئوية' : 'مبلغ ثابت'"
+          :discount-text="formatePrice(discountAmount)"
+          :net-text="formatePrice(totalOfInvoice)"
+          :show-paid="true"
+          :paid-text="formatePrice(invoiceData.paid_amount)"
+          :remaining-text="formatePrice(totalOfInvoice - Number(invoiceData.paid_amount || 0))"
+          :show-credit-used="!!invoiceData.credit_used"
+          :credit-used-text="formatePrice(invoiceData.credit_used)"
+        />
+        <UButton color="success" block class="mt-3" @click="goToInvoicePayment">تعديل الخصم والدفع</UButton>
+      </template>
+    </USlideover>
 
     <UiAppDialog v-model:open="previewOpen" title="معاينة الفاتورة">
       <Invoice
@@ -557,6 +590,15 @@
             @click="resetConfirmOpen = false"
             >تراجع</UButton
           >
+        </div>
+      </template>
+    </UiAppDialog>
+    <UiAppDialog :open="leaveConfirmOpen" title="مغادرة الفاتورة؟" @update:open="(open) => { if (!open) finishNavigation(false); }">
+      <p class="text-sm text-slate-600">لديك تعديلات لم تُحفظ. ستفقدها إذا غادرت هذه الصفحة.</p>
+      <template #footer>
+        <div class="flex w-full gap-2">
+          <UButton color="error" class="flex-1" @click="finishNavigation(true)">مغادرة دون حفظ</UButton>
+          <UButton color="neutral" variant="soft" class="flex-1" @click="finishNavigation(false)">متابعة التعديل</UButton>
         </div>
       </template>
     </UiAppDialog>
@@ -594,7 +636,10 @@
       />
     </UiAppDialog>
   </template>
-  <UiAppTableSkeleton v-else />
+  <div v-else role="status" aria-live="polite">
+    <span class="sr-only">جار التحقق من الجلسة وتحميل محرر الفاتورة</span>
+    <UiAppTableSkeleton aria-hidden="true" />
+  </div>
 </template>
 <script setup lang="ts">
 import type { Customer, Invoice, InvoiceProductLine, Product } from "~/types";
@@ -634,6 +679,25 @@ const hydrated = ref(false);
 const updating = ref(false);
 const saving = ref(false);
 const previewOpen = ref(false);
+const mobileSummaryOpen = ref(false);
+let focusPaymentAfterSummary = false;
+const mobileInvoiceActions = [
+  { label: "معاينة الفاتورة", icon: "i-lucide-eye", onSelect: () => { previewOpen.value = true; } },
+  { label: "تصفير الفاتورة", icon: "i-lucide-rotate-ccw", color: "error" as const, onSelect: () => { resetConfirmOpen.value = true; } },
+];
+function goToInvoicePayment(): void {
+  focusPaymentAfterSummary = true;
+  mobileSummaryOpen.value = false;
+}
+function onSummaryClosed(): void {
+  if (!focusPaymentAfterSummary) return;
+  focusPaymentAfterSummary = false;
+  requestAnimationFrame(() => {
+    const section = document.getElementById("invoice-payment-section");
+    section?.scrollIntoView({ behavior: "smooth", block: "start" });
+    section?.querySelector<HTMLInputElement>("input")?.focus({ preventScroll: true });
+  });
+}
 const loadingDebt = ref(false);
 const resetAfterSave = ref(false);
 const debtsApi = useDebts();
@@ -697,6 +761,58 @@ function emptyInvoice(): Invoice {
   };
 }
 const invoiceData = ref<Invoice>(emptyInvoice());
+function draftFingerprint(): string {
+  const data = invoiceData.value;
+  return JSON.stringify({
+    id: data.id,
+    customer_id: data.customer_id,
+    customer_name: data.customer_name,
+    customer_phone: data.customer_phone,
+    discount: data.discount,
+    discount_for: data.discount_for,
+    discount_percentage: data.discount_percentage,
+    debt: data.debt,
+    delivery_price: data.delivery_price,
+    amount_of_animal_feeds: data.amount_of_animal_feeds,
+    amount_of_mahros: data.amount_of_mahros,
+    paid_amount: data.paid_amount,
+    credit_used: data.credit_used,
+    products: data.products.map((line) => ({
+      line_id: line.line_id,
+      product_id: line.product_id,
+      family_id: line.family_id,
+      variant_key: line.variant_key,
+      unit_id: line.unit_id,
+      product_quantity: line.product_quantity,
+      product_price: line.product_price,
+      option: line.option,
+    })),
+  });
+}
+const pristineFingerprint = ref(draftFingerprint());
+const hasUnsavedChanges = computed(() => draftFingerprint() !== pristineFingerprint.value);
+const leaveConfirmOpen = ref(false);
+let pendingNavigation: ((allow: boolean) => void) | null = null;
+function markDraftSaved(): void {
+  pristineFingerprint.value = draftFingerprint();
+}
+function finishNavigation(allow: boolean): void {
+  leaveConfirmOpen.value = false;
+  const resolve = pendingNavigation;
+  pendingNavigation = null;
+  resolve?.(allow);
+}
+onBeforeRouteLeave(() => {
+  if (!hasUnsavedChanges.value || !hydrated.value) return true;
+  if (pendingNavigation) return false;
+  leaveConfirmOpen.value = true;
+  return new Promise<boolean>((resolve) => { pendingNavigation = resolve; });
+});
+function warnBeforeUnload(event: BeforeUnloadEvent): void {
+  if (!hasUnsavedChanges.value) return;
+  event.preventDefault();
+  event.returnValue = "";
+}
 // HOME delta: created_by select hidden (single admin) — creatorOptions unused.
 
 // HOME delta: paid follows invoice total until the user types manually.
@@ -903,10 +1019,12 @@ function resetInvoice(): void {
   qtyDrafts.clear();
   headerFamily.value = null;
   cashierRequestId.value = crypto.randomUUID();
+  markDraftSaved();
 }
 // Adopt the saved id; when save+new requested, start a fresh invoice.
 function onInvoiceSaved(id: unknown): void {
   if (typeof id === "string" && id) invoiceData.value.id = id;
+  markDraftSaved();
   saving.value = false;
   if (resetAfterSave.value) {
     resetAfterSave.value = false;
@@ -1096,6 +1214,7 @@ async function saveCashier(
     }
     cashierReceipt.value = receipt;
     invoiceData.value = receipt;
+    markDraftSaved();
     cashierRequestId.value = crypto.randomUUID();
     notify("تم حفظ الفاتورة وتحديث المخزون والخزنة.", "success");
     if (print) {
@@ -1251,17 +1370,14 @@ const shortagesOpen = ref(false);
 /** Focus the first control of a line editor and bring it into view. */
 function focusLineField(
   lineId: string | undefined,
-  field: "qty" | "price" | "first" = "first",
+  field: "qty" | "price" | "unit" | "first" = "first",
 ): void {
   if (!lineId) return;
-  // A collapsed summary has no inputs — expand first so the target exists.
   const line = invoiceData.value.products.find((l) => l.line_id === lineId);
-  if (
-    line &&
-    (field === "qty" || field === "price") &&
-    !expandedLines.has(line)
-  ) {
+  if (line) {
     expandedLines.add(line);
+    const group = productGroups.value.find((entry) => entry.lines.some((item) => item.line === line));
+    if (group) groupWake[group.key] = (groupWake[group.key] ?? 0) + 1;
   }
   nextTick(() => {
     nextTick(() => {
@@ -1279,7 +1395,7 @@ function focusLineField(
       const target =
         field === "first"
           ? root.querySelector(".grid button, .grid input")
-          : (root.querySelector(`[data-field="${field}"] input`) ??
+          : (root.querySelector(`[data-field="${field}"] input, [data-field="${field}"] button`) ??
             root.querySelector(".grid button, .grid input"));
       const targetEl = target as HTMLElement | null;
       targetEl?.focus?.();
@@ -1302,7 +1418,7 @@ function focusFirstInvalid(): void {
   const info = firstInvalidLine();
   if (info) {
     expandedLines.add(info.line);
-    focusLineField(info.line.line_id, info.field === "unit" ? "first" : "qty");
+    focusLineField(info.line.line_id, info.field);
   }
 }
 /** Focus the qty of the line after `line`, or do nothing when last. */
@@ -1376,7 +1492,20 @@ function onPickCustomer(cus: Customer | null | undefined): void {
 }
 function selectedProd(form: InvoiceProductLine): Product | undefined {
   if (!form.product_id) return undefined;
-  return products.list.find((p) => p.id === form.product_id);
+  return products.productsById.get(form.product_id);
+}
+const activeProductsByFamily = computed(() => {
+  const groups = new Map<string, Product[]>();
+  for (const product of products.list) {
+    if (product.is_active === false || !product.family_id) continue;
+    const family = groups.get(product.family_id) ?? [];
+    family.push(product);
+    groups.set(product.family_id, family);
+  }
+  return groups;
+});
+function activeFamilyProducts(id: string | null): Product[] {
+  return id ? activeProductsByFamily.value.get(id) ?? [] : [];
 }
 const productFamilyOptions = computed(() =>
   [
@@ -1453,9 +1582,7 @@ function onPickFamily(
   form.family_id = family.id;
   form.family_name = family.name;
   if (selectedProd(form)?.family_id !== family.id) clearSelectedProduct(form);
-  const options = products.list.filter(
-    (product) => product.family_id === family.id && product.is_active !== false,
-  );
+  const options = activeFamilyProducts(family.id);
   const selected = selectedFamily(form);
   if (selected?.inventory_mode === "independent") {
     form.inventory_mode = "independent";
@@ -1470,35 +1597,17 @@ function onPickFamily(
 }
 type VariantOption = { key: string; name: string };
 function variantOptions(form: InvoiceProductLine): VariantOption[] {
-  const options = new Map<string, VariantOption>();
-  for (const product of products.list) {
+  const options = new Map<string, VariantOption & { order: number }>();
+  for (const product of activeFamilyProducts(selectedFamilyId(form))) {
     if (
-      product.is_active === false ||
-      product.family_id !== selectedFamilyId(form) ||
       product.inventory_mode !== "independent"
     )
       continue;
     const key = product.variant_key || "default";
     if (!options.has(key))
-      options.set(key, { key, name: product.variant_name || "" });
+      options.set(key, { key, name: product.variant_name || "", order: Number(product.variant_order || 0) });
   }
-  return [...options.values()].sort(
-    (left, right) =>
-      Number(
-        products.list.find(
-          (product) =>
-            product.family_id === selectedFamilyId(form) &&
-            product.variant_key === left.key,
-        )?.variant_order || 0,
-      ) -
-      Number(
-        products.list.find(
-          (product) =>
-            product.family_id === selectedFamilyId(form) &&
-            product.variant_key === right.key,
-        )?.variant_order || 0,
-      ),
-  );
+  return [...options.values()].sort((left, right) => left.order - right.order);
 }
 function selectedVariantOption(
   form: InvoiceProductLine,
@@ -1517,11 +1626,9 @@ function onPickVariant(
   if (sizes.length === 1) onPickProduct(form, sizes[0]);
 }
 function packSizeMenuItems(form: InvoiceProductLine): Product[] {
-  return products.list
+  return activeFamilyProducts(selectedFamilyId(form))
     .filter(
       (product) =>
-        product.is_active !== false &&
-        product.family_id === selectedFamilyId(form) &&
         product.inventory_mode === "independent" &&
         (product.variant_key || "default") ===
           (form.variant_key || "default") &&
@@ -2324,11 +2431,18 @@ async function loadCustomers(): Promise<void> {
 async function loadProds(updatePrices?: boolean, force = false): Promise<void> {
   loadingProds.value = true;
   try {
-    await products.fetchProducts(undefined, force);
-    if (updatePrices) updateProdsPrices();
+    const loaded = await products.fetchProducts(undefined, force);
+    if (loaded && updatePrices) updateProdsPrices();
   } finally {
     loadingProds.value = false;
   }
+}
+async function retryInvoiceProducts(): Promise<void> {
+  if (authStore.role === "admin") {
+    products.stopInventorySubscription();
+    products.ensureInventorySubscription();
+  }
+  await loadProds(false, true);
 }
 function updateProdsPrices(preserveHistoricalCosts = false): void {
   const productMap = new Map(products.list.map((p) => [p.id, p]));
@@ -2444,6 +2558,7 @@ onMounted(async () => {
       ),
     };
     invoices.invoiceToEdit = undefined;
+    markDraftSaved();
     setTimeout(() => {
       if (totalOfInvoice.value != invoiceData.value.paid_amount) {
         blockUpdatePaidAmount.value = true;
@@ -2460,7 +2575,8 @@ onMounted(async () => {
   window.addEventListener("keyup", handleAltKeyup);
   window.addEventListener("pointerdown", cancelAltAlone);
   window.addEventListener("blur", cancelAltAlone);
-  await Promise.all([loadCustomers(), loadProds()]);
+  window.addEventListener("beforeunload", warnBeforeUnload);
+  await Promise.allSettled([loadCustomers(), loadProds()]);
 });
 function cancelAltAlone(): void {
   altAlone = false;
@@ -2470,5 +2586,6 @@ onUnmounted(() => {
   window.removeEventListener("keyup", handleAltKeyup);
   window.removeEventListener("pointerdown", cancelAltAlone);
   window.removeEventListener("blur", cancelAltAlone);
+  window.removeEventListener("beforeunload", warnBeforeUnload);
 });
 </script>

@@ -1,23 +1,42 @@
 @import "tailwindcss";
 @import "@nuxt/ui";
 
-/* Design tokens shared by Vuetify (legacy) + Nuxt UI (target).
-   Mobile-first: 16px inputs stop iOS zoom; 44px min touch targets. */
 
 @theme {
-  --font-sans: "Baloo Bhaijaan 2", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Noto Sans Arabic", ui-sans-serif, system-ui, sans-serif;
   --color-ink: #09090a;
   --color-mint: #50cd89;
   --color-crimson: #ff233e;
 }
 
 :root {
-  --app-font: "Baloo Bhaijaan 2", serif;
+  --app-font: "Noto Sans Arabic", ui-sans-serif, system-ui, sans-serif;
   --app-touch-min: 44px;
+  --app-surface: #ffffff;
+  --app-surface-muted: #f1f5f9;
+  --app-border: #e2e8f0;
+  --app-text: #0f172a;
+  --app-text-muted: #475569;
 }
 
 html {
   font-family: var(--app-font);
+}
+
+body {
+  color: var(--app-text);
+  background: #f8fafc;
+}
+
+.printable-area,
+.inv-ref,
+#supplier-invoice-data,
+#debts-statement {
+  font-family: "Baloo Bhaijaan 2", serif;
+}
+
+bdi[dir="ltr"] {
+  font-variant-numeric: tabular-nums;
 }
 
 /* Invoice tables (preview + print): shared by Invoice.vue and the grouped
@@ -46,7 +65,6 @@ html {
   font-weight: 800;
 }
 
-/* Keep Vuetify print bridge working while both libs coexist */
 #printableArea {
   display: none;
 }

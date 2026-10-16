@@ -7,7 +7,7 @@
       <h2>كشف حساب الديون</h2>
       <p>
         التاريخ: {{ today }} · عدد العملاء: {{ book.length }} ·
-        إجمالي الديون: {{ fmt(grandTotal) }} ج
+        إجمالي الديون: {{ fmt(grandTotal) }}
       </p>
     </div>
     <section v-for="c in book" :key="c.key" class="ds-customer" dir="rtl">
@@ -16,8 +16,8 @@
         <span v-if="c.phone"> · {{ c.phone }}</span>
         <span>
           · فواتير: {{ c.unpaidCount }} · ديون الفواتير:
-          {{ fmt(c.invoiceDebt) }} ج · السلف: {{ fmt(c.loanDebt) }} ج ·
-          الإجمالي: {{ fmt(c.totalDebt) }} ج
+          {{ fmt(c.invoiceDebt) }} · السلف: {{ fmt(c.loanDebt) }} ·
+          الإجمالي: {{ fmt(c.totalDebt) }}
         </span>
       </div>
       <table class="ds-table">

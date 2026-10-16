@@ -38,27 +38,27 @@
         <div v-for="(row, i) in returnedProducts" :key="`return-${i}`" class="flex items-center justify-between gap-3 border-t border-red-100 py-2 first:border-0">
           <div class="min-w-0">
             <div class="font-medium">{{ row.quantity }} × {{ row.name }}</div>
-            <div class="text-xs text-gray-500">{{ formatePrice(row.unitPrice) }} ج للوحدة بعد الخصم</div>
+            <div class="text-xs text-gray-500">{{ formatePrice(row.unitPrice) }} للوحدة بعد الخصم</div>
           </div>
-          <strong class="shrink-0 text-red-700">{{ formatePrice(row.amount) }} ج</strong>
+          <strong class="shrink-0 text-red-700">{{ formatePrice(row.amount) }}</strong>
         </div>
       </section>
       <div class="bg-white pt-1">
         <div v-if="hasReturns" class="no-print mt-3 space-y-3">
           <div class="rounded-lg border border-gray-200 p-3">
             <h3 class="mb-2 font-bold">ملخص الفاتورة</h3>
-            <div v-if="invoiceData.discount" class="flex justify-between gap-3 py-1 text-gray-600"><span>الإجمالي قبل الخصم</span><span>{{ formatePrice(calcTotal(invoiceData)) }} ج</span></div>
-            <div v-if="invoiceData.discount" class="flex justify-between gap-3 py-1 text-gray-600"><span>الخصم {{ invoiceData.discount_for ? `(${invoiceData.discount_for})` : "" }} ({{ discountLabel }})</span><span class="tabular-nums">{{ formatePrice(discountAmount) }} ج</span></div>
-            <div class="flex justify-between gap-3 py-1"><span>الفاتورة قبل المرتجع</span><strong>{{ formatePrice(originalTotal) }} ج</strong></div>
-            <div class="flex justify-between gap-3 py-1 text-red-700"><span>خصم المرتجع</span><strong dir="ltr">-{{ formatePrice(returnTotal) }} ج</strong></div>
-            <div class="mt-2 flex justify-between gap-3 border-t border-gray-200 pt-2 text-lg font-extrabold"><span>الصافي بعد المرتجع</span><span class="tabular-nums">{{ formatePrice(netAfterReturns) }} ج</span></div>
+            <div v-if="invoiceData.discount" class="flex justify-between gap-3 py-1 text-gray-600"><span>الإجمالي قبل الخصم</span><span>{{ formatePrice(calcTotal(invoiceData)) }}</span></div>
+            <div v-if="invoiceData.discount" class="flex justify-between gap-3 py-1 text-gray-600"><span>الخصم {{ invoiceData.discount_for ? `(${invoiceData.discount_for})` : "" }} ({{ discountLabel }})</span><span class="tabular-nums">{{ formatePrice(discountAmount) }}</span></div>
+            <div class="flex justify-between gap-3 py-1"><span>الفاتورة قبل المرتجع</span><strong>{{ formatePrice(originalTotal) }}</strong></div>
+            <div class="flex justify-between gap-3 py-1 text-red-700"><span>خصم المرتجع</span><strong dir="ltr">-{{ formatePrice(returnTotal) }}</strong></div>
+            <div class="mt-2 flex justify-between gap-3 border-t border-gray-200 pt-2 text-lg font-extrabold"><span>الصافي بعد المرتجع</span><span class="tabular-nums">{{ formatePrice(netAfterReturns) }}</span></div>
           </div>
           <div class="rounded-lg border border-gray-200 p-3">
             <h3 class="mb-2 font-bold">توزيع قيمة المرتجع</h3>
-            <div v-if="debtReductionTotal" class="flex justify-between gap-3 py-1"><span>تخفيض دين العميل</span><strong>{{ formatePrice(debtReductionTotal) }} ج</strong></div>
-            <div v-if="cashRefundTotal" class="flex justify-between gap-3 py-1"><span>نقد أُعيد للعميل</span><strong>{{ formatePrice(cashRefundTotal) }} ج</strong></div>
-            <div v-if="returnCreditTotal" class="flex justify-between gap-3 py-1"><span>رصيد أُضيف لمحفظة العميل</span><strong>{{ formatePrice(returnCreditTotal) }} ج</strong></div>
-            <div class="mt-2 flex justify-between gap-3 border-t border-gray-200 pt-2 font-bold"><span>المتبقي على الفاتورة الآن</span><span>{{ formatePrice(currentRemaining) }} ج</span></div>
+            <div v-if="debtReductionTotal" class="flex justify-between gap-3 py-1"><span>تخفيض دين العميل</span><strong>{{ formatePrice(debtReductionTotal) }}</strong></div>
+            <div v-if="cashRefundTotal" class="flex justify-between gap-3 py-1"><span>نقد أُعيد للعميل</span><strong>{{ formatePrice(cashRefundTotal) }}</strong></div>
+            <div v-if="returnCreditTotal" class="flex justify-between gap-3 py-1"><span>رصيد أُضيف لمحفظة العميل</span><strong>{{ formatePrice(returnCreditTotal) }}</strong></div>
+            <div class="mt-2 flex justify-between gap-3 border-t border-gray-200 pt-2 font-bold"><span>المتبقي على الفاتورة الآن</span><span>{{ formatePrice(currentRemaining) }}</span></div>
           </div>
         </div>
         <!-- Reference footer: labels right, values left, black separators. -->

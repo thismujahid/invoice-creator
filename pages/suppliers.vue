@@ -1,31 +1,49 @@
 <template>
   <div class="space-y-4">
-    <header class="flex flex-wrap items-center justify-between gap-3">
-      <div><h1 class="text-xl font-bold">الموردون</h1><p class="text-sm text-gray-500">سجل مستقل للموردين ومشترياتهم.</p></div>
+    <UiAppPageHeader title="الموردون" description="سجل مستقل للموردين ومشترياتهم">
+      <template #actions>
       <UButton color="success" icon="i-lucide-plus" @click="openEditor()">إضافة مورد</UButton>
-    </header>
-    <UInput v-model="search" icon="i-lucide-search" placeholder="ابحث عن مورد" class="w-full sm:max-w-sm" />
+      </template>
+    </UiAppPageHeader>
+    <UInput v-model="search" icon="i-lucide-search" aria-label="بحث عن مورد" placeholder="ابحث عن مورد" class="w-full sm:max-w-sm" />
+    <UAlert v-if="store.fetchError || loadError" color="error" variant="soft" :title="store.fetchError || loadError"><template #actions><UButton color="error" variant="soft" @click="loadSuppliers">إعادة المحاولة</UButton></template></UAlert>
     <UiAppCardsSkeleton v-if="loading" />
-    <div v-else class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+    <template v-else>
+    <div class="hidden overflow-x-auto rounded-lg border border-slate-200 bg-white lg:block">
+      <table class="w-full text-sm">
+        <thead class="bg-slate-50 text-slate-600"><tr><th class="p-3 text-start">المورد</th><th class="p-3 text-start">فواتير شراء</th><th class="p-3 text-start">إجمالي المشتريات</th><th class="p-3 text-start">مستحق للمورد</th><th class="p-3 text-start">سلفة لنا</th><th class="p-3 text-start">الإجراءات</th></tr></thead>
+        <tbody><tr v-for="supplier in filtered" :key="supplier.id" class="border-t border-slate-100 hover:bg-slate-50">
+          <td class="p-3"><div class="font-semibold">{{ supplier.name }}</div><bdi dir="ltr" class="text-xs text-slate-600">{{ supplier.phone || '—' }}</bdi></td>
+          <td class="p-3">{{ summaries[supplier.id || '']?.initialized ? summaries[supplier.id || '']?.count : '—' }}</td>
+          <td class="p-3"> <UiAppMoneyDisplay v-if="summaries[supplier.id || '']?.initialized" :text="formatePrice(summaries[supplier.id || '']?.total)" /><span v-else>—</span></td>
+          <td class="p-3 text-red-700"><UiAppMoneyDisplay v-if="summaries[supplier.id || '']?.initialized" :text="formatePrice(summaries[supplier.id || '']?.remaining)" /><span v-else>—</span></td>
+          <td class="p-3 text-blue-700"><UiAppMoneyDisplay v-if="summaries[supplier.id || '']?.initialized" :text="formatePrice(summaries[supplier.id || '']?.advance)" /><span v-else>—</span></td>
+          <td class="p-3"><div class="flex flex-wrap gap-1"><UButton size="sm" color="neutral" variant="soft" :to="`/supplier-invoices?supplier=${supplier.id}`">الفواتير</UButton><UButton size="sm" color="neutral" variant="ghost" icon="i-lucide-pencil" :aria-label="`تعديل ${supplier.name}`" @click="openEditor(supplier)" /><UButton size="sm" color="error" variant="ghost" icon="i-lucide-trash-2" :aria-label="`حذف ${supplier.name}`" @click="deleteTarget = supplier" /></div></td>
+        </tr></tbody>
+      </table>
+    </div>
+    <div class="grid gap-3 md:grid-cols-2 lg:hidden">
       <UCard v-for="supplier in filtered" :key="supplier.id" variant="outline">
         <div class="flex items-start justify-between gap-3">
-          <div class="min-w-0"><h2 class="truncate font-bold">{{ supplier.name }}</h2><p class="text-sm text-gray-500" dir="ltr">{{ supplier.phone || '—' }}</p></div>
-          <div class="flex gap-1"><UButton size="xs" color="neutral" variant="soft" icon="i-lucide-pencil" aria-label="تعديل" @click="openEditor(supplier)" /><UButton size="xs" color="error" variant="soft" icon="i-lucide-trash-2" aria-label="حذف" :disabled="deleting === supplier.id" @click="removeSupplier(supplier)" /></div>
+          <div class="min-w-0"><h2 class="truncate font-bold">{{ supplier.name }}</h2><bdi dir="ltr" class="block text-sm text-gray-500">{{ supplier.phone || '—' }}</bdi></div>
+          <div class="flex gap-1"><UButton size="xs" color="neutral" variant="soft" icon="i-lucide-pencil" class="min-h-11 min-w-11" :aria-label="`تعديل ${supplier.name}`" @click="openEditor(supplier)" /><UButton size="xs" color="error" variant="soft" icon="i-lucide-trash-2" class="min-h-11 min-w-11" :aria-label="`حذف ${supplier.name}`" :disabled="deleting === supplier.id" @click="deleteTarget = supplier" /></div>
         </div>
         <div class="mt-4 grid grid-cols-2 gap-2 border-t border-gray-100 pt-3 text-center text-xs sm:grid-cols-4">
           <div><b class="block text-sm">{{ summaries[supplier.id || '']?.initialized ? summaries[supplier.id || '']?.count : '—' }}</b><span class="text-gray-500">فواتير شراء</span></div>
-          <div><b class="block text-sm">{{ summaries[supplier.id || '']?.initialized ? `${formatePrice(summaries[supplier.id || '']?.total)} ج` : '—' }}</b><span class="text-gray-500">إجمالي المشتريات</span></div>
-          <div><b class="block text-sm text-red-600">{{ summaries[supplier.id || '']?.initialized ? `${formatePrice(summaries[supplier.id || '']?.remaining)} ج` : '—' }}</b><span class="text-gray-500">مستحق للمورد</span></div>
-          <div><b class="block text-sm text-blue-700">{{ summaries[supplier.id || '']?.initialized ? `${formatePrice(summaries[supplier.id || '']?.advance)} ج` : '—' }}</b><span class="text-gray-500">سلفة مستحقة لنا</span></div>
+          <div><b class="block text-sm"><UiAppMoneyDisplay v-if="summaries[supplier.id || '']?.initialized" :text="formatePrice(summaries[supplier.id || '']?.total)" /><span v-else>—</span></b><span class="text-gray-500">إجمالي المشتريات</span></div>
+          <div><b class="block text-sm text-red-600"><UiAppMoneyDisplay v-if="summaries[supplier.id || '']?.initialized" :text="formatePrice(summaries[supplier.id || '']?.remaining)" /><span v-else>—</span></b><span class="text-gray-500">مستحق للمورد</span></div>
+          <div><b class="block text-sm text-blue-700"><UiAppMoneyDisplay v-if="summaries[supplier.id || '']?.initialized" :text="formatePrice(summaries[supplier.id || '']?.advance)" /><span v-else>—</span></b><span class="text-gray-500">سلفة مستحقة لنا</span></div>
         </div>
-        <p v-if="summaries[supplier.id || '']?.initialized" class="mt-2 text-xs text-gray-600">فرق تكلفة مرتجعات المورد: {{ formatePrice(summaries[supplier.id || '']?.variance) }} ج</p>
-        <div class="mt-3 flex gap-2"><UButton size="sm" color="neutral" variant="soft" icon="i-lucide-files" class="flex-1" :to="`/supplier-invoices?supplier=${supplier.id}`">عرض الفواتير</UButton><UButton size="sm" color="success" variant="soft" icon="i-lucide-plus" class="flex-1" :to="`/supplier-invoices?supplier=${supplier.id}&new=1`">فاتورة جديدة</UButton></div>
+        <p v-if="summaries[supplier.id || '']?.initialized" class="mt-2 text-xs text-gray-600">فرق تكلفة مرتجعات المورد: <UiAppMoneyDisplay :text="formatePrice(summaries[supplier.id || '']?.variance)" /></p>
+        <div class="mt-3 flex gap-2"><UButton size="sm" color="neutral" variant="soft" icon="i-lucide-files" class="min-h-11 flex-1" :to="`/supplier-invoices?supplier=${supplier.id}`">عرض الفواتير</UButton><UButton size="sm" color="success" variant="soft" icon="i-lucide-plus" class="min-h-11 flex-1" :to="`/supplier-invoices?supplier=${supplier.id}&new=1`">فاتورة جديدة</UButton></div>
       </UCard>
-      <UEmpty v-if="!filtered.length" class="col-span-full" icon="i-lucide-truck" title="لا يوجد موردون" description="أضف الموردين لتسجيل فواتير الشراء بصورة منظمة." />
     </div>
-    <UiAppDialog v-model:open="editorOpen" :title="editing?.id ? 'تعديل المورد' : 'إضافة مورد'">
-      <div class="space-y-3"><UFormField label="اسم المورد" required><UInput v-model="form.name" class="w-full" /></UFormField><UFormField label="الهاتف"><UInput v-model="form.phone" dir="ltr" class="w-full" /></UFormField><UFormField label="العنوان"><UInput v-model="form.address" class="w-full" /></UFormField><UFormField label="ملاحظات"><UTextarea v-model="form.notes" class="w-full" /></UFormField><UAlert v-if="error" color="error" variant="soft" :title="error" /></div>
-      <template #footer><div class="flex w-full gap-2"><UButton color="success" class="flex-1" :loading="saving" :disabled="!form.name.trim()" @click="save">حفظ المورد</UButton><UButton color="neutral" variant="soft" class="flex-1" :disabled="saving" @click="editorOpen = false">إلغاء</UButton></div></template>
+    <UEmpty v-if="!filtered.length && !store.fetchError && !loadError" icon="i-lucide-truck" title="لا يوجد موردون" description="أضف الموردين لتسجيل فواتير الشراء بصورة منظمة." />
+    </template>
+    <FormsSupplier v-model="editorOpen" :edit="editing" :refresher="loadSuppliers" />
+    <UiAppDialog :open="!!deleteTarget" title="تأكيد حذف المورد" @update:open="(open) => { if (!open) deleteTarget = null; }">
+      <p>هل تريد حذف {{ deleteTarget?.name }}؟ لا يمكن حذف مورد مرتبط بفواتير شراء.</p>
+      <template #footer><div class="flex w-full gap-2"><UButton color="error" class="flex-1" :loading="!!deleting" @click="confirmSupplierDelete">تأكيد الحذف</UButton><UButton color="neutral" variant="soft" class="flex-1" @click="deleteTarget = null">إلغاء</UButton></div></template>
     </UiAppDialog>
   </div>
 </template>
@@ -40,54 +58,50 @@ const store = useSuppliersStore();
 const { formatePrice } = useHelpers();
 const { notify } = useAppToast();
 const loading = ref(true);
-const saving = ref(false);
 const deleting = ref("");
+const deleteTarget = ref<Supplier | null>(null);
 const search = ref("");
 const summaries = ref<Record<string, { count: number; total: number; remaining: number; advance: number; variance: number; initialized: boolean }>>({});
 const editorOpen = ref(false);
 const editing = ref<Supplier | null>(null);
-const error = ref("");
-const form = reactive({ name: "", phone: "", address: "", notes: "" });
-const filtered = computed(() => store.list.filter((supplier) => !search.value || supplier.name.toLocaleLowerCase().includes(search.value.trim().toLocaleLowerCase())));
+const loadError = ref("");
+const filtered = computed(() => store.list.filter((supplier) => {
+  const query = search.value.trim().toLocaleLowerCase();
+  return !query || supplier.name.toLocaleLowerCase().includes(query) || String(supplier.phone ?? "").includes(query);
+}));
 function openEditor(supplier?: Supplier): void {
   editing.value = supplier ?? null;
-  form.name = supplier?.name ?? "";
-  form.phone = supplier?.phone ?? "";
-  form.address = supplier?.address ?? "";
-  form.notes = supplier?.notes ?? "";
-  error.value = "";
   editorOpen.value = true;
 }
-async function save(): Promise<void> {
-  if (!form.name.trim() || saving.value) return;
-  saving.value = true;
-  error.value = "";
-  try {
-    const payload = { name: form.name.trim(), phone: form.phone.trim() || null, address: form.address.trim() || null, notes: form.notes.trim() || null };
-    if (editing.value?.id) await store.updateSupplier(editing.value.id, payload);
-    else await store.addSupplier(payload);
-    await store.fetchSuppliers();
-    editorOpen.value = false;
-  } catch {
-    error.value = "تعذر حفظ بيانات المورد.";
-  } finally { saving.value = false; }
-}
-async function removeSupplier(supplier: Supplier): Promise<void> {
-  if (!supplier.id || deleting.value) return;
+async function removeSupplier(supplier: Supplier): Promise<boolean> {
+  if (!supplier.id || deleting.value) return false;
   deleting.value = supplier.id;
   try {
     const ok = await store.deleteSupplier(supplier.id);
-    if (!ok) notify("لا يمكن حذف مورد مرتبط بفواتير شراء.", "error");
-    else await store.fetchSuppliers();
+    if (!ok) {
+      notify("تعذر حذف المورد. قد يكون مرتبطًا بفواتير شراء؛ تحقق ثم أعد المحاولة.", "error");
+      return false;
+    }
+    await store.fetchSuppliers();
+    return true;
+  } catch (error) {
+    console.error(error);
+    notify("تعذر حذف المورد. أعد المحاولة.", "error");
+    return false;
   } finally { deleting.value = ""; }
 }
-onMounted(async () => {
-  const authed = await useAuthReady();
-  if (!authed) return; // layout redirects to /login
+async function confirmSupplierDelete(): Promise<void> {
+  const target = deleteTarget.value;
+  if (!target) return;
+  if (await removeSupplier(target)) deleteTarget.value = null;
+}
+async function loadSuppliers(): Promise<void> {
   loading.value = true;
+  loadError.value = "";
   try {
     const { db } = useFirebase();
     const [_, snapshot] = await Promise.all([store.fetchSuppliers(), getDocs(collection(db, "supplier_summaries"))]);
+    if (store.fetchError) return;
     const result: typeof summaries.value = {};
     for (const item of snapshot.docs) {
       const data = item.data();
@@ -101,7 +115,14 @@ onMounted(async () => {
       };
     }
     summaries.value = result;
+  } catch {
+    loadError.value = "تعذر تحميل ملخصات الموردين. أعد المحاولة.";
   }
   finally { loading.value = false; }
+}
+onMounted(async () => {
+  const authed = await useAuthReady();
+  if (!authed) return;
+  await loadSuppliers();
 });
 </script>

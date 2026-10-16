@@ -6,7 +6,7 @@ const db = getFirestore();
 const adminEmail = "mohamed.mojahead@gmail.com";
 const resetCollections = [
   "invoices", "invoice_debt_summaries", "invoice_returns", "customer_loans",
-  "debt_payments", "supplier_payments", "supplier_advances",
+  "debt_payments", "supplier_payments", "purchase_expense_payments", "supplier_advances",
   "supplier_advance_transactions", "purchase_invoices", "supplier_returns",
   "inventory_transactions", "inventory_cost_adjustments", "cash_transactions",
   "operation_requests",

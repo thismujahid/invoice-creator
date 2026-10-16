@@ -30,12 +30,7 @@
       />
       <div class="space-y-2 rounded-xl border border-gray-200 p-3">
         <div class="flex items-center justify-between gap-2">
-          <div>
-            <h3 class="text-sm font-bold">الوحدات وأسعارها</h3>
-            <p class="mt-0.5 text-xs text-gray-500">
-              {{ isIndependent ? 'العبوة المفردة هي الأساس، ويمكن إضافة كرتونة من الحجم نفسه.' : 'حدّد الوحدة الأساسية، ثم مقدار كل وحدة أو عبوة منها.' }}
-            </p>
-          </div>
+          <h3 class="text-sm font-bold">الوحدات والأسعار</h3>
           <UButton
             size="sm"
             color="neutral"
@@ -47,21 +42,55 @@
             >إضافة وحدة</UButton
           >
         </div>
-        <p
-          v-if="
-            errors.base_sale || errors.base_purchase || errors.base_unit_name
-          "
-          class="text-xs text-red-600"
-        >
-          {{
-            errors.base_sale || errors.base_purchase || errors.base_unit_name
-          }}
-        </p>
-        <p class="text-xs text-gray-500">
-          أسعار البيع تتحدث تلقائيًا بنفس نسبة الربح، ويمكن تعديلها يدويًا.
+        <div v-if="!isEditMode" class="space-y-3">
+          <div class="grid gap-3 sm:grid-cols-2">
+            <UFormField label="الوحدة الأساسية" required :error="errors.base_unit_name">
+              <UInput
+                v-model="baseUnitName"
+                placeholder="مثال: قطعة، كيلو"
+                size="lg"
+                class="w-full"
+                :disabled="saving"
+              />
+            </UFormField>
+            <UFormField v-if="baseUsage !== 'purchase'" label="سعر البيع" :error="errors.base_sale">
+              <UInputNumber
+                v-model="baseSalePrice"
+                :min="0"
+                :step="0.01"
+                size="lg"
+                class="w-full"
+                dir="ltr"
+                :disabled="saving"
+              />
+            </UFormField>
+            <UFormField label="سعر الشراء المرجعي" :error="errors.base_purchase">
+              <UInputNumber
+                v-model="basePurchasePrice"
+                :min="0"
+                :step="0.01"
+                size="lg"
+                class="w-full"
+                dir="ltr"
+                :disabled="saving"
+              />
+            </UFormField>
+          </div>
+          <UButton
+            size="sm"
+            color="neutral"
+            variant="ghost"
+            icon="i-lucide-settings-2"
+            :disabled="saving"
+            @click="openUnitModal('base')"
+          >خيارات الوحدة الأساسية</UButton>
+        </div>
+        <p v-else-if="errors.base_sale || errors.base_purchase || errors.base_unit_name" class="text-xs text-red-600">
+          {{ errors.base_sale || errors.base_purchase || errors.base_unit_name }}
         </p>
         <div class="space-y-2">
           <div
+            v-if="isEditMode"
             class="flex items-center justify-between gap-2 rounded-lg border border-gray-100 p-2"
           >
             <div class="min-w-0 text-xs">
@@ -78,7 +107,7 @@
                 v-if="basePurchasePrice != null"
                 class="mt-1 block text-gray-500"
                 >آخر سعر شراء مسجل:
-                {{ formatePrice(basePurchasePrice) }} ج</span
+                {{ formatePrice(basePurchasePrice) }}</span
               >
               <span class="mt-0.5 block text-gray-500">
                 <template v-if="isEditMode"
@@ -87,7 +116,7 @@
                 {{
                   baseSalePrice == null
                     ? "—"
-                    : `${formatePrice(baseSalePrice)} ج`
+                    : `${formatePrice(baseSalePrice)}`
                 }}<span v-if="isEditMode && baseSalePrice != null">
                   · هامش الربح {{ baseMarginText }}</span
                 >
@@ -142,7 +171,7 @@
                     ? "لا تباع"
                     : unit.selling_price == null
                       ? "—"
-                      : `${formatePrice(unit.selling_price)} ج`
+                      : `${formatePrice(unit.selling_price)}`
                 }}<span
                   v-if="
                     isEditMode && unit.can_sell && unit.selling_price != null
@@ -161,7 +190,7 @@
                 v-if="unit.purchase_price != null"
                 class="mt-0.5 block text-gray-400"
               >
-                آخر شراء: {{ formatePrice(unit.purchase_price) }} ج
+                آخر شراء: {{ formatePrice(unit.purchase_price) }}
               </span>
             </div>
             <div class="flex shrink-0 gap-1">
@@ -203,13 +232,17 @@
           {{ errors.units }}
         </p>
       </div>
-      <div class="space-y-2 rounded-xl border border-gray-200 p-3">
-        <h3 class="text-sm font-bold">تنبيهات المخزون وإعادة الطلب</h3>
-        <p class="text-xs text-gray-500">
-          يُقارن التنبيه بالرصيد الفعلي لكل مكوّن. اكتب 0 لإيقاف تنبيه ذلك
-          المكوّن.
-        </p>
-        <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+      <div class="rounded-xl border border-gray-200 p-3">
+        <UButton
+          color="neutral"
+          variant="ghost"
+          class="w-full justify-between"
+          :trailing-icon="alertsOpen ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+          :aria-expanded="alertsOpen"
+          :aria-controls="alertsPanelId"
+          @click="alertsOpen = !alertsOpen"
+        >تنبيهات المخزون <span class="text-xs font-normal text-gray-500">اختياري</span></UButton>
+        <div v-show="alertsOpen" :id="alertsPanelId" class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
           <div class="space-y-2 rounded-lg bg-gray-50 p-3">
             <p class="text-sm font-semibold">
               {{ isIndependent ? 'العبوات المفردة' : 'الكمية المفتوحة' }} · {{ baseNameText }}
@@ -274,49 +307,58 @@
         :z-index="70"
       >
         <div class="space-y-3">
-          <UFormField label="اسم الوحدة" required>
-            <UInput
-              v-model="unitDraft.name"
-              placeholder="مثال: علبة، مكعب، كيس"
-              size="lg"
-              class="w-full"
-              :disabled="saving"
-            />
-          </UFormField>
-          <UFormField
-            :label="
-              unitDraft.isBase
-                ? 'الوحدة الأساسية (ثابتة = 1)'
-                : `كل ${unitDraft.name?.trim() || 'وحدة'} فيها كام ${baseNameText}؟`
-            "
-            required
-            :error="unitModalFactorError || undefined"
-          >
-            <UInputNumber
-              v-model="unitDraft.factor"
-              :min="0.0001"
-              :step="unitDraft.stock_kind === 'package' ? 1 : 0.01"
-              size="lg"
-              class="w-full"
-              dir="ltr"
-              :disabled="unitDraft.isBase || isExistingUnitDraft || saving"
-              placeholder="مثال: 10 أو 0.5"
-            />
-          </UFormField>
-          <UFormField v-if="!unitDraft.isBase" label="طريقة التخزين">
-            <USelect
-              v-model="unitDraft.stock_kind"
-              :items="availableStockKindItems"
-              value-key="value"
-              label-key="label"
-              size="lg"
-              class="w-full"
-              :disabled="isExistingUnitDraft"
-            />
-            <p class="mt-1 text-xs text-gray-500">
-              {{ isIndependent ? 'الكرتونة تخص حجم العبوة الحالي فقط، وفتحها ينتج عبوات كاملة من الحجم نفسه.' : 'العبوة المغلقة لا تُباع إلا إذا كان لها رصيد مغلق. الكمية المفردة قد تفتح أصغر عبوة عند الحاجة.' }}
-            </p>
-          </UFormField>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <UFormField label="اسم الوحدة" required>
+              <UInput
+                v-model="unitDraft.name"
+                placeholder="مثال: علبة، كيس"
+                size="lg"
+                class="w-full"
+                :disabled="saving"
+              />
+            </UFormField>
+            <UFormField
+              v-if="!unitDraft.isBase"
+              :label="`عدد ${baseNameText} في الوحدة`"
+              required
+              :error="unitModalFactorError || undefined"
+            >
+              <UInputNumber
+                v-model="unitDraft.factor"
+                :min="0.0001"
+                :step="unitDraft.stock_kind === 'package' ? 1 : 0.01"
+                size="lg"
+                class="w-full"
+                dir="ltr"
+                :disabled="isExistingUnitDraft || saving"
+                placeholder="مثال: 10"
+              />
+            </UFormField>
+          </div>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <UFormField v-if="!unitDraft.isBase" label="طريقة التخزين">
+              <USelect
+                v-model="unitDraft.stock_kind"
+                :items="availableStockKindItems"
+                value-key="value"
+                label-key="label"
+                size="lg"
+                class="w-full"
+                :disabled="isExistingUnitDraft"
+              />
+            </UFormField>
+            <UFormField label="الاستخدام">
+              <USelect
+                v-model="unitDraft.usage"
+                :items="unitUsageItems"
+                value-key="value"
+                label-key="label"
+                size="lg"
+                class="w-full"
+                @update:model-value="(usage) => setUnitUsage(unitDraft, usage)"
+              />
+            </UFormField>
+          </div>
           <p
             v-if="!unitDraft.isBase && Number(unitDraft.factor) > 0"
             class="text-sm font-semibold text-primary"
@@ -331,59 +373,50 @@
             عدد الوحدة الأساسية في الوحدة المسجلة ثابت لحماية الحركات السابقة. إذا كان غير صحيح،
             أضف وحدة بالعدد الصحيح وراجع مخزون الوحدة القديمة قبل أرشفتها.
           </p>
-          <UFormField label="الاستخدام">
-            <USelect
-              v-model="unitDraft.usage"
-              :items="unitUsageItems"
-              value-key="value"
-              label-key="label"
-              size="lg"
-              class="w-full"
-              @update:model-value="(usage) => setUnitUsage(unitDraft, usage)"
-            />
-          </UFormField>
           <UCheckbox
             v-if="!isIndependent"
             v-model="unitDraft.allows_fractional"
             label="تقبل الكسور"
           />
-          <UFormField v-if="unitDraft.can_sell" label="سعر البيع" required>
-            <UInputNumber
-              v-model="unitDraft.selling_price"
-              :min="0"
-              :step="0.01"
-              size="lg"
-              class="w-full"
-              dir="ltr"
-              placeholder="0"
-            />
-          </UFormField>
-          <UFormField
-            v-if="isEditMode"
-            label="سعر الشراء"
-            hint="مرجعي فقط — لا يغيّر متوسط التكلفة"
-          >
-            <UInputNumber
-              v-model="unitDraft.purchase_price"
-              :min="0"
-              :step="0.01"
-              size="lg"
-              class="w-full"
-              dir="ltr"
-              placeholder="0"
-            />
-          </UFormField>
-          <UFormField v-else label="سعر الشراء المرجعي">
-            <UInputNumber
-              v-model="unitDraft.purchase_price"
-              :min="0"
-              :step="0.01"
-              size="lg"
-              class="w-full"
-              dir="ltr"
-              placeholder="0"
-            />
-          </UFormField>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <UFormField v-if="unitDraft.can_sell" label="سعر البيع" required>
+              <UInputNumber
+                v-model="unitDraft.selling_price"
+                :min="0"
+                :step="0.01"
+                size="lg"
+                class="w-full"
+                dir="ltr"
+                placeholder="0"
+              />
+            </UFormField>
+            <UFormField
+              v-if="isEditMode"
+              label="سعر الشراء"
+              hint="مرجعي فقط — لا يغيّر متوسط التكلفة"
+            >
+              <UInputNumber
+                v-model="unitDraft.purchase_price"
+                :min="0"
+                :step="0.01"
+                size="lg"
+                class="w-full"
+                dir="ltr"
+                placeholder="0"
+              />
+            </UFormField>
+            <UFormField v-else label="سعر الشراء المرجعي">
+              <UInputNumber
+                v-model="unitDraft.purchase_price"
+                :min="0"
+                :step="0.01"
+                size="lg"
+                class="w-full"
+                dir="ltr"
+                placeholder="0"
+              />
+            </UFormField>
+          </div>
           <p v-if="unitModalError" class="text-xs text-red-600">
             {{ unitModalError }}
           </p>
@@ -407,7 +440,8 @@
           </div>
         </template>
       </UiAppDialog>
-      <ProductsPriceHistoryDialog
+      <LazyProductsPriceHistoryDialog
+        v-if="historyOpen"
         v-model:open="historyOpen"
         :unit-name="historyUnitName"
         :history="historyLog"
@@ -447,6 +481,7 @@
 </template>
 
 <script setup lang="ts">
+import { useId } from "vue";
 import { unitReferenceCost } from "~/functions/shared/unitPricing.mjs";
 import AppDialog from "~/components/ui/AppDialog.vue";
 import type { Product, ProductUnit } from "~/types";
@@ -480,6 +515,10 @@ function emptyForm(): Product {
   };
 }
 const productForm = ref<Product>(emptyForm());
+const baseUnitName = computed({
+  get: () => productForm.value.base_unit_name ?? "",
+  set: (value: string) => { productForm.value.base_unit_name = value; },
+});
 const familyName = ref("");
 const variantName = ref("");
 const isIndependent = computed(() => props.inventoryMode === "independent");
@@ -495,6 +534,8 @@ const basePurchasePrice = ref<number | null>(null);
 const baseAllowsFractional = ref(false);
 const baseUsage = ref<UnitUsage>("both");
 const baseHistory = ref<string | null>(null);
+const alertsPanelId = useId();
+const alertsOpen = ref(false);
 // Canonical cost/stock snapshot for display only (never written from here).
 const canonicalCost = ref<number | null>(null);
 const canonicalStock = ref<number | null>(null);
@@ -613,8 +654,8 @@ const avgBaseText = computed(() =>
       ? "—"
       : basePurchasePrice.value == null
         ? "—"
-        : `${formatePrice(basePurchasePrice.value)} ج`
-    : `${formatePrice(canonicalCost.value)} ج`,
+        : `${formatePrice(basePurchasePrice.value)}`
+    : `${formatePrice(canonicalCost.value)}`,
 );
 const baseReferenceText = computed(() =>
   unitAvgText({
@@ -628,7 +669,7 @@ const baseReferenceText = computed(() =>
 );
 function unitAvgText(unit: ProductUnit): string {
   const cost = unitReferenceCost(props.edit || {}, unit);
-  return cost == null ? "—" : `${formatePrice(cost)} ج`;
+  return cost == null ? "—" : `${formatePrice(cost)}`;
 }
 function unitMarginText(unit: {
   selling_price: unknown;
@@ -870,6 +911,10 @@ function validate(): boolean {
     e.variant_name = isPackSizeEditor.value ? "اسم حجم العبوة مكرر داخل النوع." : "اسم النوع مكرر داخل المنتج.";
   if (!productForm.value.base_unit_name?.trim())
     e.base_unit_name = "اسم وحدة المخزون الأساسية مطلوب.";
+  if (baseSalePrice.value != null && (!Number.isFinite(Number(baseSalePrice.value)) || Number(baseSalePrice.value) < 0))
+    e.base_sale = "أدخل سعر بيع صالحًا للوحدة.";
+  if (basePurchasePrice.value != null && (!Number.isFinite(Number(basePurchasePrice.value)) || Number(basePurchasePrice.value) < 0))
+    e.base_purchase = "سعر الشراء يجب أن يكون صفرًا أو رقمًا موجبًا.";
   const invalidLooseAlert =
     !Number.isFinite(Number(looseAlert.value.reorder_point)) ||
     Number(looseAlert.value.reorder_point) < 0 ||
@@ -885,6 +930,7 @@ function validate(): boolean {
           Number(alert.target_level) < 0)),
   );
   if (invalidLooseAlert || invalidPackageAlert) {
+    alertsOpen.value = true;
     e.units =
       "مؤشر العبوة ومستواها يجب أن يكونا عددين صحيحين؛ الكمية المفتوحة تقبل الكسور.";
   }
@@ -936,8 +982,8 @@ function getDraft(): Product | null {
       name: productForm.value.base_unit_name?.trim() || "وحدة",
       factor: 1,
       stock_kind: "loose",
-      selling_price: baseSalePrice.value,
-      purchase_price: basePurchasePrice.value,
+      selling_price: baseSalePrice.value ?? null,
+      purchase_price: basePurchasePrice.value ?? null,
       purchase_price_history: baseHistory.value,
       profit_margin:
         props.edit?.units?.find((unit) => unit.is_base)?.selling_price ===
@@ -1027,6 +1073,7 @@ defineExpose({ getDraft });
 watch(
   () => props.edit,
   () => {
+    alertsOpen.value = false;
     const edit = props.edit as Product | undefined;
     productForm.value = edit
       ? ({ base_unit_name: "وحدة", ...editable(edit) } as Product)

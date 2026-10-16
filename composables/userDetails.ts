@@ -9,8 +9,8 @@ export const userDetails = computed<ActiveUser>(() => {
 export function formateActiveUserKey(key: unknown): ActiveUser {
   switch (key) {
     case "su":
-      return { avatar_text: "م ع", name: "مسؤل", position: "صلاحية مطلقة" };
+      return { avatar_text: "م ع", name: "مسؤول", position: "صلاحية مطلقة" };
     default:
-      return { avatar_text: "م ع", name: "مسؤل", position: "صلاحية مطلقة" };
+      return { avatar_text: "م ع", name: "مسؤول", position: "صلاحية مطلقة" };
   }
 }

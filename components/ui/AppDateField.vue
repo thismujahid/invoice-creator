@@ -2,14 +2,15 @@
   <!-- P0: native date input = OS picker on mobile, zero deps, RTL-safe.
        UCalendar needs @internationalized/date values; revisit in P4 if a
        custom calendar is wanted. -->
-  <UInput
-    :model-value="iso"
-    type="date"
-    :label="label"
-    class="w-full"
-    @update:model-value="onInput"
-    :trailing-icon="iconTrilling"
-  />
+  <UFormField :label="label" class="w-full">
+    <UInput
+      :model-value="iso"
+      type="date"
+      class="w-full"
+      @update:model-value="onInput"
+      :trailing-icon="iconTrilling"
+    />
+  </UFormField>
 </template>
 
 <script setup lang="ts">

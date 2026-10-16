@@ -35,6 +35,8 @@ export const useCashbox = defineStore("cashbox", () => {
   // Start true so pages render skeletons (not empty content) while auth
   // resolves and the first fetch runs; fetchers reset them afterwards.
   const loading = ref(true);
+  const syncState = ref<"idle" | "loading" | "live" | "cache" | "snapshot" | "error">("idle");
+  const syncError = ref<string | null>(null);
   const transactions = ref<CashTransaction[]>([]);
   const loadingTxns = ref(true);
   const transactionsPage = ref(1);
@@ -42,6 +44,7 @@ export const useCashbox = defineStore("cashbox", () => {
   const transactionCursors = ref<(QueryDocumentSnapshot | null)[]>([null]);
   const transactionFilter = ref<string | null>(null);
   const revision = ref(0);
+  let transactionGeneration = 0;
 
   const CASHBOX_REF = () => doc(db, "cashbox", "current");
 
@@ -55,6 +58,8 @@ export const useCashbox = defineStore("cashbox", () => {
     }
     cashboxUid = uid;
     const session = ++cashboxSession;
+    syncState.value = "loading";
+    syncError.value = null;
     cashboxUnsub = onSnapshot(
       CASHBOX_REF(),
       { includeMetadataChanges: true },
@@ -64,11 +69,15 @@ export const useCashbox = defineStore("cashbox", () => {
         initialized.value = snap.exists();
         balance.value = snap.exists() ? round2(Number(snap.data().balance || 0)) : 0;
         loading.value = false;
+        syncState.value = snap.metadata.fromCache ? "cache" : "live";
+        syncError.value = null;
         revision.value += 1;
       },
       (error) => {
         if (session !== cashboxSession) return;
-        if ((error as { code?: string }).code === "permission-denied") stopCashboxSubscription();
+        stopCashboxSubscription();
+        syncState.value = "error";
+        syncError.value = error.message;
         loading.value = false;
       },
     );
@@ -78,32 +87,51 @@ export const useCashbox = defineStore("cashbox", () => {
     cashboxSession += 1;
     cashboxUnsub?.();
     cashboxUnsub = null;
+    if (syncState.value !== "error") syncState.value = "idle";
   }
 
   function clearCashbox(): void {
     stopCashboxSubscription();
+    transactionGeneration += 1;
     cashboxUid = null;
     balance.value = 0;
     initialized.value = false;
     loading.value = true;
+    syncState.value = "idle";
+    syncError.value = null;
     transactions.value = [];
+    transactionsPage.value = 1;
+    transactionsHasMore.value = false;
+    transactionCursors.value = [null];
+    transactionFilter.value = null;
+    loadingTxns.value = true;
   }
 
   async function fetchCashbox(): Promise<void> {
     if (cashboxUnsub) return;
+    const session = cashboxSession;
     loading.value = true;
+    syncState.value = "loading";
+    syncError.value = null;
     try {
       const snap = await getDoc(CASHBOX_REF());
+      if (session !== cashboxSession || cashboxUnsub) return;
       initialized.value = snap.exists();
       balance.value = snap.exists() ? round2(Number(snap.data().balance || 0)) : 0;
+      syncState.value = "snapshot";
     } catch (e) {
+      if (session !== cashboxSession || cashboxUnsub) return;
+      syncState.value = "error";
+      syncError.value = e instanceof Error ? e.message : "تعذر تحميل الخزنة";
       notify("تعذر تحميل الخزنة.", "error");
     } finally {
-      loading.value = false;
+      if (session === cashboxSession && !cashboxUnsub) loading.value = false;
     }
   }
 
   async function fetchTransactions(max = 25, reset = true, type = transactionFilter.value): Promise<void> {
+    const generation = ++transactionGeneration;
+    const session = cashboxSession;
     loadingTxns.value = true;
     try {
       if (reset) {
@@ -118,14 +146,16 @@ export const useCashbox = defineStore("cashbox", () => {
       if (cursor) q = query(q, startAfter(cursor));
       q = query(q, fsLimit(max + 1));
       const snap = await getDocs(q);
+      if (generation !== transactionGeneration || session !== cashboxSession) return;
       const docs = snap.docs.slice(0, max);
       transactions.value = docs.map((d) => ({ id: d.id, ...(d.data() as object) }) as CashTransaction);
       transactionsHasMore.value = snap.docs.length > max;
       if (docs.length && transactionsHasMore.value) transactionCursors.value[transactionsPage.value] = docs.at(-1) ?? null;
     } catch (e) {
+      if (generation !== transactionGeneration || session !== cashboxSession) return;
       notify("تعذر تحميل سجل الخزنة.", "error");
     } finally {
-      loadingTxns.value = false;
+      if (generation === transactionGeneration && session === cashboxSession) loadingTxns.value = false;
     }
   }
 
@@ -220,5 +250,5 @@ export const useCashbox = defineStore("cashbox", () => {
     return adjustCash({ type: "opening_balance", direction: "in", amount, note: note || "رصيد افتتاحي" });
   }
 
-  return { balance, initialized, loading, transactions, loadingTxns, transactionsPage, transactionsHasMore, revision, transactionFilter, ensureCashboxSubscription, stopCashboxSubscription, clearCashbox, fetchCashbox, fetchTransactions, nextTransactionsPage, previousTransactionsPage, adjustCash, ensureOpeningBalance };
+  return { balance, initialized, loading, syncState, syncError, transactions, loadingTxns, transactionsPage, transactionsHasMore, revision, transactionFilter, ensureCashboxSubscription, stopCashboxSubscription, clearCashbox, fetchCashbox, fetchTransactions, nextTransactionsPage, previousTransactionsPage, adjustCash, ensureOpeningBalance };
 });

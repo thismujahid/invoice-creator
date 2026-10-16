@@ -2,6 +2,15 @@
 // app-wide (one size language: lg ≈ 44px touch targets).
 export default defineAppConfig({
   ui: {
+    colors: {
+      primary: "emerald",
+      secondary: "blue",
+      success: "emerald",
+      info: "blue",
+      warning: "amber",
+      error: "red",
+      neutral: "slate",
+    },
     button: {
       defaultVariants: {
         size: "md",
