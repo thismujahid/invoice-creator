@@ -2,8 +2,8 @@
   <table class="inv-table inv-ref-table" dir="rtl" aria-label="أصناف الفاتورة">
     <colgroup>
       <col style="width: 8%" />
-      <col style="width: 59%" />
-      <col style="width: 8%" />
+      <col style="width: 55%" />
+      <col style="width: 12%" />
       <col style="width: 12%" />
       <col style="width: 13%" />
     </colgroup>
@@ -18,7 +18,9 @@
     </thead>
     <tbody>
       <tr v-for="row in rows" :key="row.key" class="inv-ref-row">
-        <td class="tabular-nums">{{ formatDisplayQuantity(row.displayQuantity) }}</td>
+        <td class="tabular-nums">
+          {{ formatDisplayQuantity(row.displayQuantity) }}
+        </td>
         <td class="inv-ref-name">{{ row.name }}</td>
         <td class="inv-ref-correction"></td>
         <td class="tabular-nums">{{ priceText(row) }}</td>
@@ -33,16 +35,23 @@
 
 <script setup lang="ts">
 import type { InvoiceProductLine } from "~/types";
-import { buildInvoiceDisplayRows, formatDisplayQuantity, type InvoiceDisplayRow } from "~/utils/invoiceDisplay";
+import {
+  buildInvoiceDisplayRows,
+  formatDisplayQuantity,
+  type InvoiceDisplayRow,
+} from "~/utils/invoiceDisplay";
 
 const props = defineProps<{ lines: InvoiceProductLine[] }>();
 const { formatePrice } = useHelpers();
 
 /** Preview + print share this exact derivation (single source of truth). */
-const rows = computed<InvoiceDisplayRow[]>(() => buildInvoiceDisplayRows(props.lines ?? []));
+const rows = computed<InvoiceDisplayRow[]>(() =>
+  buildInvoiceDisplayRows(props.lines ?? []),
+);
 
 function priceText(row: InvoiceDisplayRow): string {
-  if (row.displayPrice !== null && row.displayPrice !== undefined) return formatePrice(row.displayPrice);
+  if (row.displayPrice !== null && row.displayPrice !== undefined)
+    return formatePrice(row.displayPrice);
   if (!row.unitPrices.length) return "";
   return row.unitPrices.map((p) => formatePrice(p)).join(" / ");
 }
@@ -65,6 +74,9 @@ function priceText(row: InvoiceDisplayRow): string {
   text-align: right;
   word-break: break-word;
   white-space: normal;
+}
+.inv-ref-correction {
+  min-width: 170px;
 }
 .inv-ref-correction:empty::before {
   content: "";

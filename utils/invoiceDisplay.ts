@@ -140,7 +140,7 @@ export function abbreviateVariants(names: string[]): Map<string, string> {
     const len = lens[i] ?? 1;
     return s.slice(0, Math.max(1, len)) || cleaned[i]!;
   };
-  for (;;) {
+  for (; ;) {
     const seen = new Map<string, number[]>();
     cleaned.forEach((_, i) => {
       const a = abbrOf(i);
@@ -206,7 +206,6 @@ function buildRowName(args: {
   const family = clean(args.familyName);
   const unit = clean(args.commonUnit);
   const pack = clean(args.commonPack);
-  // Distinct variants in first-appearance order (qty summed per variant).
   const acc = new Map<string, VariantAccumulator>();
   for (const line of args.lines) {
     const vRaw = clean(line.variant_name);
@@ -223,14 +222,12 @@ function buildRowName(args: {
   const base = family || clean(args.lines[0]?.product_name) || "صنف";
 
   if (variants.length === 0) {
-    // No variants (e.g. uses_variants=false): unit + family + pack.
     const head = unit && norm(unit) !== norm(base) ? unit : "";
     const tail = pack && norm(pack) !== norm(base) && norm(pack) !== norm(unit) ? pack : "";
     return [head, base, tail].filter(Boolean).join(" ").trim() || base;
   }
 
   if (variants.length === 1) {
-    // Single variant: "{variant} {family} {unit-abbrev} {pack?}".
     const v = variants[0]!.name;
     const suffix: string[] = [];
     if (unit && norm(unit) !== norm(v)) {
@@ -238,15 +235,14 @@ function buildRowName(args: {
       if (abbr) suffix.push(abbr);
     }
     if (pack && norm(pack) !== norm(v) && norm(pack) !== norm(unit)) suffix.push(pack);
-    return [v, base, ...suffix].filter(Boolean).join(" ").trim();
+    return [unit, base, v, ...suffix].filter(Boolean).join(" ").trim();
   }
 
-  // Multi-variant: "{unit} {family} {pack?} {qty+abbr...}".
   const abbrs = abbreviateVariants(variants.map((v) => v.name));
   const breakdown = variants
     .map((v) => `${formatDisplayQuantity(v.qty)}${abbrs.get(v.name) ?? v.name}`)
     .join(" ");
-  const head = [unit, base, pack].filter(Boolean).join(" ").trim();
+  const head = [base, unit, pack].filter(Boolean).join(" ").trim();
   return [head, breakdown].filter(Boolean).join(" ").trim();
 }
 

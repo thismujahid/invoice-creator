@@ -57,7 +57,7 @@
         @click.stop="emit('move-down')"
       />
       <UButton
-        v-if="canDelete && !confirming"
+        v-if="!confirming"
         size="sm"
         color="error"
         variant="soft"
@@ -67,7 +67,7 @@
         class="flex min-h-6 min-w-6 items-center justify-center"
         @click.stop="arm"
       />
-      <span v-else-if="canDelete" class="flex items-center gap-1">
+      <span v-else class="flex items-center gap-1">
         <UButton size="sm" color="error" class="min-h-6" @click.stop="confirm"
           >تأكيد حذف {{ subLineCount }} بنود؟</UButton
         >
